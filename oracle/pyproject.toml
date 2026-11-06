@@ -1,0 +1,13 @@
+[project]
+name = "exr-oracle"
+version = "0.0.0"
+description = "Reference outputs from the official OpenEXR wheel, for OpenEXR-rs"
+# Python 3.13, as in OpenColorIO-rs's oracle (VFX Reference Platform CY2027).
+requires-python = "==3.13.*"
+dependencies = [
+    "openexr==3.5.3",
+    "numpy==2.3.5",
+]
+
+[tool.uv]
+package = false
