@@ -53,7 +53,7 @@ different. Where this plan is silent, OpenColorIO-rs's rule applies.
   come only from the oracle, upstream's tests or the platform; comparisons are bitwise.
 - **Byte-exact is achievable, with one platform split already measured.** The official wheels
   write byte-identical files on Windows and Linux for all 14 codecs, and decode identical
-  pixels for 13 of them. DWAA and DWAB decode 2 of 65,536 half values differently (one bit),
+  pixels for the other 12. DWAA and DWAB decode 2 of 65,536 half values differently (one bit),
   because the Linux build runs AVX/F16C paths that MSVC compiles out. The port reproduces both
   (D12).
 - **Effort** (§11). About 89 person-weeks of conventional work for OpenEXRCore with exact ports
