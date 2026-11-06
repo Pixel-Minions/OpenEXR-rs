@@ -1,0 +1,30 @@
+# Reference platform repositories. Keep the 9.8 content after minor-release EOL.
+# DNF tries baseurl entries in order; both locations are official Rocky trees.
+# https://dnf.readthedocs.io/en/latest/conf_ref.html#baseurl
+# https://github.com/rocky-linux/wiki.rockylinux.org/blob/main/docs/rocky/repo.md
+[baseos]
+name=OpenEXR-rs reference Rocky 9.8 - BaseOS
+baseurl=https://dl.rockylinux.org/pub/rocky/9.8/BaseOS/$basearch/os/
+        https://dl.rockylinux.org/vault/rocky/9.8/BaseOS/$basearch/os/
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9
+skip_if_unavailable=0
+
+[appstream]
+name=OpenEXR-rs reference Rocky 9.8 - AppStream
+baseurl=https://dl.rockylinux.org/pub/rocky/9.8/AppStream/$basearch/os/
+        https://dl.rockylinux.org/vault/rocky/9.8/AppStream/$basearch/os/
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9
+skip_if_unavailable=0
+
+[extras]
+name=OpenEXR-rs reference Rocky 9.8 - Extras
+baseurl=https://dl.rockylinux.org/pub/rocky/9.8/extras/$basearch/os/
+        https://dl.rockylinux.org/vault/rocky/9.8/extras/$basearch/os/
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-9
+skip_if_unavailable=0
