@@ -165,3 +165,17 @@ section. An entry says:
 - **The port:** returns the add's error; a non-opaque attribute is refused with
   `EXR_ERR_ATTR_TYPE_MISMATCH` and its default message (the attribute stays added).
 - **Status:** the port's choice; listed for the owner's review.
+
+### U-6. Copying a required attribute name that has another type
+
+- **Upstream:** `copy_attr`, under `exr_copy_unset_attributes`, adds a source attribute named
+  `compression`, `dataWindow`, `displayWindow` or `lineOrder` with the source's type, and
+  reads its value as that name's type to update the part (`srca->uc`, `*(srca->box2i)`)
+  whatever the type is (`src/lib/OpenEXRCore/part_attr.c:257-325` @ v3.5.3). A write
+  context can hold such an attribute: `exr_attr_set_int (f, 0, "compression", 1)` adds an int
+  named `compression`. Reading another type's union member reads a pointer's byte, or follows
+  an int as a pointer.
+- **Who notices:** callers copying from a part that holds a required name with a wrong type.
+- **The port:** refuses the copy with `EXR_ERR_ATTR_TYPE_MISMATCH` and its default message,
+  before adding anything; the attributes copied before it stay.
+- **Status:** the port's choice; listed for the owner's review.

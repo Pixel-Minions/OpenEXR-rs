@@ -34,6 +34,7 @@ mod os_error;
 mod parse_header;
 pub mod part;
 pub mod part_attr;
+pub mod part_attr_copy;
 pub mod part_attr_set;
 pub mod preview;
 pub mod string;

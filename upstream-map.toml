@@ -1538,8 +1538,8 @@ note = "getters, exr_add_part, level setters; chunk table with Phase 4"
 path = "src/lib/OpenEXRCore/part_attr.c"
 kind = "src"
 status = "partial"
-target = "crates/openexr-core/src/part_attr.rs,crates/openexr-core/src/part_attr_set.rs"
-note = "everything but copy_attr and exr_copy_unset_attributes (with the header writer, Phase 6)"
+target = "crates/openexr-core/src/part_attr.rs,crates/openexr-core/src/part_attr_set.rs,crates/openexr-core/src/part_attr_copy.rs"
+note = "ported whole; exr_copy_unset_attributes is first tested by write.cpp (Phase 6)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/preview.c"
