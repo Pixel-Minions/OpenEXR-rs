@@ -4,10 +4,12 @@
 //! Ports of `src/test/OpenEXRCoreTest/general_attr.cpp` @ v3.5.3.
 
 use crate::bytes::AttrBytes;
+use crate::channel_list::AttrChlist;
 use crate::context::Context;
 use crate::errors::ErrorCode;
 use crate::float_vector::AttrFloatVector;
 use crate::internal_xdr::*;
+use crate::openexr_attr::{PerceptualTreatment, PixelType};
 use crate::preview::AttrPreview;
 use crate::string::AttrString;
 use crate::string_vector::AttrStringVector;
@@ -581,4 +583,194 @@ fn test_bytes_helper() {
             .code,
         inval
     );
+}
+
+/// Partial port of `testChlistHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:548-822
+/// @ v3.5.3), run by `testAttrChlists` (lines 824-833). Left out: NULL context and object calls
+/// and the malloc failures (PLAN.md O8); `exr_set_channels` and `exr_attr_set_channels` come
+/// with the part attribute API (Phase 3).
+#[test]
+fn test_chlist_helper() {
+    let f = create_dummy_file("<chlist>");
+    let mut cl = AttrChlist::default();
+    let inval = ErrorCode::InvalidArgument;
+    let (half, lin, log) = (
+        PixelType::HALF,
+        PerceptualTreatment::LINEAR,
+        PerceptualTreatment::LOGARITHMIC,
+    );
+
+    f.attr_chlist_destroy(&mut cl);
+    assert_eq!(f.attr_chlist_init(&mut cl, -1).unwrap_err().code, inval);
+    f.attr_chlist_init(&mut cl, 0).unwrap();
+    f.attr_chlist_destroy(&mut cl);
+
+    let add = |cl: &mut AttrChlist,
+               n: Option<&[u8]>,
+               p: PixelType,
+               l: PerceptualTreatment,
+               x: i32,
+               y: i32| { f.attr_chlist_add(cl, n, p, l, x, y) };
+    assert_eq!(
+        add(&mut cl, Some(b"foo"), PixelType::LAST_TYPE, log, 1, 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        add(&mut cl, Some(b"foo"), PixelType(-1), log, 1, 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        add(&mut cl, Some(b"foo"), half, PerceptualTreatment(2), 1, 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        add(&mut cl, Some(b"foo"), half, log, 0, 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        add(&mut cl, Some(b"foo"), half, log, -1, 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        add(&mut cl, Some(b"foo"), half, log, 1, 0)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        add(&mut cl, Some(b"foo"), half, lin, 1, -1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+
+    add(&mut cl, Some(b"foo"), half, lin, 1, 2).unwrap();
+    assert_eq!(cl.num_channels, 1);
+    assert_eq!(cl.entries[0].name.c_str(), b"foo");
+    assert_eq!(cl.entries[0].pixel_type, PixelType::HALF);
+    assert_eq!(cl.entries[0].p_linear, PerceptualTreatment::LINEAR.0 as u8);
+    assert_eq!(cl.entries[0].x_sampling, 1);
+    assert_eq!(cl.entries[0].y_sampling, 2);
+    f.attr_chlist_destroy(&mut cl);
+
+    assert_eq!(
+        add(&mut cl, Some(b""), half, lin, 1, 1).unwrap_err().code,
+        inval
+    );
+    assert_eq!(add(&mut cl, None, half, lin, 1, 1).unwrap_err().code, inval);
+
+    let addl =
+        |cl: &mut AttrChlist,
+         n: &[u8],
+         len: i32,
+         p: PixelType,
+         l: PerceptualTreatment,
+         x: i32,
+         y: i32| { f.attr_chlist_add_with_length(cl, Some(n), len, p, l, x, y) };
+    assert_eq!(
+        addl(&mut cl, b"R", 0, half, lin, 1, 1).unwrap_err().code,
+        inval
+    );
+    assert_eq!(
+        addl(&mut cl, b"R", 1024, half, lin, 1, 1).unwrap_err().code,
+        ErrorCode::NameTooLong
+    );
+    assert_eq!(
+        addl(&mut cl, b"R", 1, PixelType::LAST_TYPE, lin, 1, 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        addl(&mut cl, b"R", 1, half, PerceptualTreatment(7), 1, 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        addl(&mut cl, b"R", 1, PixelType::FLOAT, log, 0, 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        addl(&mut cl, b"R", 1, PixelType::UINT, log, 1, -1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+
+    add(&mut cl, Some(b"R"), half, log, 1, 1).unwrap();
+    add(&mut cl, Some(b"G"), PixelType::FLOAT, log, 1, 1).unwrap();
+    add(&mut cl, Some(b"B"), PixelType::UINT, log, 1, 1).unwrap();
+    assert_eq!(cl.num_channels, 3);
+    assert_eq!(cl.entries[0].name.c_str(), b"B");
+    assert_eq!(cl.entries[1].name.c_str(), b"G");
+    assert_eq!(cl.entries[2].name.c_str(), b"R");
+
+    assert_eq!(
+        add(&mut cl, Some(b"B"), half, log, 1, 1).unwrap_err().code,
+        inval
+    );
+    assert_eq!(cl.num_channels, 3);
+
+    let mut cl2 = AttrChlist::default();
+    f.attr_chlist_duplicate(&mut cl2, &cl).unwrap();
+    assert_eq!(cl2.num_channels, 3);
+    assert_eq!(cl2.entries[0].name.c_str(), b"B");
+    assert_eq!(cl2.entries[1].name.c_str(), b"G");
+    assert_eq!(cl2.entries[2].name.c_str(), b"R");
+    f.attr_chlist_destroy(&mut cl2);
+    f.attr_chlist_destroy(&mut cl2);
+
+    let bad = AttrChlist {
+        num_channels: 1,
+        ..AttrChlist::default()
+    };
+    assert_eq!(
+        f.attr_chlist_duplicate(&mut cl2, &bad).unwrap_err().code,
+        inval
+    );
+
+    // without a file, max will be 31
+    assert_eq!(
+        add(
+            &mut cl,
+            Some(b"reallongreallongreallonglongname"),
+            half,
+            log,
+            1,
+            1
+        )
+        .unwrap_err()
+        .code,
+        ErrorCode::NameTooLong
+    );
+    f.attr_chlist_destroy(&mut cl);
+    // make sure we can re-delete something?
+    f.attr_chlist_destroy(&mut cl);
+
+    for curc in 0..384 {
+        // use zero pad to avoid dealing with lexical ordering of channels
+        let cname = format!("c{curc:03}");
+        add(&mut cl, Some(cname.as_bytes()), half, lin, 1, 2).unwrap();
+        assert_eq!(cl.num_channels, curc + 1);
+        let e = &cl.entries[curc as usize];
+        assert_eq!(e.name.c_str(), cname.as_bytes());
+        assert_eq!(e.pixel_type, PixelType::HALF);
+        assert_eq!(e.p_linear, PerceptualTreatment::LINEAR.0 as u8);
+        assert_eq!(e.x_sampling, 1);
+        assert_eq!(e.y_sampling, 2);
+    }
+    f.attr_chlist_destroy(&mut cl);
 }

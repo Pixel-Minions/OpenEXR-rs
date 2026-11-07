@@ -10,6 +10,7 @@ pub mod base;
 pub mod bytes;
 #[doc(hidden)]
 pub mod cfmt;
+pub mod channel_list;
 pub mod context;
 pub mod errors;
 pub mod float_vector;
