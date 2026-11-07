@@ -14,7 +14,13 @@
 mod bitstream;
 mod entropy_common;
 mod error_private;
+#[allow(dead_code)] // the compressor's, used with zstd_compress.c
+mod fse_compress;
 mod fse_decompress;
+#[allow(dead_code)] // the compressor's, used with zstd_compress.c
+mod hist;
+#[allow(dead_code)] // the compressor's, used with zstd_compress.c
+mod huf_compress;
 mod huf_decompress;
 mod mem;
 mod xxhash;

@@ -773,7 +773,7 @@ path = "external/zstd/lib/common/bitstream.h"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/bitstream.rs"
-note = "its decoding half ported; checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier); the encoding half comes with the compressor"
+note = "both halves ported; the decoding half checked through Core's ZSTD decoder (the wheel's ZSTD images decode as the wheel decodes them, heavy tier); the encoding half round-trips through the decoders, and is checked against the wheel's bytes with Core's ZSTD encoder"
 
 [[file]]
 path = "external/zstd/lib/common/compiler.h"
@@ -907,22 +907,29 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/fse_compress.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/fse_compress.rs"
+note = "the table builder, normalizer, header writer and encoder ported (FSE_compress's one-call wrapper isn't in 1.5.7's library); round-trips through Huffman's weight headers; checked against the wheel's bytes with Core's ZSTD encoder"
 
 [[file]]
 path = "external/zstd/lib/compress/hist.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/hist.rs"
+note = "ported; the four-way counting is a speed device with the simple loop's counts; checked against the wheel's bytes with Core's ZSTD encoder"
 
 [[file]]
 path = "external/zstd/lib/compress/hist.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "declarations only; HIST_WKSP_SIZE is n/a (the port's histograms take no workspace)"
 
 [[file]]
 path = "external/zstd/lib/compress/huf_compress.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/huf_compress.rs"
+note = "ported, but HUF_readCTable (dictionaries, n/a) and HUF_getNbBitsFromCTable (with the optimal parser); typed workspaces; round-trips through the ported decoders; checked against the wheel's bytes with Core's ZSTD encoder"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress.c"

@@ -211,3 +211,105 @@ impl<'a> BitDStream<'a> {
         !self.zeroed && self.ptr == 0 && self.bits_consumed == 64
     }
 }
+
+/// Port of `BIT_mask` (external/zstd/lib/common/bitstream.h:134-140 @ zstd v1.5.7).
+#[allow(dead_code)] // the compressor's, used with zstd_compress.c
+const BIT_MASK: [u64; 32] = [
+    0, 1, 3, 7, 0xF, 0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF,
+    0xFFFF, 0x1FFFF, 0x3FFFF, 0x7FFFF, 0xFFFFF, 0x1FFFFF, 0x3FFFFF, 0x7FFFFF, 0xFFFFFF, 0x1FFFFFF,
+    0x3FFFFFF, 0x7FFFFFF, 0xFFFFFFF, 0x1FFFFFFF, 0x3FFFFFFF, 0x7FFFFFFF,
+];
+
+/// Port of `BIT_CStream_t` (external/zstd/lib/common/bitstream.h:56-62 @ zstd v1.5.7), over
+/// `dst`; `ptr` and `end_ptr` are offsets into it.
+#[derive(Debug)]
+#[allow(dead_code)] // the compressor's, used with zstd_compress.c
+pub(crate) struct BitCStream<'a> {
+    pub(crate) bit_container: u64,
+    pub(crate) bit_pos: u32,
+    dst: &'a mut [u8],
+    pub(crate) ptr: usize,
+    end_ptr: usize,
+}
+
+#[allow(dead_code)] // the compressor's, used with zstd_compress.c
+impl<'a> BitCStream<'a> {
+    /// Port of `BIT_initCStream` (external/zstd/lib/common/bitstream.h:150-160 @ zstd v1.5.7):
+    /// `dst.len()` must be above 8.
+    pub(crate) fn init(dst: &'a mut [u8]) -> ZResult<Self> {
+        let cap = dst.len();
+        if cap <= CONTAINER_BYTES {
+            return Err(ErrorCode::DstSizeTooSmall);
+        }
+        Ok(BitCStream {
+            bit_container: 0,
+            bit_pos: 0,
+            dst,
+            ptr: 0,
+            end_ptr: cap - CONTAINER_BYTES,
+        })
+    }
+
+    /// Port of `BIT_addBits` (external/zstd/lib/common/bitstream.h:180-189 @ zstd v1.5.7): up
+    /// to 31 bits, the value masked.
+    #[inline]
+    pub(crate) fn add_bits(&mut self, value: u64, nb_bits: u32) {
+        self.bit_container |= (value & BIT_MASK[nb_bits as usize]) << self.bit_pos;
+        self.bit_pos += nb_bits;
+    }
+
+    /// Port of `BIT_addBitsFast` (external/zstd/lib/common/bitstream.h:193-200 @ zstd v1.5.7):
+    /// the value's bits above `nb_bits` are 0.
+    #[inline]
+    pub(crate) fn add_bits_fast(&mut self, value: u64, nb_bits: u32) {
+        self.bit_container |= value << self.bit_pos;
+        self.bit_pos += nb_bits;
+    }
+
+    /// `MEM_writeLEST (bitC->ptr, bitC->bitContainer)`.
+    #[inline]
+    fn store(&mut self) {
+        self.dst[self.ptr..self.ptr + 8].copy_from_slice(&self.bit_container.to_le_bytes());
+    }
+
+    /// Port of `BIT_flushBitsFast` (external/zstd/lib/common/bitstream.h:205-214 @ zstd v1.5.7).
+    #[inline]
+    pub(crate) fn flush_bits_fast(&mut self) {
+        let nb_bytes = (self.bit_pos >> 3) as usize;
+        self.store();
+        self.ptr += nb_bytes;
+        self.bit_pos &= 7;
+        self.bit_container = self
+            .bit_container
+            .checked_shr(nb_bytes as u32 * 8)
+            .unwrap_or(0);
+    }
+
+    /// Port of `BIT_flushBits` (external/zstd/lib/common/bitstream.h:221-231 @ zstd v1.5.7):
+    /// never writes past the end; an overflow shows at [`Self::close`].
+    #[inline]
+    pub(crate) fn flush_bits(&mut self) {
+        let nb_bytes = (self.bit_pos >> 3) as usize;
+        self.store();
+        self.ptr += nb_bytes;
+        if self.ptr > self.end_ptr {
+            self.ptr = self.end_ptr;
+        }
+        self.bit_pos &= 7;
+        self.bit_container = self
+            .bit_container
+            .checked_shr(nb_bytes as u32 * 8)
+            .unwrap_or(0);
+    }
+
+    /// Port of `BIT_closeCStream` (external/zstd/lib/common/bitstream.h:236-242 @ zstd v1.5.7):
+    /// the stream's size, or 0 if it did not fit.
+    pub(crate) fn close(&mut self) -> usize {
+        self.add_bits_fast(1, 1); // endMark
+        self.flush_bits();
+        if self.ptr >= self.end_ptr {
+            return 0; // overflow detected
+        }
+        self.ptr + usize::from(self.bit_pos > 0)
+    }
+}
