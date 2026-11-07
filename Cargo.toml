@@ -40,6 +40,8 @@ manual_clamp = "allow"
 manual_range_contains = "allow"
 # `!(a >= b)` is how C refuses NaN; it stays as written.
 neg_cmp_op_on_partial_ord = "allow"
+# `(a + b - 1) / b` stays as C writes it (its overflow is C's).
+manual_div_ceil = "allow"
 too_many_arguments = "allow"
 dbg_macro = "deny"
 todo = "deny"

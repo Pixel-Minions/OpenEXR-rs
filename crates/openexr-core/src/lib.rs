@@ -13,20 +13,27 @@ pub mod bytes;
 pub mod cfmt;
 pub mod channel_list;
 pub mod color_metadata;
+pub mod compression;
 pub mod context;
 pub mod errors;
+mod file_impl;
 pub mod float_vector;
 mod imath_half;
 mod internal_coding;
 mod internal_constants;
 mod internal_cpuid;
+mod internal_file;
 mod internal_ht_quality;
+mod internal_util;
 mod internal_xdr;
 pub mod opaque;
 pub mod openexr_attr;
+mod os_error;
+mod parse_header;
 pub mod preview;
 pub mod string;
 pub mod string_vector;
+mod validation;
 pub mod version;
 
 #[cfg(test)]

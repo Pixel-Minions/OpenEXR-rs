@@ -1105,14 +1105,16 @@ note = "all but exr_check_color_metadata, which needs the part attribute API (Ph
 [[file]]
 path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/compression.rs"
+note = "lines_per_chunk, is_valid_for_deep; the codec dispatch with Phase 4"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/context.rs"
-note = "temporary context, finish, file name, user data; start_read/start_write, test_file_header, longname support, attr handlers and write_header follow with files, attributes and the writer"
+note = "start_read, test_file_header, temporary context, finish, accessors; start_write, longname support, attr handlers and write_header follow"
 
 [[file]]
 path = "src/lib/OpenEXRCore/debug.c"
@@ -1251,7 +1253,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_file.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/internal_file.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_float_vector.h"
@@ -1314,7 +1317,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_posix_file_impl.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/file_impl.rs,crates/openexr-core/src/os_error.rs"
+note = "read side; checked on Linux in the heavy tier"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_preview.h"
@@ -1366,12 +1371,15 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_util.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/internal_util.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_win32_file_impl.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/file_impl.rs,crates/openexr-core/src/os_error.rs"
+note = "read side; write, finalize_write and temp names with Phase 6"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_xdr.h"
@@ -1509,7 +1517,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/parse_header.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/parse_header.rs"
+note = "complete for reading; done after the heavy tier compares every corpus header with the source-built harness (O1)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/part.c"
@@ -1554,7 +1564,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/validation.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/validation.rs"
+note = "read-side validation; internal_exr_validate_write_part with the writer (Phase 6)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/write_header.c"
@@ -1676,7 +1688,9 @@ note = "CorePerfTest; profiling comes later (owner, 2026-11-06)"
 [[file]]
 path = "src/test/OpenEXRCoreTest/read.cpp"
 kind = "test"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/upstream_tests/read.rs"
+note = "testReadBadArgs, testReadBadFiles, testOpenScans, testOpenTiles, testOpenMultiPart; the read and meta tests need the part API and decoding"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/read.h"

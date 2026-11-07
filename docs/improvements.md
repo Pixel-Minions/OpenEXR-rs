@@ -63,6 +63,21 @@ section. An entry says:
 - **A fix:** count what `write_header.c` writes.
 - **Status:** matched (`crates/openexr-core/src/attributes.rs`).
 
+## Header parsing
+
+### I-4. A scanline part's chunk count is computed in int
+
+- **Upstream:** `internal_exr_compute_chunk_offset_size` converts the data window height to
+  `int` and computes `(h + linePerChunk - 1) / linePerChunk` in `int`
+  (`src/lib/OpenEXRCore/parse_header.c:2576-2578` @ v3.5.3). Validation allows heights up to
+  about 2^31 - 3, so with 256 lines per chunk (DWAB, HTJ2K256, LJ2K) the sum can pass
+  `INT_MAX`, which is undefined in C; x86-64 wraps, giving a negative count, and the part is
+  refused as "Invalid chunk count".
+- **Who notices:** crafted files with data windows near 2^31 rows.
+- **A fix:** compute in 64 bits.
+- **Status:** matched (wrapping arithmetic, `crates/openexr-core/src/parse_header.rs`); the
+  oracle check of such a file belongs to the heavy tier.
+
 ## Undefined behaviour the port does not copy
 
 ### U-1. A string created from no data has an unset terminator

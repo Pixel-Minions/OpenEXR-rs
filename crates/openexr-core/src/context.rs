@@ -21,8 +21,10 @@
 use std::any::Any;
 use std::fmt;
 use std::io::Write as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::attributes::{AttrId, Attribute, AttributeList};
 use crate::base::{
     get_default_dwa_compression_quality, get_default_error_message,
     get_default_lossy_htj2k_quality, get_default_maximum_image_size, get_default_maximum_tile_size,
@@ -30,8 +32,9 @@ use crate::base::{
     get_error_code_as_string,
 };
 use crate::cfmt::{self, Arg, Crt};
-use crate::errors::ExrResult;
+use crate::errors::{ErrorCode, ExrResult};
 use crate::internal_constants::EXR_SHORTNAME_MAXLEN;
+use crate::openexr_attr::{Box2i, Compression, LineOrder, Storage, V2i};
 
 /// An error from Core: the code, and the message the error handler received with it (`None`
 /// where upstream returns the code without reporting it). The code is the `exr_result_t`
@@ -90,6 +93,11 @@ pub struct StreamErrors<'a> {
 }
 
 impl StreamErrors<'_> {
+    /// The context reporting.
+    pub(crate) fn core(&self) -> &ContextCore {
+        self.ctxt
+    }
+
     /// Reports `fmt` formatted with `args` and returns the error to propagate.
     pub fn print_error(&self, code: impl Into<ExrResult>, fmt: &str, args: &[Arg<'_>]) -> Error {
         self.ctxt.print_error(code, fmt, args)
@@ -195,6 +203,43 @@ pub(crate) enum ContextMode {
     WriteFinished = 5,
 }
 
+/// Port of `enum _INTERNAL_EXR_READ_MODE` (src/lib/OpenEXRCore/internal_structs.h:150-154
+/// @ v3.5.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReadMode {
+    MustReadAll,
+    AllowShortRead,
+}
+
+/// Port of `dispatch_read` (src/lib/OpenEXRCore/context.c:28-66 @ v3.5.3): reads `buf.len()`
+/// bytes at `*offsetp` through the context's read function, advancing the offset by what was
+/// read. A short or failed read is `EXR_ERR_READ_IO`, unreported (the stream reports its own
+/// failures); with [`ReadMode::AllowShortRead`] any non-negative count succeeds.
+pub(crate) fn dispatch_read(
+    core: &ContextCore,
+    read_fn: &Option<ReadFn>,
+    buf: &mut [u8],
+    offsetp: &mut u64,
+    nread: &mut i64,
+    rmode: ReadMode,
+) -> Result<(), Error> {
+    *nread = -1;
+    let Some(read) = read_fn else {
+        return Err(core.standard_error(ErrorCode::NotOpenRead));
+    };
+    let sz = buf.len() as i64;
+    let rval = read(&core.stream_errors(), buf, *offsetp);
+    *nread = rval;
+    if rval > 0 {
+        *offsetp += rval as u64;
+    }
+    if rval == sz || (rmode == ReadMode::AllowShortRead && rval >= 0) {
+        Ok(())
+    } else {
+        Err(Error::bare(ErrorCode::ReadIo))
+    }
+}
+
 /// Port of `default_error_handler` (src/lib/OpenEXRCore/internal_structs.c:28-79 @ v3.5.3): one
 /// line on stderr, under a process-wide lock.
 fn default_error_handler(r: &ErrorReport<'_>) {
@@ -260,6 +305,10 @@ pub struct ContextCore {
     pub(crate) filename: Option<String>,
     /// `max_name_length`: 31, or 255 with long names.
     pub(crate) max_name_length: u8,
+    /// Set while a header is parsed with `EXR_CONTEXT_FLAG_SILENT_HEADER_PARSE`: upstream then
+    /// swaps the three error functions for ones that return the code and report nothing
+    /// (`silent_error` and friends, src/lib/OpenEXRCore/parse_header.c:25-48 @ v3.5.3).
+    pub(crate) silent: AtomicBool,
     error_handler: ErrorHandler,
 }
 
@@ -277,6 +326,9 @@ impl ContextCore {
     /// `ctxt->report_error`.
     pub(crate) fn report_error(&self, code: impl Into<ExrResult>, msg: &[u8]) -> Error {
         let code = code.into();
+        if self.silent.load(Ordering::Relaxed) {
+            return Error::bare(code);
+        }
         (self.error_handler)(&ErrorReport {
             has_context: true,
             file_name: self.filename.as_deref(),
@@ -294,6 +346,9 @@ impl ContextCore {
     /// @ v3.5.3): `ctxt->standard_error`.
     pub(crate) fn standard_error(&self, code: impl Into<ExrResult>) -> Error {
         let code = code.into();
+        if self.silent.load(Ordering::Relaxed) {
+            return Error::bare(code);
+        }
         self.report_error(code, get_default_error_message(code).as_bytes())
     }
 
@@ -306,6 +361,10 @@ impl ContextCore {
         fmt: &str,
         args: &[Arg<'_>],
     ) -> Error {
+        let code = code.into();
+        if self.silent.load(Ordering::Relaxed) {
+            return Error::bare(code);
+        }
         let msg = cfmt::sprintf(Crt::NATIVE, fmt, args);
         self.report_error(code, &msg)
     }
@@ -320,21 +379,63 @@ impl ContextCore {
 #[derive(Debug, Clone)]
 pub(crate) struct Part {
     pub(crate) part_index: i32,
-    /// `EXR_STORAGE_LAST_TYPE` until the header says otherwise.
-    pub(crate) storage_mode: i32,
+    /// Part of the file version flag declaring scanlines or tiled mode.
+    pub(crate) storage_mode: Storage,
+    pub(crate) attributes: AttributeList,
+
+    // required attributes
+    pub(crate) channels: Option<AttrId>,
+    pub(crate) compression: Option<AttrId>,
+    pub(crate) data_window_attr: Option<AttrId>,
+    pub(crate) display_window_attr: Option<AttrId>,
+    pub(crate) line_order: Option<AttrId>,
+    pub(crate) pixel_aspect_ratio: Option<AttrId>,
+    pub(crate) screen_window_center: Option<AttrId>,
+    pub(crate) screen_window_width: Option<AttrId>,
+    /// required for tiled files (see `storage_mode`)
+    pub(crate) tiles: Option<AttrId>,
+    // required for deep or multipart files
+    pub(crate) name: Option<AttrId>,
+    pub(crate) type_: Option<AttrId>,
+    pub(crate) version: Option<AttrId>,
+    pub(crate) chunk_count_attr: Option<AttrId>,
+    // in the file layout doc, but not required any more?
+    pub(crate) max_samples_per_pixel: Option<AttrId>,
+
+    // copy commonly accessed required attributes to local struct memory for quick access
+    pub(crate) data_window: Box2i,
+    pub(crate) display_window: Box2i,
+    pub(crate) comp_type: Compression,
+    pub(crate) lineorder: LineOrder,
+
     pub(crate) zip_compression_level: i32,
     pub(crate) dwa_compression_level: f32,
     pub(crate) lossy_htj2k_quality: f32,
     pub(crate) zstd_compression_level: i32,
-    pub(crate) data_window_max: (i32, i32),
-    pub(crate) display_window_max: (i32, i32),
-    pub(crate) chunk_count: i32,
+
+    pub(crate) num_tile_levels_x: i32,
+    pub(crate) num_tile_levels_y: i32,
+    /// `tile_level_tile_count_x` and the three arrays upstream allocates with it; empty until
+    /// computed.
+    pub(crate) tile_level_tile_count_x: Vec<i32>,
+    pub(crate) tile_level_tile_count_y: Vec<i32>,
+    pub(crate) tile_level_tile_size_x: Vec<i32>,
+    pub(crate) tile_level_tile_size_y: Vec<i32>,
+
+    pub(crate) unpacked_size_per_chunk: u64,
     pub(crate) lines_per_chunk: i16,
+    pub(crate) chan_has_line_sampling: i16,
+
+    pub(crate) chunk_count: i32,
+    pub(crate) chunk_table_offset: u64,
 }
 
-/// `EXR_STORAGE_LAST_TYPE` (src/lib/OpenEXRCore/openexr_attr.h @ v3.5.3), until the storage
-/// types are ported with the attributes.
-const EXR_STORAGE_LAST_TYPE: i32 = 4;
+impl Part {
+    /// The part's attribute `id` (a required-attribute slot that is set).
+    pub(crate) fn attr(&self, id: Option<AttrId>) -> Option<&Attribute> {
+        id.and_then(|id| self.attributes.get(id))
+    }
+}
 
 /// Port of `struct _priv_exr_context_t` (src/lib/OpenEXRCore/internal_structs.h:166-254
 /// @ v3.5.3), so far the fields the ported functions use.
@@ -358,7 +459,16 @@ pub struct Context {
     pub(crate) read_fn: Option<ReadFn>,
     pub(crate) write_fn: Option<WriteFn>,
     destroy_fn: Option<DestroyFn>,
+    /// Whether the streams are Core's default file ones (upstream compares `destroy_fn` with
+    /// `&default_shutdown`).
+    pub(crate) default_stream: bool,
+    pub(crate) is_singlepart_tiled: bool,
+    pub(crate) has_nonimage_data: bool,
+    pub(crate) is_multipart: bool,
+    pub(crate) orig_version_and_flags: u32,
     pub(crate) parts: Vec<Part>,
+    /// The registered opaque attribute handlers (`custom_handlers`).
+    pub(crate) custom_handlers: AttributeList,
     finished: bool,
 }
 
@@ -465,6 +575,7 @@ impl Context {
                 mode,
                 filename: None,
                 max_name_length: EXR_SHORTNAME_MAXLEN,
+                silent: AtomicBool::new(false),
                 error_handler: inits.error_handler,
             },
             version: 0,
@@ -486,7 +597,13 @@ impl Context {
             read_fn: inits.read_fn,
             write_fn: inits.write_fn,
             destroy_fn: inits.destroy_fn,
+            default_stream: false,
+            is_singlepart_tiled: false,
+            has_nonimage_data: false,
+            is_multipart: false,
+            orig_version_and_flags: 0,
             parts: Vec::new(),
+            custom_handlers: AttributeList::default(),
             finished: false,
         };
         // if we are reading the file, go ahead and set up the first part to make parsing
@@ -502,19 +619,108 @@ impl Context {
     /// default codec levels; returns its index.
     pub(crate) fn add_part(&mut self) -> usize {
         let index = self.parts.len();
+        let invalid_window = Box2i {
+            min: V2i { x: 0, y: 0 },
+            max: V2i { x: -1, y: -1 },
+        };
         self.parts.push(Part {
             part_index: 0,
-            storage_mode: EXR_STORAGE_LAST_TYPE,
+            // assign appropriately invalid values
+            storage_mode: Storage::LAST_TYPE,
+            attributes: AttributeList::default(),
+            channels: None,
+            compression: None,
+            data_window_attr: None,
+            display_window_attr: None,
+            line_order: None,
+            pixel_aspect_ratio: None,
+            screen_window_center: None,
+            screen_window_width: None,
+            tiles: None,
+            name: None,
+            type_: None,
+            version: None,
+            chunk_count_attr: None,
+            max_samples_per_pixel: None,
+            data_window: invalid_window,
+            display_window: invalid_window,
+            comp_type: Compression::NONE,
+            lineorder: LineOrder::INCREASING_Y,
             zip_compression_level: self.default_zip_level,
             dwa_compression_level: self.default_dwa_quality,
             lossy_htj2k_quality: self.default_lossy_htj2k_quality,
             zstd_compression_level: self.default_zstd_level,
-            data_window_max: (-1, -1),
-            display_window_max: (-1, -1),
-            chunk_count: -1,
+            num_tile_levels_x: 0,
+            num_tile_levels_y: 0,
+            tile_level_tile_count_x: Vec::new(),
+            tile_level_tile_count_y: Vec::new(),
+            tile_level_tile_size_x: Vec::new(),
+            tile_level_tile_size_y: Vec::new(),
+            unpacked_size_per_chunk: 0,
             lines_per_chunk: -1,
+            chan_has_line_sampling: 0,
+            chunk_count: -1,
+            chunk_table_offset: 0,
         });
         index
+    }
+
+    /// Opens a context for reading `filename` with the initializer's streams, or the default
+    /// file streams when it has no read function: the common part of `exr_start_read` and
+    /// `exr_test_file_header` (src/lib/OpenEXRCore/context.c:150-297 @ v3.5.3), up to
+    /// `process_query_size`.
+    fn open_for_read(
+        filename: Option<&str>,
+        ctxtdata: Option<Initializer>,
+        what: &str,
+    ) -> Result<Context, Error> {
+        let mut inits = fill_context_data(ctxtdata);
+        let Some(filename) = filename else {
+            let msg = format!("Invalid filename passed to {what} function");
+            if what == "test file header" || inits.flags & EXR_CONTEXT_FLAG_SILENT_HEADER_PARSE == 0
+            {
+                return Err(report_without_context(
+                    &Some(inits.error_handler.clone()),
+                    ErrorCode::InvalidArgument,
+                    msg.as_bytes(),
+                ));
+            }
+            return Err(Error::bare(ErrorCode::InvalidArgument));
+        };
+        let size_fn = inits.size_fn.take();
+        let has_read_fn = inits.read_fn.is_some();
+        let mut ret = Context::alloc(inits, ContextMode::Read);
+        ret.core.filename = Some(filename.to_owned());
+        // process_query_size: the default stream's size, or the initializer's size function
+        ret.file_size = if !has_read_fn {
+            crate::file_impl::default_init_read_file(&mut ret)?
+        } else {
+            size_fn.map_or(-1, |f| f())
+        };
+        Ok(ret)
+    }
+
+    /// Port of `exr_start_read` (src/lib/OpenEXRCore/context.c:232-297 @ v3.5.3): opens
+    /// `filename` and parses its header. On failure the context is finished (dropped).
+    pub fn start_read(
+        filename: Option<&str>,
+        ctxtdata: Option<Initializer>,
+    ) -> Result<Context, Error> {
+        let mut ret = Context::open_for_read(filename, ctxtdata, "start_read")?;
+        crate::parse_header::internal_exr_parse_header(&mut ret)?;
+        Ok(ret)
+    }
+
+    /// Port of `exr_test_file_header` (src/lib/OpenEXRCore/context.c:150-198 @ v3.5.3): whether
+    /// `filename` starts with a valid magic number and version.
+    pub fn test_file_header(
+        filename: Option<&str>,
+        ctxtdata: Option<Initializer>,
+    ) -> Result<(), Error> {
+        let mut ret = Context::open_for_read(filename, ctxtdata, "test file header")?;
+        let rv = crate::parse_header::internal_exr_check_magic(&mut ret);
+        drop(ret);
+        rv
     }
 
     /// Port of `exr_start_temporary_context` (src/lib/OpenEXRCore/context.c:379-405 @ v3.5.3):
