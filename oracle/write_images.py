@@ -8,8 +8,9 @@ the heavy-tier decode checks.
 <compression> is a name of the wheel's (NO_COMPRESSION, RLE_COMPRESSION, ...). For each one
 and each layout below it writes <out-dir>/<layout>_<compression>.exr: scanline layouts with 1
 to 5 half channels, 3 and 4 float or uint channels, mixed types, x and y subsampling (on a
-38 x 24 window, a whole number of samples); tiled layouts with 3 and 4 channels; a header
-holding an attribute of every type the binding writes; and two large images whose pixels
+38 x 24 window, a whole number of samples); tiled layouts with 3 and 4 channels (one level);
+a scanline and a tiled layout in decreasing-Y line order ("_dec"); a header holding an
+attribute of every type the binding writes; and two large images whose pixels
 compress ("smooth": gradients, flat areas, repeats and noisy bands, 2000 x 40), so that the
 codecs' compressed paths are taken, not their fallback to the raw bytes. Pixel bits come from
 a fixed seed. The images' pixels are what the wheel reads back (oracle/dump_pixels.py), not
@@ -71,6 +72,10 @@ LAYOUTS = {
     "sampled": ("scanline", [("Y", "half", 1, 1), ("BY", "half", 2, 2), ("RY", "half", 2, 2)]),
     "tiled3": ("tiled", [("B", "half", 1, 1), ("G", "half", 1, 1), ("R", "half", 1, 1)]),
     "tiled4": ("tiled", [(c, "float", 1, 1) for c in "ABGR"]),
+    # decreasing-Y line order (the binding writes only level 0 of a mipmapped or ripmapped
+    # part, so the tiled one has one level)
+    "half3_dec": ("scanline", [("B", "half", 1, 1), ("G", "half", 1, 1), ("R", "half", 1, 1)]),
+    "tiled3_dec": ("tiled", [("B", "half", 1, 1), ("G", "half", 1, 1), ("R", "half", 1, 1)]),
     "smooth_half4": ("scanline", [(c, "half", 1, 1) for c in "ABGR"]),
     "smooth_mixed": ("scanline", [("B", "half", 1, 1), ("G", "float", 1, 1), ("R", "float", 1, 1), ("id", "uint", 1, 1)]),
     # a header with an attribute of every type the binding writes (EXTRA_ATTRS)
@@ -118,6 +123,8 @@ def main():
                 header["tiles"] = tiles
             else:
                 header["type"] = OpenEXR.scanlineimage
+            if name.endswith("_dec"):
+                header["lineOrder"] = OpenEXR.DECREASING_Y
             if name == "attrs":
                 header.update(extra_attrs())
             sampled = any(xs > 1 or ys > 1 for _, _, xs, ys in chans)
