@@ -17,6 +17,11 @@ codecs' compressed paths are taken, not their fallback to the raw bytes. Pixel b
 a fixed seed. The images' pixels are what the wheel reads back (oracle/dump_pixels.py), not
 what was written.
 
+The pixels each image was written from are kept too, for the checks of the lossy encoders:
+<out-dir>/raw/<layout>_<compression>.<channel>.raw holds the full-size array handed to the
+wheel for the channel, row by row in native byte order (the wheel stores a subsampled
+channel as the array's first (h / ys) x (w / xs) values, in raster order).
+
 This script reports what the library does; it computes no expected values.
 """
 
@@ -114,7 +119,8 @@ def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
     out = sys.argv[1]
-    os.makedirs(out, exist_ok=True)
+    raw = os.path.join(out, "raw")
+    os.makedirs(raw, exist_ok=True)
     for comp_name in sys.argv[2:]:
         comp = getattr(OpenEXR, comp_name)
         for name, (storage, chans) in LAYOUTS.items():
@@ -140,6 +146,7 @@ def main():
             for i, (cname, kind, xs, ys) in enumerate(chans):
                 # the wheel takes every channel at full size and keeps the samples it stores
                 px = channel(rng, kind, w, h, float(i) if is_smooth else None)
+                px.tofile(os.path.join(raw, f"{name}_{comp_name}.{cname}.raw"))
                 channels[cname] = OpenEXR.Channel(cname, px, xs, ys)
                 if "linear_" in name:
                     channels[cname].pLinear = True
