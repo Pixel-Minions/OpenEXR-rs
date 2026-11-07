@@ -47,22 +47,29 @@ const COPYRIGHTS: &[&str] = &[
 /// The header of the ports of vendored libraries, by crate directory: their own license and
 /// the copyright lines their files carry (CLAUDE.md, "Headers"; libdeflate's files give the
 /// year each was written).
-const VENDORED_HEADERS: &[(&str, &str, &[&str])] = &[(
-    "crates/openexr-deflate/",
-    "// SPDX-License-Identifier: MIT",
-    &[
-        "// Copyright 2016 Eric Biggers",
-        "// Copyright 2020 Eric Biggers",
-        "// Copyright 2022 Eric Biggers",
-    ],
-)];
+const VENDORED_HEADERS: &[(&str, &str, &[&str])] = &[
+    (
+        "crates/openexr-deflate/",
+        "// SPDX-License-Identifier: MIT",
+        &[
+            "// Copyright 2016 Eric Biggers",
+            "// Copyright 2020 Eric Biggers",
+            "// Copyright 2022 Eric Biggers",
+        ],
+    ),
+    (
+        "crates/openexr-zstd/",
+        "// SPDX-License-Identifier: BSD-3-Clause",
+        &["// Copyright (c) Meta Platforms, Inc. and affiliates."],
+    ),
+];
 
 /// Where a citation's path is resolved, by the version after `@`.
 fn citation_root(root: &Path, tag: &str) -> PathBuf {
     if tag.starts_with("Imath") {
         root.join("upstream/imath")
-    } else if tag.starts_with("libdeflate") {
-        // libdeflate as OpenEXR bundles it; its citations start at `external/deflate/`
+    } else if tag.starts_with("libdeflate") || tag.starts_with("zstd") {
+        // libdeflate and zstd as OpenEXR bundles them; their citations start at `external/`
         root.join("upstream/openexr")
     } else {
         root.join("upstream/openexr")

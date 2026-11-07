@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/openexr-core", "crates/openexr-deflate", "crates/openexr-testkit", "xtask"]
+members = ["crates/openexr-core", "crates/openexr-deflate", "crates/openexr-testkit", "crates/openexr-zstd", "xtask"]
 
 [workspace.package]
 # Our own semver, with the matched OpenEXR release as build metadata (PLAN.md §2).
@@ -18,6 +18,7 @@ publish = false
 [workspace.dependencies]
 openexr-core = { path = "crates/openexr-core", package = "openexr-rs-core" }
 openexr-deflate = { path = "crates/openexr-deflate", package = "openexr-rs-deflate" }
+openexr-zstd = { path = "crates/openexr-zstd", package = "openexr-rs-zstd" }
 openexr-testkit = { path = "crates/openexr-testkit" }
 # Third-party dependencies are pinned to exact versions (`=x.y.z`), each with a reason and the
 # owner's OK (CLAUDE.md). None yet.

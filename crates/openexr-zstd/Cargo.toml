@@ -1,0 +1,20 @@
+[package]
+name = "openexr-rs-zstd"
+description = "An exact Rust port of zstd 1.5.7, as OpenEXR 3.5.3 bundles it"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "BSD-3-Clause"
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+name = "openexr_zstd"
+
+[features]
+# The heavy test tier (PLAN.md §8): tests/heavy_*.rs, run by `cargo xtask gate --full`.
+heavy = []
+
+[lints]
+workspace = true

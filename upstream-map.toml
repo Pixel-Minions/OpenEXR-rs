@@ -764,12 +764,16 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/common/bits.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/mem.rs"
+note = "the bit scans the port uses"
 
 [[file]]
 path = "external/zstd/lib/common/bitstream.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/bitstream.rs"
+note = "its decoding half ported; checked with the decompressor (heavy tier, ZSTD images); the encoding half comes with the compressor"
 
 [[file]]
 path = "external/zstd/lib/common/compiler.h"
@@ -794,7 +798,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/common/entropy_common.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/entropy_common.rs"
+note = "ported whole; checked with the decompressor (heavy tier, ZSTD images)"
 
 [[file]]
 path = "external/zstd/lib/common/error_private.c"
@@ -804,17 +810,23 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/common/error_private.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/error_private.rs"
+note = "the error codes, as Result errors"
 
 [[file]]
 path = "external/zstd/lib/common/fse.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/fse_decompress.rs"
+note = "its decoding half ported; checked with the decompressor (heavy tier, ZSTD images); the encoding half comes with the compressor"
 
 [[file]]
 path = "external/zstd/lib/common/fse_decompress.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/fse_decompress.rs"
+note = "ported whole; checked with the decompressor (heavy tier, ZSTD images)"
 
 [[file]]
 path = "external/zstd/lib/common/huf.h"
@@ -824,7 +836,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/common/mem.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/mem.rs"
+note = "the little-endian reads the port uses"
 
 [[file]]
 path = "external/zstd/lib/common/pool.c"
@@ -1075,7 +1089,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/zstd_errors.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/error_private.rs"
+note = "the error codes, as Result errors"
 
 [[file]]
 path = "src/lib/OpenEXRCore/CMakeLists.txt"
