@@ -1105,7 +1105,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/context.rs"
+note = "temporary context, finish, file name, user data; start_read/start_write, test_file_header, longname support, attr handlers and write_header follow with files, attributes and the writer"
 
 [[file]]
 path = "src/lib/OpenEXRCore/debug.c"
@@ -1172,7 +1174,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_constants.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/internal_constants.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_cpuid.h"
@@ -1330,12 +1333,16 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_structs.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/context.rs"
+note = "error dispatch, default handler, alloc_context, add_part; destroy and revert_add_part with attributes"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_structs.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/context.rs"
+note = "context and part fields grow with each phase; locks are Rust borrows (&mut for writers)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_thread.h"
@@ -1382,6 +1389,7 @@ status = "todo"
 path = "src/lib/OpenEXRCore/memory.c"
 kind = "src"
 status = "todo"
+note = "Rust allocation replaces it (PLAN.md §9); exr_set_default_memory_routines and the malloc-failure tests need an owner decision"
 
 [[file]]
 path = "src/lib/OpenEXRCore/opaque.c"
@@ -1433,7 +1441,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_context.h"
 kind = "api"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/context.rs"
+note = "initializer, flags, callbacks; the remaining functions as context.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_debug.h"
@@ -1485,7 +1495,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/part.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/context.rs"
+note = "exr_get_count; the rest with Phase 3"
 
 [[file]]
 path = "src/lib/OpenEXRCore/part_attr.c"

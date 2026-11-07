@@ -225,3 +225,16 @@ fn test_cpu_ident() {
         crate::internal_cpuid::has_native_half();
     }
 }
+
+/// Partial port of `testTempContext` (src/test/OpenEXRCoreTest/base_units.cpp:446-470 @ v3.5.3):
+/// the first context. The call with a NULL out-pointer has no Rust counterpart, and the second
+/// context needs `exr_initialize_required_attr_simple` (Phase 3), which completes this port.
+#[test]
+fn test_temp_context_first_context() {
+    let _guard = DEFAULTS.lock().unwrap_or_else(|e| e.into_inner());
+    let tempdir = std::env::temp_dir();
+    let name = tempdir.to_string_lossy();
+    let c = Context::start_temporary_context(Some(&name), None).expect("start_temporary_context");
+    assert_eq!(c.get_count(), 1);
+    c.finish().expect("finish");
+}

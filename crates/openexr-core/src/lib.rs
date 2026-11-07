@@ -9,9 +9,11 @@
 pub mod base;
 #[doc(hidden)]
 pub mod cfmt;
+pub mod context;
 pub mod errors;
 mod imath_half;
 mod internal_coding;
+mod internal_constants;
 mod internal_cpuid;
 mod internal_ht_quality;
 mod internal_xdr;
@@ -21,4 +23,5 @@ pub mod version;
 mod upstream_tests;
 
 pub use base::*;
+pub use context::{Context, Error, ErrorHandler, ErrorReport, Initializer};
 pub use errors::{ErrorCode, ExrResult};
