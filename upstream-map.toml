@@ -1325,7 +1325,7 @@ path = "src/lib/OpenEXRCore/internal_huf.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/internal_huf.rs"
-note = "the spare byte sizes exr_compress_max_buffer_size uses; the Huffman coder with PIZ"
+note = "ported whole: the coder, the classic and the fast decoder (testHUF; the bytes are checked against the wheel with PIZ)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_huf.h"
@@ -1683,7 +1683,7 @@ path = "src/test/OpenEXRCoreTest/compression.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/compression.rs"
-note = "testNoCompression, testRLECompression, testZIPCompression, testZIPSCompression (the C++ half by the wheel, oracle/save_load.py, heavy tier); the other codecs' tests and testHUF with their codecs"
+note = "testNoCompression, testRLECompression, testZIPCompression, testZIPSCompression (the C++ half by the wheel, oracle/save_load.py, heavy tier), testHUF (its comparison with the C++ hufCompress, which the wheel does not expose, n/a); the other codecs' tests with their codecs"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/compression.h"

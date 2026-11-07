@@ -673,3 +673,44 @@ fn test_zip_compression() {
 fn test_zips_compression() {
     test_comp(Compression::ZIPS);
 }
+
+/// Port of `testHUF` (src/test/OpenEXRCoreTest/compression.cpp:1511-1643) @ v3.5.3: Core's
+/// Huffman coder on three fills of a line, its output decoded back. Upstream also compares
+/// the bytes with the C++ library's `hufCompress`, which the wheel's binding does not expose;
+/// the C++ library codes PIZ through Core's coder, so the wheel's PIZ files check these bytes
+/// (heavy tier, with the PIZ codec).
+#[test]
+fn test_huf() {
+    use crate::internal_huf::{
+        internal_exr_huf_compress_spare_bytes, internal_exr_huf_decompress_spare_bytes,
+        internal_huf_compress, internal_huf_decompress,
+    };
+
+    let esize = internal_exr_huf_compress_spare_bytes();
+    let dsize = internal_exr_huf_decompress_spare_bytes();
+    // decsize 1 << 16 + 1
+    // decsize 1 << 14
+    assert_eq!(esize, 65537 * (8 + 8 + size_of::<*const u64>() as u64 + 4));
+    let hufdecsize = (size_of::<*const u32>() + size_of::<i32>() + size_of::<u32>()) as u64;
+    // sizeof(FastHufDecoder) is bother to manually compute, just assume it's ok if it's
+    // returning at least enough for the slow path
+    assert!(dsize >= 65537 * 8 + 16383 * hufdecsize);
+
+    let mut p = Pixels::new(IMG_WIDTH, 1, IMG_STRIDE_X);
+    let mut encoded = vec![0u8; (IMG_WIDTH * 2 * 3 + 65536) as usize];
+    let w = IMG_WIDTH as usize;
+
+    let fills: [fn(&mut Pixels); 3] = [
+        Pixels::fill_zero,
+        Pixels::fill_pattern1,
+        Pixels::fill_random,
+    ];
+    for fill in fills {
+        fill(&mut p);
+        let ebytes = internal_huf_compress(&mut encoded, &p.hv[..w], esize).unwrap() as usize;
+        let mut decode = p.clone();
+        decode.hv[..w].fill(0);
+        internal_huf_decompress(None, &encoded[..ebytes], &mut decode.hv[..w], dsize).unwrap();
+        assert_eq!(decode.hv[..w], p.hv[..w]);
+    }
+}
