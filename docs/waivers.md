@@ -14,5 +14,8 @@ names, and says which waiver.
 | W-6 | Error text | The three corrected messages of I-10 | Deviation D-6 (I-10) | Owner in chat, 2026-11-07 |
 | W-7 | Error reports | `exr_set_version` with a version other than 1: a message is reported; the code is unchanged | Deviation D-7 (I-11) | Owner in chat, 2026-11-07 |
 | W-8 | Error text | `exr_decoding_choose_default_routines` with an unsupported output size or type: the channel index | Deviation D-9 (I-13) | Owner in chat, 2026-11-07 |
+| W-9 | Written files | Headers with `bytes` attributes: Core's layout is replaced by the C++ library's (the wheel writes headers with the C++ library, so against the wheel these now match) | Deviation D-10 (I-14) | Owner in chat, 2026-11-07 |
+| W-10 | Which calls are refused | `exr_write_header` for multipart parts that disagree on a shared attribute | Deviation D-11 (I-15) | Owner in chat, 2026-11-07 |
+| W-11 | Which calls are refused; written files | Headers with a `deepImageState` attribute | Deviation D-12 (I-16) | Owner in chat, 2026-11-07 |
 
 D-8 (I-12) has no waiver: no input reaches it, so no output differs.

@@ -2252,39 +2252,7 @@ fn parse_header_body(ctxt: &mut Context) -> Result<(), Error> {
     if rv.is_ok() {
         for p in 1..ctxt.parts.len() {
             if let Err(mismatch) = internal_exr_validate_shared_attrs(ctxt, p) {
-                let pname: Vec<u8> = {
-                    let curp = &ctxt.parts[p];
-                    match curp.attr(curp.name).map(|a| &a.value) {
-                        Some(AttrValue::String(s)) => s.c_str().to_vec(),
-                        _ => b"<missing name>".to_vec(),
-                    }
-                };
-                let m = |k: usize| -> (&[u8], &[u8]) {
-                    match mismatch.get(k) {
-                        Some(s) => (s.as_bytes(), b" "),
-                        None => (b"", b""),
-                    }
-                };
-                let (m0, s0) = m(0);
-                let (m1, s1) = m(1);
-                let (m2, s2) = m(2);
-                let (m3, _) = m(3);
-                // MultiPartInputFile would fail unconditionally
-                rv = Err(ctxt.core.print_error(
-                    ErrorCode::AttrTypeMismatch,
-                    "Part %d (%s) has non-conforming shared attributes: %s%s%s%s%s%s%s",
-                    &[
-                        (p as i32).into(),
-                        Arg::Str(&pname),
-                        Arg::Str(m0),
-                        Arg::Str(s0),
-                        Arg::Str(m1),
-                        Arg::Str(s1),
-                        Arg::Str(m2),
-                        Arg::Str(s2),
-                        Arg::Str(m3),
-                    ],
-                ));
+                rv = Err(crate::validation::shared_attrs_error(ctxt, p, &mismatch));
                 break;
             }
         }

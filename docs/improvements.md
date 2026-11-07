@@ -137,6 +137,45 @@ section. An entry says:
 - **A fix:** return the lookup's error.
 - **Status:** **fixed**, deviation D-8 (owner, 2026-11-07) (`crates/openexr-core/src/part_attr_copy.rs`).
 
+## Header writing
+
+### I-14. Core writes a bytes attribute without its type hint
+
+- **Upstream:** `save_bytes` writes a `bytes` attribute as its size and data
+  (`src/lib/OpenEXRCore/write_header.c:139-167` @ v3.5.3), where the format, and both
+  readers, hold the type hint's length, the hint and the data (`parse_header.c`'s
+  `extract_attr_bytes`, `ImfBytesAttribute.cpp:101-113`): a file Core writes with a `bytes`
+  attribute does not read back. It also refuses an empty attribute, whose data is NULL.
+- **Who notices:** writers of `bytes` attributes through Core.
+- **A fix:** write the hint length, the hint and the data, as the C++ library does; write an
+  empty attribute.
+- **Status:** **fixed**, deviation D-10 (owner, 2026-11-07) (`crates/openexr-core/src/write_header.rs`);
+  checked by `write_header::tests::bytes_attributes_read_back` and, against the C++
+  library's bytes, the heavy `headers_rewrite_as_the_wheel_wrote_them` (an attribute of
+  every type the binding writes, `bytes` with and without a hint and empty).
+
+### I-15. exr_write_header writes multipart files no reader opens
+
+- **Upstream:** `exr_write_header` validates each part on its own but not the attributes the
+  parts must share (displayWindow, pixelAspectRatio, timecode, chromaticities), which every
+  reader checks; upstream's own TODO says so (`src/lib/OpenEXRCore/context.c:711-721`
+  @ v3.5.3).
+- **Who notices:** writers of multipart files whose parts disagree on one of them.
+- **A fix:** refuse them as the reader does, before writing anything.
+- **Status:** **fixed**, deviation D-11 (owner, 2026-11-07) (`crates/openexr-core/src/write_header.rs`, with the
+  reader's message); checked by `write_header::tests::shared_attributes_are_checked_on_write`.
+
+### I-16. Core cannot write a deepImageState attribute
+
+- **Upstream:** `save_attr` has no case for `EXR_ATTR_DEEP_IMAGE_STATE`, which falls to the
+  default, `EXR_ERR_INVALID_ATTR` (`src/lib/OpenEXRCore/write_header.c:571-626` @ v3.5.3), so a
+  header holding the standard `deepImageState` attribute cannot be written.
+- **Who notices:** writers of deep parts with that attribute.
+- **A fix:** write its byte, as `DeepImageStateAttribute::writeValueTo` does
+  (`ImfDeepImageStateAttribute.cpp:35-40`).
+- **Status:** **fixed**, deviation D-12 (owner, 2026-11-07) (`crates/openexr-core/src/write_header.rs`); checked
+  by `write_header::tests::deep_image_state_reads_back`.
+
 ## Messages and debug output
 
 ### I-7. A deep tile's unpacked size error prints the packed size

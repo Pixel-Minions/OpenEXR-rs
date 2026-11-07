@@ -19,3 +19,7 @@ outputs (I-5 to I-12), as deviations; and I-13 (D-9), the same day.
 | D-7 | I-11 | `exr_set_version` refuses a version other than 1 without a message | Reports one | Error text (the handler is called); the code is unchanged | Owner in chat, 2026-11-07 |
 | D-8 | I-12 | `exr_copy_unset_attributes` counts a lookup failing for another reason than a missing name as found | Returns the lookup's error | None today (the lookup cannot fail that way with a source's names) | Owner in chat, 2026-11-07 |
 | D-9 | I-13 | `exr_decoding_choose_default_routines` prints a channel's index with `%c`, as a character, in its two errors for an unsupported output size or type | Prints it with `%d` | Error text | Owner in chat, 2026-11-07 |
+| D-10 | I-14 | Core writes a `bytes` attribute as size and data, without the hint length and hint the format holds, and refuses an empty one | Writes the hint length, hint and data, as the C++ library does; writes an empty one | Files Core writes with `bytes` attributes: they now read back, and match the C++ library's | Owner in chat, 2026-11-07 |
+| D-11 | I-15 | `exr_write_header` writes multipart files whose parts disagree on a shared attribute | Refuses them with the reader's message | Which calls are refused | Owner in chat, 2026-11-07 |
+| D-12 | I-16 | Core cannot write a `deepImageState` attribute (`EXR_ERR_INVALID_ATTR`) | Writes its byte, as the C++ library does | Which calls are refused; the files written | Owner in chat, 2026-11-07 |
+

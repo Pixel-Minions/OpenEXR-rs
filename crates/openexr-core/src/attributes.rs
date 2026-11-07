@@ -209,6 +209,16 @@ impl AttributeList {
         self.sorted.iter().map(|&i| &self.entries[i])
     }
 
+    /// The indices of `entries` in name order (`sorted_entries`).
+    pub(crate) fn sorted_order(&self) -> &[usize] {
+        &self.sorted
+    }
+
+    /// The attributes in creation order, to change (the header writer packs opaque data).
+    pub(crate) fn entries_mut(&mut self) -> &mut [Attribute] {
+        &mut self.entries
+    }
+
     /// The attribute `id`, if it is in the list.
     pub fn get(&self, id: AttrId) -> Option<&Attribute> {
         self.entries.iter().find(|a| a.id == id)

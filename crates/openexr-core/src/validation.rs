@@ -625,6 +625,18 @@ pub(crate) fn internal_exr_validate_read_part(ctxt: &mut Context, p: usize) -> R
     Ok(())
 }
 
+/// Port of `internal_exr_validate_write_part` (src/lib/OpenEXRCore/validation.c:862-886
+/// @ v3.5.3): the checks of a part about to be written (no defaults added).
+pub(crate) fn internal_exr_validate_write_part(ctxt: &mut Context, p: usize) -> Result<(), Error> {
+    validate_req_attr(ctxt, p, false)?;
+    validate_image_dimensions(ctxt, &ctxt.parts[p])?;
+    validate_channels(ctxt, &ctxt.parts[p])?;
+    validate_part_type(ctxt, p)?;
+    validate_tile_data(ctxt, &ctxt.parts[p])?;
+    validate_deep_data(ctxt, &ctxt.parts[p])?;
+    Ok(())
+}
+
 /// Bitwise equality of two values of the same attribute type, as upstream's `memcmp`s.
 fn same_bits(a: &AttrValue, b: &AttrValue) -> bool {
     match (a, b) {
@@ -705,4 +717,42 @@ pub(crate) fn internal_exr_validate_shared_attrs(
     } else {
         Err(mismatch)
     }
+}
+
+/// The error `internal_exr_parse_header` reports for a part whose shared attributes differ
+/// from part 0's (src/lib/OpenEXRCore/parse_header.c:2865-2889 @ v3.5.3).
+pub(crate) fn shared_attrs_error(ctxt: &Context, p: usize, mismatch: &[&str]) -> Error {
+    let pname: Vec<u8> = {
+        let curp = &ctxt.parts[p];
+        match curp.attr(curp.name).map(|a| &a.value) {
+            Some(AttrValue::String(s)) => s.c_str().to_vec(),
+            _ => b"<missing name>".to_vec(),
+        }
+    };
+    let m = |k: usize| -> (&[u8], &[u8]) {
+        match mismatch.get(k) {
+            Some(s) => (s.as_bytes(), b" "),
+            None => (b"", b""),
+        }
+    };
+    let (m0, s0) = m(0);
+    let (m1, s1) = m(1);
+    let (m2, s2) = m(2);
+    let (m3, _) = m(3);
+    // MultiPartInputFile would fail unconditionally
+    ctxt.core.print_error(
+        ErrorCode::AttrTypeMismatch,
+        "Part %d (%s) has non-conforming shared attributes: %s%s%s%s%s%s%s",
+        &[
+            (p as i32).into(),
+            crate::cfmt::Arg::Str(&pname),
+            crate::cfmt::Arg::Str(m0),
+            crate::cfmt::Arg::Str(s0),
+            crate::cfmt::Arg::Str(m1),
+            crate::cfmt::Arg::Str(s1),
+            crate::cfmt::Arg::Str(m2),
+            crate::cfmt::Arg::Str(s2),
+            crate::cfmt::Arg::Str(m3),
+        ],
+    )
 }

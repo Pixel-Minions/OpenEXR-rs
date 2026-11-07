@@ -1132,8 +1132,8 @@ note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompress
 path = "src/lib/OpenEXRCore/context.c"
 kind = "src"
 status = "partial"
-target = "crates/openexr-core/src/context.rs"
-note = "start_read, start_write, test_file_header, temporary context, finish, accessors, longname support, attr handlers; write_header with Phase 6"
+target = "crates/openexr-core/src/context.rs,crates/openexr-core/src/write_header.rs"
+note = "start_read, start_write, test_file_header, temporary context, finish, accessors, longname support, attr handlers, exr_write_header; the chunk table at finish with the chunk writes"
 
 [[file]]
 path = "src/lib/OpenEXRCore/debug.c"
@@ -1607,16 +1607,16 @@ note = "the image unpackers and internal_exr_match_decode; the deep unpackers wi
 [[file]]
 path = "src/lib/OpenEXRCore/validation.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/validation.rs"
-note = "read-side validation; internal_exr_validate_write_part with the writer (Phase 6)"
+note = "read and write part validation, shared attributes"
 
 [[file]]
 path = "src/lib/OpenEXRCore/write_header.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/write_header.rs"
-note = "internal_exr_calc_header_version_flags; the writer with Phase 6"
+note = "ported whole, with exr_write_header (context.c) and the fixes D-10 to D-12; the headers of the C++ library's files come back byte for byte (heavy tier); Core's own bytes are compared with the source-built harness (PLAN.md O1)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/CMakeLists.txt"

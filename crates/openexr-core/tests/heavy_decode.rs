@@ -368,3 +368,122 @@ fn images_decode_as_the_wheel_does() {
     );
     assert!(parts_checked > 0);
 }
+
+/// The header the port writes for `src`'s parts (copied into a write context with a legacy
+/// header, the C++ library's attribute order), into memory.
+fn rewrite_header(src: &Context) -> Result<Vec<u8>, Error> {
+    use openexr_core::context::{
+        DefaultWriteMode, EXR_CONTEXT_FLAG_WRITE_LEGACY_HEADER, Initializer,
+    };
+    use std::sync::{Arc, Mutex};
+    let mem = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&mem);
+    let cinit = Initializer {
+        write_fn: Some(Box::new(move |_, buf, off| {
+            let mut m = sink.lock().unwrap();
+            let end = off as usize + buf.len();
+            if m.len() < end {
+                m.resize(end, 0);
+            }
+            m[off as usize..end].copy_from_slice(buf);
+            buf.len() as i64
+        })),
+        flags: EXR_CONTEXT_FLAG_WRITE_LEGACY_HEADER,
+        ..Initializer::default()
+    };
+    let mut dst = Context::start_write(
+        Some("<memory>"),
+        DefaultWriteMode::WriteFileDirectly,
+        Some(cinit),
+    )?;
+    for p in 0..src.get_count() {
+        let name = src
+            .get_name(p)
+            .ok()
+            .map(|n| String::from_utf8_lossy(n).into_owned());
+        let q = dst.add_part(name.as_deref(), src.get_storage(p)?)?;
+        dst.copy_unset_attributes(q, src, p)?;
+    }
+    dst.write_header()?;
+    let bytes = mem.lock().unwrap().clone();
+    Ok(bytes)
+}
+
+/// A single-part header without its `type` attribute: the record (name, type name, size,
+/// value) is cut out, every other byte kept. The C++ library always writes `type`; a legacy
+/// Core header leaves it out of single-part files (write_header.c:719-728 @ v3.5.3).
+fn without_type_attr(header: &[u8]) -> Vec<u8> {
+    let mut out = header[..8].to_vec();
+    let mut at = 8;
+    loop {
+        let start = at;
+        let name_end = at + header[at..].iter().position(|&b| b == 0).expect("name");
+        if name_end == at {
+            out.extend_from_slice(&header[at..]);
+            return out;
+        }
+        let type_end = name_end
+            + 1
+            + header[name_end + 1..]
+                .iter()
+                .position(|&b| b == 0)
+                .expect("type");
+        let size =
+            i32::from_le_bytes(header[type_end + 1..type_end + 5].try_into().unwrap()) as usize;
+        at = type_end + 5 + size;
+        if &header[start..name_end] != b"type" {
+            out.extend_from_slice(&header[start..at]);
+        }
+    }
+}
+
+/// Heavy tier: the headers the wheel (the C++ library) writes come back byte for byte, but for
+/// a single-part file's `type` attribute ([`without_type_attr`]), when the port writes them
+/// from the attributes it read: every image written by
+/// oracle/write_images.py, among them a header with an attribute of every type the binding
+/// writes, and upstream's test images but the corrupt comp_invalid_unknown.exr and the
+/// `*_with_*_type.exr` images, single-part files carrying a `type` attribute that a legacy
+/// header leaves out.
+#[test]
+fn headers_rewrite_as_the_wheel_wrote_them() {
+    let scratch =
+        std::env::temp_dir().join(format!("openexr_rs_heavy_headers_{}", std::process::id()));
+    let mut compared = 0;
+    for image in images(&scratch) {
+        let name = image.file_name().unwrap().to_string_lossy().into_owned();
+        if name == "comp_invalid_unknown.exr" || name.contains("_with_") {
+            continue;
+        }
+        let Ok(src) = Context::start_read(Some(image.to_str().unwrap()), None) else {
+            continue;
+        };
+        let file = std::fs::read(&image).unwrap();
+        let end = src.get_chunk_table_offset(0).unwrap() as usize;
+        let mut file = file[..end].to_vec();
+        if src.get_count() == 1 {
+            file = without_type_attr(&file);
+        }
+        let end = file.len();
+        let h = rewrite_header(&src).unwrap_or_else(|e| panic!("{name}: {e}"));
+        if h[..] != file[..end] {
+            let at = h
+                .iter()
+                .zip(&file[..end])
+                .position(|(a, b)| a != b)
+                .unwrap_or(h.len().min(end));
+            let lo = at.saturating_sub(24);
+            panic!(
+                "{name}: the header differs at byte {at} (port {} bytes, file {end})
+ port: {:?}
+ file: {:?}",
+                h.len(),
+                String::from_utf8_lossy(&h[lo..(at + 24).min(h.len())]),
+                String::from_utf8_lossy(&file[lo..(at + 24).min(end)])
+            );
+        }
+        compared += 1;
+    }
+    let _ = std::fs::remove_dir_all(&scratch);
+    eprintln!("headers compared: {compared}");
+    assert!(compared > 0);
+}

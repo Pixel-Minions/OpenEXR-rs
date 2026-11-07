@@ -505,6 +505,11 @@ pub struct Context {
     pub(crate) default_stream: bool,
     /// `tmp_filename`: the temporary file written to with [`DefaultWriteMode::IntermediateTempFile`].
     pub(crate) tmp_filename: Option<String>,
+    /// `output_file_offset`: where the next write goes.
+    pub(crate) output_file_offset: u64,
+    pub(crate) cur_output_part: i32,
+    pub(crate) last_output_chunk: i32,
+    pub(crate) output_chunk_count: i32,
     pub(crate) is_singlepart_tiled: bool,
     pub(crate) has_nonimage_data: bool,
     pub(crate) is_multipart: bool,
@@ -642,6 +647,10 @@ impl Context {
             destroy_fn: inits.destroy_fn,
             default_stream: false,
             tmp_filename: None,
+            output_file_offset: 0,
+            cur_output_part: 0,
+            last_output_chunk: 0,
+            output_chunk_count: 0,
             is_singlepart_tiled: false,
             has_nonimage_data: false,
             is_multipart: false,
