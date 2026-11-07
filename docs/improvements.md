@@ -49,3 +49,18 @@ section. An entry says:
 - **Status:** matched (`crates/openexr-core/src/internal_coding.rs`). The probe compiled the
   function on its own; Core's unpackers inline it, so the heavy tier checks it again at their
   call sites when unpacking lands (Phase 4).
+
+## Undefined behaviour the port does not copy
+
+### U-1. A string created from no data has an unset terminator
+
+- **Upstream:** `exr_attr_string_create_with_length` with NULL data and a positive length
+  allocates `len + 1` bytes but zeroes only `len` of them (`memset (outs, 0, len)`), so the
+  byte at `str[len]` is whatever the allocator returned
+  (`src/lib/OpenEXRCore/string.c:132-139` @ v3.5.3). `exr_attr_string_set_with_length` zeroes
+  all `len + 1` (line 221).
+- **Who notices:** code that reads such a string as a C string (`%s`, `strcmp`) past its
+  `length` bytes; Core itself creates them only to fill them right away.
+- **The port:** zeroes the whole buffer, so `str[len]` is 0. Nothing Core writes depends on
+  the byte.
+- **Status:** the port's choice; listed for the owner's review.

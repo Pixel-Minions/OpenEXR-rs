@@ -3,7 +3,10 @@
 
 //! Ports of `src/test/OpenEXRCoreTest/general_attr.cpp` @ v3.5.3.
 
+use crate::context::Context;
+use crate::errors::ErrorCode;
 use crate::internal_xdr::*;
+use crate::string::AttrString;
 
 /// Port of `testXDR` (src/test/OpenEXRCoreTest/general_attr.cpp:1936-1974) @ v3.5.3.
 #[test]
@@ -40,4 +43,183 @@ fn test_xdr() {
     assert_eq!(v64buf[0], 0xAA00BB11CC22DD33);
 
     assert_eq!(one_to_native_float(one_from_native_float(v32f)), v32f);
+}
+
+/// `createDummyFile` (src/test/OpenEXRCoreTest/general_attr.cpp:70-90 @ v3.5.3) opens a write
+/// context with one scanline part named "dummy". Until `exr_start_write` and `exr_add_part`
+/// are ported (Phases 3 and 6), the attribute tests run on a temporary context of the same
+/// name: the attribute functions use the context only to report errors. The tests that use
+/// it stay partial ports.
+fn create_dummy_file(test: &str) -> Context {
+    Context::start_temporary_context(Some(test), None).expect("context")
+}
+
+/// Partial port of `testStringHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:120-285 @
+/// v3.5.3), run by `testAttrStrings` (lines 287-296). Left out: the calls with a NULL context
+/// or string object and the malloc failure (PLAN.md O8); the 2 GiB strings run in
+/// `test_string_helper_long` (heavy tier). `testAttrStrings`' `exr_print_context_info` calls
+/// come with `debug.c` (Phase 8).
+#[test]
+fn test_string_helper() {
+    let f = create_dummy_file("<string>");
+    let mut s = AttrString::default();
+    let mut nil = AttrString::default();
+
+    assert_eq!(
+        f.attr_string_init(&mut s, -1).unwrap_err().code,
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        f.attr_string_init_static(&mut s, None).unwrap_err().code,
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        f.attr_string_init_static_with_length(&mut s, None, 4)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        f.attr_string_init_static_with_length(&mut s, Some(b"exr"), -3)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+    f.attr_string_destroy(&mut nil);
+
+    f.attr_string_init(&mut s, 4).unwrap();
+    assert!(!s.is_null());
+    assert_eq!(s.length, 4);
+    assert_eq!(s.alloc_size, 5);
+    f.attr_string_destroy(&mut s);
+    assert!(s.is_null());
+    assert_eq!(s.length, 0);
+    assert_eq!(s.alloc_size, 0);
+
+    f.attr_string_create(&mut s, None).unwrap();
+    assert!(!s.is_null() && s.byte(0) == Some(0));
+    assert_eq!(s.length, 0);
+    assert_eq!(s.alloc_size, 1);
+    f.attr_string_destroy(&mut s);
+
+    f.attr_string_create_with_length(&mut s, None, 10).unwrap();
+    assert!(!s.is_null() && s.byte(0) == Some(0));
+    assert_eq!(s.length, 10);
+    assert_eq!(s.alloc_size, 11);
+    f.attr_string_destroy(&mut s);
+
+    f.attr_string_destroy(&mut s);
+
+    f.attr_string_create(&mut s, Some(b"exr")).unwrap();
+    assert!(!s.is_null() && s.c_str() == b"exr");
+    assert_eq!(s.length, 3);
+    assert_eq!(s.alloc_size, 4);
+
+    f.attr_string_set(&mut s, Some(b"openexr")).unwrap();
+    assert!(!s.is_null() && s.c_str() == b"openexr");
+    assert_eq!(s.length, 7);
+    assert_eq!(s.alloc_size, 8);
+
+    f.attr_string_set_with_length(&mut s, Some(b"exr"), 3)
+        .unwrap();
+    assert!(!s.is_null() && s.c_str() == b"exr");
+    assert_eq!(s.length, 3);
+    assert_eq!(s.alloc_size, 8);
+
+    f.attr_string_set_with_length(&mut s, Some(b"exropenexr"), 3)
+        .unwrap();
+    assert!(!s.is_null() && s.c_str() == b"exr");
+    assert_eq!(s.length, 3);
+    assert_eq!(s.alloc_size, 8);
+
+    f.attr_string_set_with_length(&mut s, None, 3).unwrap();
+    assert!(!s.is_null() && s.byte(0) == Some(0) && s.byte(1) == Some(0) && s.byte(2) == Some(0));
+    assert_eq!(s.length, 3);
+    assert_eq!(s.byte(s.length as usize), Some(0));
+    assert_eq!(s.alloc_size, 8);
+
+    f.attr_string_destroy(&mut s);
+
+    f.attr_string_create_with_length(&mut s, Some(b"exr"), 6)
+        .unwrap();
+    assert!(!s.is_null() && s.c_str() == b"exr");
+    assert_eq!(s.length, 6);
+    assert_eq!(s.alloc_size, 7);
+    f.attr_string_destroy(&mut s);
+
+    f.attr_string_create_with_length(&mut s, Some(b"openexr"), 3)
+        .unwrap();
+    assert!(!s.is_null() && s.c_str() == b"ope");
+    assert_eq!(s.length, 3);
+    assert_eq!(s.alloc_size, 4);
+    f.attr_string_destroy(&mut s);
+
+    f.attr_string_init_static(&mut s, Some(b"exr")).unwrap();
+    assert!(!s.is_null() && s.c_str() == b"exr");
+    assert_eq!(s.length, 3);
+    assert_eq!(s.alloc_size, 0);
+    f.attr_string_destroy(&mut s);
+    assert!(s.is_null());
+    assert_eq!(s.length, 0);
+    assert_eq!(s.alloc_size, 0);
+
+    f.attr_string_init_static_with_length(&mut s, Some(b"openexr"), 7)
+        .unwrap();
+    assert!(!s.is_null() && s.c_str() == b"openexr");
+    assert_eq!(s.length, 7);
+    assert_eq!(s.alloc_size, 0);
+    f.attr_string_destroy(&mut s);
+    // make sure we can re-delete something?
+    f.attr_string_destroy(&mut s);
+}
+
+/// The 2 GiB part of `testStringHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:263-284 @
+/// v3.5.3): strings of `INT32_MAX + 1` bytes are refused. Heavy tier (it allocates 2 GiB).
+#[cfg(feature = "heavy")]
+#[test]
+fn test_string_helper_long() {
+    let f = create_dummy_file("<string>");
+    let mut s = AttrString::default();
+    let nbytes = i32::MAX as usize + 1;
+    let tmp = vec![b'B'; nbytes];
+    assert_eq!(
+        f.attr_string_init_static(&mut s, Some(&tmp))
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        f.attr_string_create(&mut s, Some(&tmp)).unwrap_err().code,
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        f.attr_string_set(&mut s, Some(&tmp)).unwrap_err().code,
+        ErrorCode::InvalidArgument
+    );
+}
+
+/// Port of `testAttrSizes` (src/test/OpenEXRCoreTest/general_attr.cpp:94-118) @ v3.5.3. The
+/// structs are `#[repr(C)]`; the opaque struct's function-pointer alignment has no Rust
+/// counterpart (its unpack functions are closures, PLAN.md O8).
+#[test]
+fn test_attr_sizes() {
+    use crate::openexr_attr::*;
+    use std::mem::size_of;
+    assert_eq!(size_of::<Box2i>(), 4 * 4);
+    assert_eq!(size_of::<Box2f>(), 4 * 4);
+    assert_eq!(size_of::<Chromaticities>(), 8 * 4);
+    assert_eq!(size_of::<Keycode>(), 7 * 4);
+    assert_eq!(size_of::<M33f>(), 9 * 4);
+    assert_eq!(size_of::<M33d>(), 9 * 8);
+    assert_eq!(size_of::<M44f>(), 16 * 4);
+    assert_eq!(size_of::<M44d>(), 16 * 8);
+    assert_eq!(size_of::<Rational>(), 2 * 4);
+    assert_eq!(size_of::<TileDesc>(), 2 * 4 + 1);
+    assert_eq!(size_of::<Timecode>(), 2 * 4);
+    assert_eq!(size_of::<V2i>(), 2 * 4);
+    assert_eq!(size_of::<V2f>(), 2 * 4);
+    assert_eq!(size_of::<V2d>(), 2 * 8);
+    assert_eq!(size_of::<V3i>(), 3 * 4);
+    assert_eq!(size_of::<V3f>(), 3 * 4);
+    assert_eq!(size_of::<V3d>(), 3 * 8);
 }

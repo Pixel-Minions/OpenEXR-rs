@@ -1323,7 +1323,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_string.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/string.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_string_vector.h"
@@ -1404,7 +1405,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_attr.h"
 kind = "api"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/openexr_attr.rs,crates/openexr-core/src/string.rs"
+note = "enums and fixed-size structs, exr_attr_string_t; the allocating types and exr_attribute_t follow in Phase 2"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_base.h"
@@ -1517,7 +1520,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/string.c"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/string.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/string_vector.c"
@@ -1619,7 +1623,7 @@ path = "src/test/OpenEXRCoreTest/general_attr.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
-note = "testXDR; the attribute tests come with Phase 2"
+note = "testXDR, testAttrSizes; testStringHelper partial (dummy file until exr_start_write; print_context_info with debug.c)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"
