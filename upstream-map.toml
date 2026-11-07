@@ -873,7 +873,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/common/xxhash.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/xxhash.rs"
+note = "XXH64, one pass (the frame checksum)"
 
 [[file]]
 path = "external/zstd/lib/common/zstd_common.c"
@@ -888,7 +890,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/common/zstd_internal.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_decompress_internal.rs"
+note = "the decoder's constants and tables; the encoder's come with the compressor"
 
 [[file]]
 path = "external/zstd/lib/common/zstd_trace.h"
@@ -1066,12 +1070,16 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/decompress/zstd_decompress.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_decompress.rs"
+note = "one-shot decompression without dictionaries ported (Core's use); streaming and dictionaries n/a; checked through Core's ZSTD codec against the wheel (heavy tier, next)"
 
 [[file]]
 path = "external/zstd/lib/decompress/zstd_decompress_block.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_decompress_block.rs"
+note = "the portable decoder ported (literals kept in their own buffer; the prefetching sequence decoder, same output, is O3); checked through Core's ZSTD codec against the wheel (heavy tier, next)"
 
 [[file]]
 path = "external/zstd/lib/decompress/zstd_decompress_block.h"
@@ -1081,7 +1089,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/decompress/zstd_decompress_internal.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_decompress_internal.rs"
+note = "the tables and the context state one-shot decompression uses"
 
 [[file]]
 path = "external/zstd/lib/zstd.h"
