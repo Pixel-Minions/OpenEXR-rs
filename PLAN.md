@@ -1,9 +1,9 @@
 # OpenEXR-rs: porting plan
 
-**Status:** v0.1, 2026-11-06. Analysis and local harness only: nothing is ported, there is no
-CI and no profiling yet (owner, 2026-11-06: "start with openexrcore, analyze, test all locally
-first; later we decide CIs and do profiling"). Section 14 lists the decisions the owner makes
-before Phase 0 can finish.
+**Status:** v0.2, 2026-11-07. Porting OpenEXRCore has started (owner, 2026-11-07: "lets
+start with core"), with a lean harness: the fast test tier runs on every chunk and the heavy
+tier waits until Core is in place (§8, "Test tiers"). Still local only: no CI, no profiling, no
+pushing (owner, 2026-11-06). Section 14 records what the owner has decided and what is open.
 
 **Target:** OpenEXR **3.5.3** exactly (`upstream/openexr`, tag `v3.5.3`, commit
 3950290530c4fd4776667d0dc4d65a9d003eb936), the latest release. The first section is
@@ -240,6 +240,21 @@ What the wheel can show, and what it cannot (from the 3.5.3 sources):
 
 Whether to add a source-built harness for what the wheel can't show is owner item **O1**.
 
+### Test tiers
+
+Owner, 2026-11-07: "delay heavy tests to when all is set so we speed up things".
+- **Fast tier, every chunk** (`cargo xtask gate`): fmt, clippy, guards and `cargo test` on
+  Windows: unit tests and ported upstream tests that run in seconds. Expected values still come
+  only from upstream's tests, the oracle or the platform.
+- **Heavy tier, deferred** (`cargo xtask gate --full`, once Core's read path is in place, at
+  the latest before each milestone of §10): the Rocky Linux 9 run, oracle fixtures and the
+  corpus, exhaustive sweeps (every float for half conversion, every codec level), the
+  source-built harness (O1), and SDE. Heavy tests are written with the chunk that needs them, in
+  `tests/heavy_*.rs` behind the `heavy` feature, so they compile on every gate but run only in
+  `--full`. Nothing is weakened: a chunk is *done* only after its heavy tests pass; until then
+  `upstream-map.toml` marks it `partial`.
+- **The cost:** a mismatch the heavy tier finds is found later, so it may touch several chunks.
+
 ### Upstream's tests
 
 The 73 OpenEXRCoreTest tests are ported, marked ``/// Port of `testFoo` (src/test/OpenEXRCoreTest/file.cpp:lines) @ v3.5.3.``
@@ -321,7 +336,7 @@ the wheel in both directions. The vendored library each codec needs lands with i
 
 | Phase | Scope | Exit |
 |---|---|---|
-| **0 Harness** (~5 pw) | Workspace and toolchain (O5); `openexr-testkit` with the oracle protocol and exact comparators; `xtask` gate, guards, ratchet, parity, upstream map; Imath submodule; corpus fetch; the source-built harness if O1 says so; SDE script; check that integer SIMD and the vendored libraries' outputs don't depend on the CPU | `cargo xtask gate` green on both platforms with zero ported code |
+| **0 Harness, lean** (~1 pw now) | Workspace and toolchain (O5); `xtask` gate (fast tier) and guards; Imath submodule. Deferred to the heavy tier (§8): `openexr-testkit` with the oracle protocol, fixtures, corpus fetch, Rocky gate, the source-built harness (O1), SDE, the CPU-independence check | `cargo xtask gate` green on Windows with zero ported code |
 | **1 Foundations** (~4 pw) | Public types and error codes, `exr_get_error_code_as_string`, memory, context lifecycle, streams and file I/O, XDR, CPU detection, half conversion, `base.c` | Ported base tests (`testBase*`, `testCPUIdent`, `testHalf`, `testXDR`, `testTempContext`, `testInitializerCompat`) |
 | **2 Attributes** (~3 pw) | Every attribute type, opaque handlers, `std_attr.c`, `color_metadata.c` | `testAttr*`, `testColor*` |
 | **3 Header parse** (~5 pw) | `parse_header.c`, `part.c`, `part_attr.c`, `validation.c` | Every corpus header parses like the oracle; refused files refused with the same message |
@@ -398,13 +413,22 @@ move with upstream's `external/` (`current_deflate_version`, `current_zstd_versi
 | Agents game the checks | High | High | OpenColorIO-rs's guardrails, verifier, ratchet |
 | Undefined behaviour in C (shifts, overflow, out-of-range casts) that the wheel resolves one way | Medium | Medium | Read the wheel's machine code; `U-`/`I-` entries in `docs/improvements.md` |
 | Malicious files | Medium | High | No `unsafe` in parsers; upstream's own limits; fuzzing after parity |
-| Patent terms of DWA | Low | Medium | The port carries upstream's `PATENTS`; the grant covers the OpenEXR implementation, so the owner may want to confirm it extends to a translation |
+| Patent terms of DWA (US 8,340,442 and 8,666,186, §14 O6) | Low | Medium | Decided O6: credit DreamWorks Animation and carry `PATENTS`; DWA used only inside EXR files |
 
 ---
 
 ## 14. Decisions for the owner
 
-Each has a recommendation; nothing below is decided.
+Each has a recommendation. Status on 2026-11-07:
+
+| Item | Status |
+|---|---|
+| O1 Oracle | Open; needed for the heavy tier (§8) |
+| O2 Vendored libraries | Open; needed for Phase 5 |
+| O3 SIMD | Open; needed for Phase 5 |
+| O4 Layout and naming | Recommendation in use since the owner started the port (2026-11-07); open to change until anything is published |
+| O5 Rust version | Recommendation in use since the owner started the port (2026-11-07); open to change |
+| O6 DWA patents | **Decided** (owner, 2026-11-07): credit DreamWorks |
 
 ### O1 — Oracle
 
@@ -474,6 +498,24 @@ users would depend on.
 `rust-version = "1.99.1"`. It is recon's toolchain and a rez package here (`rust-1.99.1`), so
 the consumer builds the port with what it already uses. (OpenColorIO-rs is on 1.98.1.)
 
+### O6 — DWA patents
+
+DWAA and DWAB implement US 8,340,442 B1 ("Lossy compression of high-dynamic range image
+files", filed 2010-02-12, expected expiry 2031-01-24) and US 8,666,186 B1 (its video
+continuation, expected expiry 2030-02-12), both by Karl Richard Rasche, Pacific Data Images,
+assigned to DreamWorks Animation LLC on 2024-12-16, both shown active by Google Patents. The
+image patent claims decoding as well as encoding. Upstream's `PATENTS` grants a free patent
+license for "this implementation of DreamWorks Lossy Compression within the OpenEXR standard";
+it names only the C++ files, not Core's C translation (`internal_dwa*.c`).
+
+**Decided (owner, 2026-11-07): credit DreamWorks.** The port keeps DreamWorks Animation in the
+copyright line of every file upstream credits it in (`internal_dwa.c`, `internal_dwa_table.c`,
+`internal_dwa_table_init.c`, `internal_b44_table.c`, `internal_b44_table_init.c`); `NOTICE`
+names the patents and the grant; `THIRD-PARTY-NOTICES.md` carries `PATENTS` verbatim from the
+DWA chunk on. DWA is used only inside EXR files, as the grant requires. Not chosen for now:
+asking the OpenEXR project or DreamWorks to confirm in writing that the grant covers a
+translation, and putting DWA behind a Cargo feature.
+
 ---
 
 ## 15. Next steps
@@ -485,5 +527,5 @@ the consumer builds the port with what it already uses. (OpenColorIO-rs is on 1.
 - the oracle (`openexr==3.5.3`) working on both platforms, with the cross-platform comparison;
 - this plan, `CLAUDE.md`, and `upstream-map.toml` (324 entries).
 
-**Next, after the owner's decisions:** Phase 0 (§10). No CI, no pushing, no profiling until the
-owner asks.
+**Now (2026-11-07):** the lean Phase 0, then Phase 1 (§10), fast tier only (§8). No CI, no
+pushing, no profiling until the owner asks.

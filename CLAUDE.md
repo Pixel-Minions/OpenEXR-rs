@@ -6,9 +6,16 @@ source of truth: read §3 (definition of done), §7 (how agents work), §8 (veri
 card before writing code. The rules are OpenColorIO-rs's (`D:\Projects\OpenColorIO-rs\CLAUDE.md`),
 translated from C++ to C; where this file is silent, that one applies.
 
-**Current stage (owner, 2026-11-06):** analysis and local harness. Everything runs locally: no
-CI, no profiling, and never push (remote: github.com/Pixel-Minions/OpenEXR-rs) unless the owner
-asks. The owner's open decisions are in `PLAN.md` §14; don't decide them yourself.
+**Current stage (owner, 2026-11-07):** porting OpenEXRCore, phase by phase (`PLAN.md` §10).
+Everything runs locally: no CI, no profiling, and never push (remote:
+github.com/Pixel-Minions/OpenEXR-rs) unless the owner asks. The owner's open decisions are in
+`PLAN.md` §14; don't decide them yourself.
+
+**Test tiers (owner, 2026-11-07, `PLAN.md` §8).** Every chunk passes the fast tier,
+`cargo xtask gate`. Heavy checks (the Rocky Linux run, oracle fixtures and corpus, exhaustive
+sweeps, SDE) are deferred: write them with the chunk, in `tests/heavy_*.rs` with
+`required-features = ["heavy"]`, and leave the chunk `partial` in `upstream-map.toml` until
+`cargo xtask gate --full` has run them. Deferring a test is not skipping it.
 
 ## Identity
 
@@ -96,6 +103,11 @@ end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - **Headers.** Every `.rs` file starts with `// SPDX-License-Identifier: BSD-3-Clause` and
   `// Copyright Contributors to the OpenEXR Project.` Ports of vendored code keep their own
   license line (MIT for libdeflate, BSD for zstd, BSD-2-Clause for OpenJPH) and copyright.
+  Ports of files whose upstream header credits DreamWorks (`internal_dwa.c`,
+  `internal_dwa_table*.c`, `internal_b44_table*.c`) use
+  `// Copyright (c) DreamWorks Animation LLC and Contributors of the OpenEXR Project.`
+  (owner, 2026-11-07, `PLAN.md` O6); the DWA chunk adds `PATENTS` to
+  `THIRD-PARTY-NOTICES.md`.
 - **Dependencies.** Pinned exactly in the root `[workspace.dependencies]` (`=x.y.z`); a new
   dependency needs a reason and the owner's OK.
 - **Errors.** Upstream's error codes and message text are output: copy them verbatim.
@@ -121,6 +133,6 @@ end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 | `scripts/upstream-build.sh [Release\|Debug] [ctest args]` | The same build and tests on Linux, inside the container |
 | `uv run --project oracle python -I oracle/smoke.py <out> [images]` | The oracle's smoke check |
 | `uv run --no-project python -I scripts/upstream_map.py` | Add new upstream files to `upstream-map.toml` |
-
-Phase 0 adds the Rust workspace and `cargo xtask gate` (fmt, clippy, guards, tests), as in
-OpenColorIO-rs.
+| `cargo xtask gate` | Fast tier: fmt, clippy, guards, tests (every chunk) |
+| `cargo xtask gate --full` | Adds the heavy tier: `--features heavy` tests (deferred, `PLAN.md` §8) |
+| `cargo xtask guards` | Headers, `unsafe` allowlist, forbidden patterns, test markers, `upstream-map.toml` |
