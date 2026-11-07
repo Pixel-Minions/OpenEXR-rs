@@ -217,9 +217,6 @@ pub fn rle_uncompress_buffer(input: &[u8], out: &mut [u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding::BufferRef;
-    use crate::context::Context;
-    use crate::upstream_tests::read::test_image_dir;
     use openexr_testkit::probe::Rng;
 
     /// Bytes with long runs, short runs and noise, in lengths that end on each case.
@@ -301,38 +298,5 @@ mod tests {
         assert_eq!(internal_rle_decompress(&mut out, &[4, 9]), 0);
         // a repeat missing its byte
         assert_eq!(internal_rle_decompress(&mut out, &[1]), 0);
-    }
-
-    /// comp_rle.exr decodes to comp_none.exr's pixels, as the wheel reads them (the oracle
-    /// shows the two images hold the same pixels).
-    #[test]
-    fn comp_rle_decodes_like_comp_none() {
-        let decode_all = |name: &str| {
-            let f = Context::start_read(Some(&(test_image_dir() + name)), None)
-                .expect("exr_start_read");
-            let dw = f.get_data_window(0).unwrap();
-            let w = (dw.max.x - dw.min.x + 1) as usize;
-            let h = (dw.max.y - dw.min.y + 1) as usize;
-            let mut bufs = vec![vec![0u8; w * h * 2]; 4];
-            let mut y = dw.min.y;
-            while y <= dw.max.y {
-                let cinfo = f.read_scanline_chunk_info(0, y).unwrap();
-                let mut d = f.decoding_initialize(0, &cinfo).unwrap();
-                for (c, ch) in d.channels.iter_mut().enumerate() {
-                    ch.data = Some(BufferRef {
-                        buffer: c,
-                        offset: (cinfo.start_y - dw.min.y) as usize * w * 2,
-                    });
-                    ch.user_pixel_stride = 2;
-                    ch.user_line_stride = (w * 2) as i32;
-                }
-                f.decoding_choose_default_routines(0, &mut d).unwrap();
-                let mut outs: Vec<&mut [u8]> = bufs.iter_mut().map(Vec::as_mut_slice).collect();
-                f.decoding_run(0, &mut d, &mut outs).unwrap();
-                y += f.get_scanlines_per_chunk(0).unwrap();
-            }
-            bufs
-        };
-        assert!(decode_all("comp_rle.exr") == decode_all("comp_none.exr"));
     }
 }

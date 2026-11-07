@@ -32,6 +32,7 @@ mod internal_ht_quality;
 mod internal_rle;
 mod internal_util;
 mod internal_xdr;
+mod internal_zip;
 pub mod opaque;
 pub mod openexr_attr;
 mod os_error;

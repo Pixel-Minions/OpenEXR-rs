@@ -1126,7 +1126,7 @@ path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/compression.rs"
-note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_rle_compress_buffer and exr_rle_uncompress_buffer; the other codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the compression side with Phase 6"
+note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_uncompress_buffer and the cached deflate context, exr_rle_*_buffer; the other codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the compression side with Phase 6"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
@@ -1415,7 +1415,9 @@ target = "crates/openexr-core/src/internal_xdr.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zip.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_zip.rs"
+note = "the ZIP/ZIPS decompressor (scalar reconstruct and interleave); apply_zip with the encode pipeline (Phase 6); the SSE2/SSE4.1/NEON kernels give the same bytes (performance, PLAN.md O3). Decoding matches the wheel bit for bit (heavy tier)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd.c"

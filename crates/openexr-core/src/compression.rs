@@ -10,6 +10,7 @@ use crate::context::{Context, Error};
 use crate::decoding::{Aliased, DecodePipeline, EXR_DECODE_SAMPLE_DATA_ONLY};
 use crate::errors::ErrorCode;
 use crate::openexr_attr::Compression;
+use openexr_deflate::{Decompressor, LibdeflateResult};
 
 pub use crate::internal_rle::{rle_compress_buffer, rle_uncompress_buffer};
 
@@ -155,9 +156,14 @@ fn decompress_data(
             unpacksz,
             crate::internal_rle::internal_exr_undo_rle,
         ),
-        Compression::ZIP
-        | Compression::ZIPS
-        | Compression::PIZ
+        Compression::ZIP | Compression::ZIPS => run_codec(
+            decode,
+            target,
+            packsz,
+            unpacksz,
+            crate::internal_zip::internal_exr_undo_zip,
+        ),
+        Compression::PIZ
         | Compression::PXR24
         | Compression::B44
         | Compression::B44A
@@ -245,4 +251,113 @@ pub fn uncompress_chunk(
         ));
     }
     Ok(())
+}
+
+/// Port of `translate_deflate_result` (src/lib/OpenEXRCore/compression.c:197-224 @ v3.5.3).
+fn translate_deflate_result(
+    res: LibdeflateResult,
+    actual_in_bytes: usize,
+    in_bytes: usize,
+) -> Result<(), Error> {
+    match res {
+        LibdeflateResult::Success => {
+            if in_bytes == actual_in_bytes {
+                return Ok(());
+            }
+            // it's an error to not consume the full buffer, right?
+        }
+        LibdeflateResult::InsufficientSpace => return Err(Error::bare(ErrorCode::OutOfMemory)),
+        // Decompression succeeded; *actual_out is the byte count. This is not an error when
+        // out_bytes_avail exceeds the true uncompressed size (e.g. PXR24/ZIP use padded
+        // scratch buffers). Callers that need an exact payload size must compare *actual_out.
+        LibdeflateResult::ShortOutput => return Ok(()),
+        LibdeflateResult::BadData => {}
+    }
+    Err(Error::bare(ErrorCode::CorruptChunk))
+}
+
+/// Port of `internal_exr_decode_uncompress_buffer` (src/lib/OpenEXRCore/compression.c:233-270
+/// @ v3.5.3): inflates the zlib stream `input` into `out` with the pipeline's cached
+/// decompressor (made on first use, as upstream caches it in `compression_context`).
+pub(crate) fn internal_exr_decode_uncompress_buffer(
+    decode: &mut DecodePipeline<'_>,
+    input: &[u8],
+    out: &mut [u8],
+    actual_out: &mut usize,
+) -> Result<(), Error> {
+    // we can cache the context...
+    if !decode
+        .compression_context
+        .as_ref()
+        .is_some_and(|c| c.is::<Decompressor>())
+    {
+        decode.compression_context = Some(Box::new(Decompressor::new()));
+    }
+    let decomp = decode
+        .compression_context
+        .as_mut()
+        .and_then(|c| c.downcast_mut::<Decompressor>())
+        .expect("made above");
+
+    let mut actual_in_bytes = 0usize;
+    let res = decomp.zlib_decompress_ex(input, out, Some(&mut actual_in_bytes), Some(actual_out));
+    translate_deflate_result(res, actual_in_bytes, input.len())
+}
+
+/// Port of `exr_uncompress_buffer` (src/lib/OpenEXRCore/compression.c:272-302 @ v3.5.3):
+/// inflates the zlib stream `input` into `out` with a decompressor of its own; returns the
+/// bytes written.
+pub fn uncompress_buffer(input: &[u8], out: &mut [u8]) -> Result<usize, Error> {
+    let mut decomp = Decompressor::new();
+    let (mut actual_in_bytes, mut actual_out) = (0usize, 0usize);
+    let res = decomp.zlib_decompress_ex(
+        input,
+        out,
+        Some(&mut actual_in_bytes),
+        Some(&mut actual_out),
+    );
+    translate_deflate_result(res, actual_in_bytes, input.len()).map(|()| actual_out)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::coding::BufferRef;
+    use crate::context::Context;
+    use crate::upstream_tests::read::test_image_dir;
+
+    /// The lossless comp_*.exr images decode to comp_none.exr's pixels, as the wheel reads them
+    /// (the oracle shows the images hold the same pixels).
+    #[test]
+    fn lossless_comp_images_decode_like_comp_none() {
+        let decode_all = |name: &str| {
+            let f = Context::start_read(Some(&(test_image_dir() + name)), None)
+                .expect("exr_start_read");
+            let dw = f.get_data_window(0).unwrap();
+            let w = (dw.max.x - dw.min.x + 1) as usize;
+            let h = (dw.max.y - dw.min.y + 1) as usize;
+            let mut bufs = vec![vec![0u8; w * h * 2]; 4];
+            let mut y = dw.min.y;
+            while y <= dw.max.y {
+                let cinfo = f.read_scanline_chunk_info(0, y).unwrap();
+                let mut d = f.decoding_initialize(0, &cinfo).unwrap();
+                for (c, ch) in d.channels.iter_mut().enumerate() {
+                    ch.data = Some(BufferRef {
+                        buffer: c,
+                        offset: (cinfo.start_y - dw.min.y) as usize * w * 2,
+                    });
+                    ch.user_pixel_stride = 2;
+                    ch.user_line_stride = (w * 2) as i32;
+                }
+                f.decoding_choose_default_routines(0, &mut d).unwrap();
+                let mut outs: Vec<&mut [u8]> = bufs.iter_mut().map(Vec::as_mut_slice).collect();
+                f.decoding_run(0, &mut d, &mut outs).unwrap();
+                y += f.get_scanlines_per_chunk(0).unwrap();
+            }
+            bufs
+        };
+        let none = decode_all("comp_none.exr");
+        for image in ["comp_rle.exr", "comp_zip.exr", "comp_zips.exr"] {
+            assert!(decode_all(image) == none, "{image}");
+        }
+    }
 }

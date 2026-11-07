@@ -20,3 +20,7 @@ without the owner's OK.
 | The write side: chunk writes (chunk.c:1676-2428), `write_header.c`, `encoding.c`, `pack.c`, the encode buffers of `coding.c`, `validation.c`'s write checks | Phase 6 | 6 |
 | `exr_copy_unset_attributes`' upstream tests (write.cpp) | Phase 6 | 6 |
 | The 2 GiB string and 134M-entry string vector checks of `general_attr.cpp` | Heavy tier | With the heavy tier |
+| Compare Core's error text with the wheel's: the wheel prints Core's own messages on stderr (for example "(EXR_ERR_BAD_CHUNK_LEADER) Invalid chunk size reconstructing chunk table: found out of range 2013265920" for tiled.exr), so the heavy decode check can capture them and compare them with the port's | Found while adding ZIP (5a); a heavy-tier check | 5a's end, or with the heavy tier |
+| libdeflate's compressor (`deflate_compress.c`, `zlib_compress.c`, the matchfinders) and the ZIP, ZIPS compressor stage | Needs the encode pipeline to be tested end to end | 6 (with the encoders), or 5a's end if the owner prefers |
+| Performance kernels that give upstream's results by construction: ZIP's SSE2/SSE4.1 predictor and interleave, libdeflate's BMI2 decoder and vectorized Adler-32 | PLAN.md O3 (open) and a benchmark | 8 |
+

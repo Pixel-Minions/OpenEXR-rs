@@ -1,0 +1,161 @@
+// SPDX-License-Identifier: BSD-3-Clause
+// Copyright Contributors to the OpenEXR Project.
+
+//! Port of `internal_zip.c` (src/lib/OpenEXRCore/internal_zip.c:1-444 @ v3.5.3): the ZIP and
+//! ZIPS codecs, deflate (libdeflate, `openexr_deflate`) around a byte reordering and a delta
+//! predictor. `apply_zip_impl` and `internal_exr_apply_zip` need the encode pipeline and come
+//! with Phase 6.
+//!
+//! The scalar `reconstruct` and `interleave` are ported. Upstream also has SSE2, SSE4.1 and
+//! NEON versions (lines 49-143, 161-219), which MSVC builds always use on x86-64; they compute
+//! the same bytes (integer prefix sums and byte interleaving), so they are performance work
+//! (PLAN.md O3).
+
+use crate::context::Error;
+use crate::decoding::{DecodePipeline, internal_decode_alloc_buffer};
+use crate::errors::ErrorCode;
+
+/// Port of the scalar `reconstruct` (src/lib/OpenEXRCore/internal_zip.c:145-156 @ v3.5.3): undoes
+/// the delta predictor, each byte the previous one plus its difference, offset by 128.
+fn reconstruct(buf: &mut [u8]) {
+    for t in 1..buf.len() {
+        let d = i32::from(buf[t - 1]) + i32::from(buf[t]) - 128;
+        buf[t] = d as u8;
+    }
+}
+
+/// Port of the scalar `interleave` (src/lib/OpenEXRCore/internal_zip.c:222-243 @ v3.5.3): the
+/// first half of `source` into the even bytes of `out`, the second into the odd ones.
+fn interleave(out: &mut [u8], source: &[u8]) {
+    let out_size = out.len();
+    let (mut t1, mut t2) = (0usize, out_size.div_ceil(2));
+    let mut s = 0usize;
+    loop {
+        if s < out_size {
+            out[s] = source[t1];
+            s += 1;
+            t1 += 1;
+        } else {
+            break;
+        }
+        if s < out_size {
+            out[s] = source[t2];
+            s += 1;
+            t2 += 1;
+        } else {
+            break;
+        }
+    }
+}
+
+/// Port of `internal_zip_reconstruct_bytes` (src/lib/OpenEXRCore/internal_zip.c:248-253
+/// @ v3.5.3): `source`'s first `out.len()` bytes, unpredicted in place, then interleaved into
+/// `out`.
+pub(crate) fn internal_zip_reconstruct_bytes(out: &mut [u8], source: &mut [u8]) {
+    let count = out.len();
+    reconstruct(&mut source[..count]);
+    interleave(out, &source[..count]);
+}
+
+/// Port of `internal_zip_deconstruct_bytes` (src/lib/OpenEXRCore/internal_zip.c:257-286
+/// @ v3.5.3): the inverse of [`internal_zip_reconstruct_bytes`], `source` into `scratch`.
+// used by apply_zip_impl, which comes with the encode pipeline (Phase 6)
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn internal_zip_deconstruct_bytes(scratch: &mut [u8], source: &[u8]) {
+    let count = source.len();
+    let (mut t1, mut t2) = (0usize, count.div_ceil(2));
+    let mut raw = 0usize;
+    // reorder
+    while raw < count {
+        scratch[t1] = source[raw];
+        t1 += 1;
+        raw += 1;
+        if raw < count {
+            scratch[t2] = source[raw];
+            t2 += 1;
+            raw += 1;
+        }
+    }
+    // predictor
+    if count == 0 {
+        return;
+    }
+    let mut p = i32::from(scratch[0]);
+    for t in &mut scratch[1..count] {
+        let d = i32::from(*t) - p + (128 + 256);
+        p = i32::from(*t);
+        *t = d as u8;
+    }
+}
+
+/// Port of `undo_zip_impl` (src/lib/OpenEXRCore/internal_zip.c:289-325 @ v3.5.3): inflates
+/// `compressed` into `scratch` (all of it, which may be larger than the output) and
+/// reconstructs exactly `uncompressed.len()` bytes into `uncompressed`.
+fn undo_zip_impl(
+    decode: &mut DecodePipeline<'_>,
+    compressed: &[u8],
+    uncompressed: &mut [u8],
+    scratch: &mut [u8],
+) -> Result<(), Error> {
+    if scratch.len() < uncompressed.len() {
+        return Err(Error::bare(ErrorCode::InvalidArgument));
+    }
+
+    let mut actual_out_bytes = 0usize;
+    crate::compression::internal_exr_decode_uncompress_buffer(
+        decode,
+        compressed,
+        scratch,
+        &mut actual_out_bytes,
+    )?;
+
+    decode.bytes_decompressed = actual_out_bytes as u64;
+    if actual_out_bytes != uncompressed.len() {
+        return Err(Error::bare(ErrorCode::CorruptChunk));
+    }
+    internal_zip_reconstruct_bytes(uncompressed, scratch);
+    Ok(())
+}
+
+/// Port of `internal_exr_undo_zip` (src/lib/OpenEXRCore/internal_zip.c:328-365 @ v3.5.3): the
+/// ZIP and ZIPS decompressor of the decode pipeline, `compressed` into all of `uncompressed`.
+pub(crate) fn internal_exr_undo_zip(
+    decode: &mut DecodePipeline<'_>,
+    compressed: &[u8],
+    uncompressed: &mut [u8],
+) -> Result<(), Error> {
+    let scratchbufsz = uncompressed.len().max(compressed.len());
+
+    if compressed.len() == uncompressed.len() {
+        decode.bytes_decompressed = compressed.len() as u64;
+        uncompressed.copy_from_slice(compressed);
+        return Ok(());
+    }
+
+    internal_decode_alloc_buffer(&mut decode.scratch_buffer_1, scratchbufsz);
+    // the scratch buffer is lent out of the pipeline for the call
+    let mut scratch = decode.scratch_buffer_1.take().unwrap_or_default();
+    let rv = undo_zip_impl(decode, compressed, uncompressed, &mut scratch);
+    decode.scratch_buffer_1 = Some(scratch);
+    rv
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The predictor and reordering undo each other, for even and odd lengths.
+    #[test]
+    fn deconstruct_and_reconstruct_round_trip() {
+        for n in [0usize, 1, 2, 3, 31, 32, 33, 1000, 4097] {
+            let input: Vec<u8> = (0..n)
+                .map(|i| (i * 37 % 251) as u8 ^ (i >> 3) as u8)
+                .collect();
+            let mut scratch = vec![0u8; n];
+            internal_zip_deconstruct_bytes(&mut scratch, &input);
+            let mut out = vec![0u8; n];
+            internal_zip_reconstruct_bytes(&mut out, &mut scratch);
+            assert_eq!(out, input, "{n} bytes");
+        }
+    }
+}

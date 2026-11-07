@@ -11,19 +11,22 @@
 //! into one planar buffer per channel, and, when its channels are the same size and not
 //! subsampled, into one interleaved buffer in each channel order; and planar again with a gap
 //! after every pixel. Each is compared byte for byte with the wheel's pixels. The two layouts reach the direct read and the unpack routines (planar,
-//! interleaved, generic). An image the wheel reads but the port refuses fails the check.
+//! interleaved, generic). An image the wheel reads but the port refuses fails the check; so
+//! does a part whose pixels one of them decodes and the other refuses.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use openexr_core::coding::BufferRef;
-use openexr_core::context::Context;
+use openexr_core::context::{Context, Error};
 use openexr_core::openexr_attr::{Compression, Storage};
 
 /// The compressions the port decodes, with the wheel's names for them.
-const DECODES: [(Compression, &str); 2] = [
+const DECODES: [(Compression, &str); 4] = [
     (Compression::NONE, "NO_COMPRESSION"),
     (Compression::RLE, "RLE_COMPRESSION"),
+    (Compression::ZIPS, "ZIPS_COMPRESSION"),
+    (Compression::ZIP, "ZIP_COMPRESSION"),
 ];
 
 fn root() -> PathBuf {
@@ -103,22 +106,22 @@ struct ChunkAt {
 /// Each channel's name and pixels.
 type Planes = Vec<(Vec<u8>, Vec<u8>)>;
 
-fn decode_part(f: &Context, p: i32) -> Option<(Planes, Vec<Planes>)> {
-    let storage = f.get_storage(p).unwrap();
-    let comp = f.get_compression(p).unwrap();
+fn decode_part(f: &Context, p: i32) -> Result<Option<(Planes, Vec<Planes>)>, Error> {
+    let storage = f.get_storage(p)?;
+    let comp = f.get_compression(p)?;
     if !DECODES.iter().any(|(c, _)| *c == comp)
         || (storage != Storage::SCANLINE && storage != Storage::TILED)
     {
-        return None;
+        return Ok(None);
     }
-    let dw = f.get_data_window(p).unwrap();
+    let dw = f.get_data_window(p)?;
 
     let probe = if storage == Storage::SCANLINE {
-        f.read_scanline_chunk_info(p, dw.min.y).unwrap()
+        f.read_scanline_chunk_info(p, dw.min.y)?
     } else {
-        f.read_tile_chunk_info(p, 0, 0, 0, 0).unwrap()
+        f.read_tile_chunk_info(p, 0, 0, 0, 0)?
     };
-    let first = f.decoding_initialize(p, &probe).unwrap();
+    let first = f.decoding_initialize(p, &probe)?;
     let chans: Vec<Chan> = first
         .channels
         .iter()
@@ -138,10 +141,10 @@ fn decode_part(f: &Context, p: i32) -> Option<(Planes, Vec<Planes>)> {
 
     let mut chunks = Vec::new();
     if storage == Storage::SCANLINE {
-        let lpc = f.get_scanlines_per_chunk(p).unwrap();
+        let lpc = f.get_scanlines_per_chunk(p)?;
         let mut y = dw.min.y;
         while y <= dw.max.y {
-            let cinfo = f.read_scanline_chunk_info(p, y).unwrap();
+            let cinfo = f.read_scanline_chunk_info(p, y)?;
             let y0 = sampling
                 .iter()
                 .map(|&(_, ys)| samples(dw.min.y, cinfo.start_y - 1, ys))
@@ -154,11 +157,11 @@ fn decode_part(f: &Context, p: i32) -> Option<(Planes, Vec<Planes>)> {
             y += lpc;
         }
     } else {
-        let (tx_n, ty_n) = f.get_tile_counts(p, 0, 0).unwrap();
-        let (tsx, tsy) = f.get_tile_sizes(p, 0, 0).unwrap();
+        let (tx_n, ty_n) = f.get_tile_counts(p, 0, 0)?;
+        let (tsx, tsy) = f.get_tile_sizes(p, 0, 0)?;
         for ty in 0..ty_n {
             for tx in 0..tx_n {
-                let cinfo = f.read_tile_chunk_info(p, tx, ty, 0, 0).unwrap();
+                let cinfo = f.read_tile_chunk_info(p, tx, ty, 0, 0)?;
                 let n = chans.len();
                 chunks.push(ChunkAt {
                     cinfo,
@@ -172,7 +175,7 @@ fn decode_part(f: &Context, p: i32) -> Option<(Planes, Vec<Planes>)> {
     // planar: buffer c holds channel c
     let mut planar: Vec<Vec<u8>> = chans.iter().map(|c| vec![0u8; c.w * c.h * c.bpe]).collect();
     for ch in &chunks {
-        let mut d = f.decoding_initialize(p, &ch.cinfo).unwrap();
+        let mut d = f.decoding_initialize(p, &ch.cinfo)?;
         for (c, out) in d.channels.iter_mut().enumerate() {
             let k = &chans[c];
             out.data = Some(BufferRef {
@@ -182,9 +185,9 @@ fn decode_part(f: &Context, p: i32) -> Option<(Planes, Vec<Planes>)> {
             out.user_pixel_stride = k.bpe as i32;
             out.user_line_stride = (k.w * k.bpe) as i32;
         }
-        f.decoding_choose_default_routines(p, &mut d).unwrap();
+        f.decoding_choose_default_routines(p, &mut d)?;
         let mut outs: Vec<&mut [u8]> = planar.iter_mut().map(Vec::as_mut_slice).collect();
-        f.decoding_run(p, &mut d, &mut outs).unwrap();
+        f.decoding_run(p, &mut d, &mut outs)?;
     }
     let planar_out = chans.iter().map(|c| c.name.clone()).zip(planar).collect();
 
@@ -199,7 +202,7 @@ fn decode_part(f: &Context, p: i32) -> Option<(Planes, Vec<Planes>)> {
         .map(|c| vec![0u8; c.w * c.h * c.bpe * 2])
         .collect();
     for ch in &chunks {
-        let mut d = f.decoding_initialize(p, &ch.cinfo).unwrap();
+        let mut d = f.decoding_initialize(p, &ch.cinfo)?;
         for (c, out) in d.channels.iter_mut().enumerate() {
             let k = &chans[c];
             out.data = Some(BufferRef {
@@ -209,9 +212,9 @@ fn decode_part(f: &Context, p: i32) -> Option<(Planes, Vec<Planes>)> {
             out.user_pixel_stride = (k.bpe * 2) as i32;
             out.user_line_stride = (k.w * k.bpe * 2) as i32;
         }
-        f.decoding_choose_default_routines(p, &mut d).unwrap();
+        f.decoding_choose_default_routines(p, &mut d)?;
         let mut outs: Vec<&mut [u8]> = spaced.iter_mut().map(Vec::as_mut_slice).collect();
-        f.decoding_run(p, &mut d, &mut outs).unwrap();
+        f.decoding_run(p, &mut d, &mut outs)?;
     }
     let spaced_out: Planes = chans
         .iter()
@@ -235,7 +238,7 @@ fn decode_part(f: &Context, p: i32) -> Option<(Planes, Vec<Planes>)> {
         let slot = |c: usize| if rev { n - 1 - c } else { c };
         let mut buf = [vec![0u8; w * h * n * bpe]];
         for ch in &chunks {
-            let mut d = f.decoding_initialize(p, &ch.cinfo).unwrap();
+            let mut d = f.decoding_initialize(p, &ch.cinfo)?;
             for (c, out) in d.channels.iter_mut().enumerate() {
                 out.data = Some(BufferRef {
                     buffer: 0,
@@ -244,9 +247,9 @@ fn decode_part(f: &Context, p: i32) -> Option<(Planes, Vec<Planes>)> {
                 out.user_pixel_stride = (n * bpe) as i32;
                 out.user_line_stride = (w * n * bpe) as i32;
             }
-            f.decoding_choose_default_routines(p, &mut d).unwrap();
+            f.decoding_choose_default_routines(p, &mut d)?;
             let mut outs: Vec<&mut [u8]> = buf.iter_mut().map(Vec::as_mut_slice).collect();
-            f.decoding_run(p, &mut d, &mut outs).unwrap();
+            f.decoding_run(p, &mut d, &mut outs)?;
         }
         interleaved_out.push(
             chans
@@ -264,7 +267,7 @@ fn decode_part(f: &Context, p: i32) -> Option<(Planes, Vec<Planes>)> {
         );
     }
     interleaved_out.insert(0, spaced_out);
-    Some((planar_out, interleaved_out))
+    Ok(Some((planar_out, interleaved_out)))
 }
 
 fn images(scratch: &Path) -> Vec<PathBuf> {
@@ -294,7 +297,8 @@ fn images(scratch: &Path) -> Vec<PathBuf> {
 fn images_decode_as_the_wheel_does() {
     let scratch =
         std::env::temp_dir().join(format!("openexr_rs_heavy_decode_{}", std::process::id()));
-    let (mut parts_checked, mut layouts_checked, mut parts_skipped) = (0, 0, 0);
+    let (mut parts_checked, mut layouts_checked, mut parts_skipped, mut parts_refused) =
+        (0, 0, 0, 0);
     for (n, image) in images(&scratch).iter().enumerate() {
         let out = scratch.join(n.to_string());
         let wheel = oracle(image, &out);
@@ -309,9 +313,28 @@ fn images_decode_as_the_wheel_does() {
             (Ok(w), Ok(f)) => (w, f),
         };
         for p in 0..f.get_count() {
-            let Some((planar, interleaved)) = decode_part(&f, p) else {
-                parts_skipped += 1;
-                continue;
+            let wheel_read_it = wheel.iter().any(|c| c.part == p);
+            let (planar, interleaved) = match decode_part(&f, p) {
+                Ok(None) => {
+                    parts_skipped += 1;
+                    continue;
+                }
+                // the wheel could not read this part's pixels either
+                Err(_) if !wheel_read_it => {
+                    parts_refused += 1;
+                    continue;
+                }
+                Err(e) => panic!(
+                    "{}: part {p}: the wheel reads it, the port fails: {e}",
+                    image.display()
+                ),
+                Ok(Some(_)) if !wheel_read_it => {
+                    panic!(
+                        "{}: part {p}: the port decodes it, the wheel could not",
+                        image.display()
+                    )
+                }
+                Ok(Some(d)) => d,
             };
             let names = ["planar, spaced", "interleaved", "interleaved, reversed"];
             let layouts =
@@ -341,7 +364,7 @@ fn images_decode_as_the_wheel_does() {
     }
     let _ = std::fs::remove_dir_all(&scratch);
     eprintln!(
-        "parts compared: {parts_checked} ({layouts_checked} layouts); parts for later phases: {parts_skipped}"
+        "parts compared: {parts_checked} ({layouts_checked} layouts); refused by both: {parts_refused}; parts for later phases: {parts_skipped}"
     );
     assert!(parts_checked > 0);
 }
