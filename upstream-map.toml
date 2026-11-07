@@ -1127,7 +1127,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/float_vector.c"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/float_vector.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_attr.h"
@@ -1247,7 +1248,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_float_vector.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/float_vector.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_ht.cpp"
@@ -1329,7 +1331,8 @@ target = "crates/openexr-core/src/string.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_string_vector.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/string_vector.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_structs.c"
@@ -1526,7 +1529,8 @@ target = "crates/openexr-core/src/string.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/string_vector.c"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/string_vector.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/unpack.c"
@@ -1623,7 +1627,7 @@ path = "src/test/OpenEXRCoreTest/general_attr.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
-note = "testXDR, testAttrSizes; testStringHelper partial (dummy file until exr_start_write; print_context_info with debug.c)"
+note = "testXDR, testAttrSizes; string, string vector and float vector helpers partial (dummy file until exr_start_write; print_context_info with debug.c)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"

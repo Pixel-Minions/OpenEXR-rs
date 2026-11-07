@@ -11,6 +11,7 @@ pub mod base;
 pub mod cfmt;
 pub mod context;
 pub mod errors;
+pub mod float_vector;
 mod imath_half;
 mod internal_coding;
 mod internal_constants;
@@ -19,6 +20,7 @@ mod internal_ht_quality;
 mod internal_xdr;
 pub mod openexr_attr;
 pub mod string;
+pub mod string_vector;
 pub mod version;
 
 #[cfg(test)]
