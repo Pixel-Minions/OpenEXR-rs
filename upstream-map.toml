@@ -1132,7 +1132,7 @@ path = "src/lib/OpenEXRCore/decoding.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/decoding.rs"
-note = "ported whole; the deep paths are tested with Phase 7, and the pixels against the oracle in the heavy tier"
+note = "ported whole; uncompressed scanline and tiled parts match the wheel bit for bit (heavy tier, tests/heavy_decode_none.rs); the deep paths are tested with Phase 7"
 
 [[file]]
 path = "src/lib/OpenEXRCore/encoding.c"
