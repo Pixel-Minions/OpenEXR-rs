@@ -200,6 +200,19 @@ section. An entry says:
   chunk_write.rs`); checked by `chunk_write::tests::files_rewrite_as_the_cpp_library_wrote_them`
   on lineOrder_decreasing.exr. Tiled parts keep upstream's order for now (the C++ library's
   tile order is rows bottom up within each level; `docs/deferred.md`).
+### I-20. An encode pipeline without a pack stage writes an empty chunk
+
+- **Upstream:** `exr_encoding_run` zeroes `packed_bytes` before packing; with no
+  `convert_and_pack_fn` it checks the caller's packed buffer but never sets `packed_bytes`
+  again, so the compress stage is skipped and the chunk is written with 0 bytes of data
+  (`src/lib/OpenEXRCore/encoding.c:293-315`, `331-361` @ v3.5.3).
+- **Who notices:** callers who pack the chunk themselves and leave the pack stage unset; the
+  file they write has an empty chunk in its place.
+- **A fix:** after the check passes, take the channels' packed size as the chunk's, so the
+  chunk is compressed and written from the caller's packed buffer. The check itself (which
+  compares the size with `compressed_bytes`) is kept as upstream has it.
+- **Status:** **fixed**, deviation D-16 (owner, 2026-11-07) (`crates/openexr-core/src/encoding.rs`);
+  checked by `encoding::tests::caller_packed_chunks_are_written`.
 
 ## Messages and debug output
 
@@ -250,6 +263,17 @@ section. An entry says:
 - **Status:** **fixed**, deviation D-9 (owner, 2026-11-07): printed with `%d`
   (`crates/openexr-core/src/decoding.rs`); checked by
   `decoding::tests::bad_output_size_names_the_channel`.
+### I-19. Two encode errors print the channel index as a character
+
+- **Upstream:** `exr_encoding_run` reports an unsupported input size or type "for channel %c
+  (%s)", passing the channel's index `c` as an `int`, as I-13 does on the decode side
+  (`src/lib/OpenEXRCore/encoding.c:268-287` @ v3.5.3).
+- **Who notices:** readers of the error text for a channel set up with a bad
+  `user_bytes_per_element` or `user_data_type`.
+- **A fix:** print the index with `%d`.
+- **Status:** **fixed**, deviation D-15 (owner, 2026-11-07, as for I-13)
+  (`crates/openexr-core/src/encoding.rs`); checked by
+  `encoding::tests::bad_input_size_names_the_channel`.
 
 ## Undefined behaviour the port does not copy
 
@@ -400,3 +424,21 @@ section. An entry says:
 - **The port:** refuses it with `EXR_ERR_INVALID_ARGUMENT`, as the function's other refusals.
 - **Status:** the port's choice; listed for the owner's review.
 
+### U-12. Encoding outside the caller's buffers
+
+- **Upstream:** the pack stage reads each channel at `encode_from_ptr` plus the pixel and line
+  strides, without bounds, and writes the packed buffer by the channels' sizes; the RLE stage
+  and the write stage read the packed and compressed buffers by `packed_bytes` and
+  `compressed_bytes` (`src/lib/OpenEXRCore/pack.c:20-188`, `internal_rle.c:93-124`,
+  `encoding.c:31-94` @ v3.5.3). A layout that reaches outside the caller's memory reads
+  outside it, and a channel without a pointer is read through NULL.
+- **Who notices:** callers whose strides or buffers do not fit the chunk, or who change the
+  pipeline's sizes or buffers between stages.
+- **The port:** a channel names one of the run's input buffers and an offset into it. Before
+  reading anything, the pack stage works out the whole set of bytes it will read and refuses
+  a layout that reaches outside its buffer with `EXR_ERR_INVALID_ARGUMENT` and "Channel %d
+  (%s): the input reaches outside buffer %d (bytes %lld to %lld; the buffer holds %llu)";
+  every other read and write past a buffer, and a missing channel buffer, is refused with
+  `EXR_ERR_INVALID_ARGUMENT`. Layouts inside the buffers encode as upstream does, byte for
+  byte. Checked by `encoding::tests::input_one_byte_short_is_refused`.
+- **Status:** the port's choice, as U-9.

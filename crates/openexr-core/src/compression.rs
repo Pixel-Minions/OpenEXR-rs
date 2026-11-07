@@ -2,17 +2,136 @@
 // Copyright Contributors to the OpenEXR Project.
 
 //! Port of `compression.c` (src/lib/OpenEXRCore/compression.c:1-833 @ v3.5.3), so far the
-//! functions header parsing needs and the decompression dispatch (`exr_uncompress_chunk`);
-//! the codecs it dispatches to come with Phase 5, and the compression side with Phase 6.
+//! functions header parsing needs, the decompression dispatch (`exr_uncompress_chunk`) and
+//! the compression dispatch (`exr_compress_chunk`). Codecs not ported yet report
+//! `EXR_ERR_FEATURE_NOT_IMPLEMENTED` both ways.
 
 use crate::cfmt::Arg;
 use crate::context::{Context, Error};
 use crate::decoding::{Aliased, DecodePipeline, EXR_DECODE_SAMPLE_DATA_ONLY};
+use crate::encoding::{
+    EXR_TRANSCODE_BUFFER_COMPRESSED, EncodePipeline, internal_encode_alloc_aliased,
+};
 use crate::errors::ErrorCode;
 use crate::openexr_attr::Compression;
 use openexr_deflate::{Decompressor, LibdeflateResult};
 
 pub use crate::internal_rle::{rle_compress_buffer, rle_uncompress_buffer};
+
+/// Port of `exr_compress_max_buffer_size` (src/lib/OpenEXRCore/compression.c:80-117 @ v3.5.3):
+/// the size of a buffer that holds any compressed form of `in_bytes` bytes, with room for
+/// the Huffman coder's scratch memory, and never under 8192 bytes.
+pub fn compress_max_buffer_size(in_bytes: usize) -> usize {
+    let mut r = openexr_deflate::zlib_compress_bound(in_bytes);
+    // lib deflate has a message about needing a 9 byte boundary but is unclear if it actually
+    // adds that or not (see the comment on libdeflate_deflate_compress)
+    if r > (usize::MAX - 9) {
+        return usize::MAX;
+    }
+    r += 9;
+
+    // old library had uiAdd( uiAdd( in, ceil(in * 0.01) ), 100 )
+    let mut extra = r.wrapping_mul(130);
+    if extra < r {
+        return usize::MAX;
+    }
+    extra /= 128;
+
+    if extra > (usize::MAX - 100) {
+        return usize::MAX;
+    }
+    if extra > r {
+        r = extra;
+    }
+
+    // in case huf is larger than zlib
+    extra = in_bytes
+        .wrapping_add(crate::internal_huf::internal_exr_huf_compress_spare_bytes() as usize);
+    if r < extra {
+        r = extra;
+    }
+
+    extra = in_bytes
+        .wrapping_add(crate::internal_huf::internal_exr_huf_decompress_spare_bytes() as usize);
+    if r < extra {
+        r = extra;
+    }
+
+    // make sure there is some small 2 pages worth of buffer
+    if 8192 > r {
+        r = 8192;
+    }
+    r
+}
+
+/// Port of `exr_compress_chunk` (src/lib/OpenEXRCore/compression.c:518-657 @ v3.5.3): the
+/// encode pipeline's compress stage, the packed bytes into the compressed buffer, with the
+/// part's compression. `ctxt` must be the pipeline's context. The deep sample count table's
+/// compression comes with deep data (Phase 7; `EXR_ERR_FEATURE_NOT_IMPLEMENTED` until then).
+pub fn compress_chunk(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(), Error> {
+    if encode.context == 0 || encode.context != ctxt.id {
+        return Err(Error::bare(ErrorCode::MissingContextArg));
+    }
+
+    // TODO: Double check need for a lock?
+    if encode.part_index < 0 || encode.part_index as usize >= ctxt.parts.len() {
+        return Err(ctxt.print_error(
+            ErrorCode::ArgumentOutOfRange,
+            "Part index (%d) out of range",
+            &[encode.part_index.into()],
+        ));
+    }
+    let part = &ctxt.parts[encode.part_index as usize];
+
+    let mut maxbytes = encode.chunk.unpacked_size as usize;
+    if encode.packed_bytes as usize > maxbytes {
+        maxbytes = encode.packed_bytes as usize;
+    }
+
+    if let Err(e) = internal_encode_alloc_aliased(
+        ctxt,
+        encode.part_index,
+        EXR_TRANSCODE_BUFFER_COMPRESSED,
+        &mut encode.compressed_buffer,
+        compress_max_buffer_size(maxbytes),
+    ) {
+        return Err(ctxt.print_error(
+            e.code,
+            "error allocating buffer %zu",
+            &[Arg::Usize(compress_max_buffer_size(maxbytes))],
+        ));
+    }
+
+    // This is never called in regular c++ usage
+    if encode.sample_count_table.is_some() && !encode.skip_sample_count_table_compression {
+        return Err(Error::bare(ErrorCode::FeatureNotImplemented));
+    }
+
+    match part.comp_type {
+        Compression::NONE => Err(ctxt.report_error(
+            ErrorCode::InvalidArgument,
+            b"no compression set but still trying to compress",
+        )),
+        Compression::RLE => crate::internal_rle::internal_exr_apply_rle(encode, ctxt),
+        Compression::ZIP
+        | Compression::ZIPS
+        | Compression::PIZ
+        | Compression::PXR24
+        | Compression::B44
+        | Compression::B44A
+        | Compression::DWAA
+        | Compression::DWAB
+        | Compression::HTJ2K32
+        | Compression::HTJ2K256
+        | Compression::LJ2K
+        | Compression::ZSTD => Err(Error::bare(ErrorCode::FeatureNotImplemented)),
+        _ => Err(ctxt.print_error(
+            ErrorCode::InvalidArgument,
+            "Compression technique 0x%02X invalid",
+            &[part.comp_type.0.into()],
+        )),
+    }
+}
 
 /// Port of `exr_compression_lines_per_chunk` (src/lib/OpenEXRCore/compression.c:321-348
 /// @ v3.5.3): -1 for an invalid compression.

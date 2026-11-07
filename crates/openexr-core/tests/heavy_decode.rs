@@ -369,9 +369,9 @@ fn images_decode_as_the_wheel_does() {
     assert!(parts_checked > 0);
 }
 
-/// The header the port writes for `src`'s parts (copied into a write context with a legacy
-/// header, the C++ library's attribute order), into memory.
-fn rewrite_header(src: &Context) -> Result<Vec<u8>, Error> {
+/// A write context into memory with `src`'s parts (copied, with a legacy header: the C++
+/// library's attribute order), its header written; and the memory.
+fn header_copy(src: &Context) -> Result<(Context, Memory), Error> {
     use openexr_core::context::{
         DefaultWriteMode, EXR_CONTEXT_FLAG_WRITE_LEGACY_HEADER, Initializer,
     };
@@ -405,6 +405,15 @@ fn rewrite_header(src: &Context) -> Result<Vec<u8>, Error> {
         dst.copy_unset_attributes(q, src, p)?;
     }
     dst.write_header()?;
+    Ok((dst, mem))
+}
+
+/// The memory a [`header_copy`] context writes to.
+type Memory = std::sync::Arc<std::sync::Mutex<Vec<u8>>>;
+
+/// The header the port writes for `src`'s parts ([`header_copy`]).
+fn rewrite_header(src: &Context) -> Result<Vec<u8>, Error> {
+    let (_, mem) = header_copy(src)?;
     let bytes = mem.lock().unwrap().clone();
     Ok(bytes)
 }
@@ -485,5 +494,158 @@ fn headers_rewrite_as_the_wheel_wrote_them() {
     }
     let _ = std::fs::remove_dir_all(&scratch);
     eprintln!("headers compared: {compared}");
+    assert!(compared > 0);
+}
+
+/// The compressions the port encodes.
+const ENCODES: [Compression; 2] = [Compression::NONE, Compression::RLE];
+
+/// Part `p`'s chunks, in the order the C++ library writes them: chunk order, from the bottom
+/// for a decreasing-Y scanline part. Each is its first line (or tile and levels) and its
+/// information.
+fn chunks_in_write_order(
+    src: &Context,
+    p: i32,
+) -> Result<Vec<(i32, i32, i32, i32, openexr_core::chunk_info::ChunkInfo)>, Error> {
+    use openexr_core::openexr_attr::{LineOrder, TileLevelMode};
+    let mut chunks = Vec::new();
+    if src.get_storage(p)? == Storage::SCANLINE {
+        let dw = src.get_data_window(p)?;
+        let lpc = src.get_scanlines_per_chunk(p)?;
+        let mut y = dw.min.y;
+        while y <= dw.max.y {
+            chunks.push((y, 0, 0, 0, src.read_scanline_chunk_info(p, y)?));
+            y += lpc;
+        }
+    } else {
+        let (nlx, nly) = src.get_tile_levels(p)?;
+        let levels: Vec<(i32, i32)> =
+            if src.get_tile_descriptor(p)?.2 == TileLevelMode::RIPMAP_LEVELS {
+                (0..nly)
+                    .flat_map(|ly| (0..nlx).map(move |lx| (lx, ly)))
+                    .collect()
+            } else {
+                (0..nlx).map(|l| (l, l)).collect()
+            };
+        for (lx, ly) in levels {
+            let (cx, cy) = src.get_tile_counts(p, lx, ly)?;
+            for ty in 0..cy {
+                for tx in 0..cx {
+                    chunks.push((tx, ty, lx, ly, src.read_tile_chunk_info(p, tx, ty, lx, ly)?));
+                }
+            }
+        }
+    }
+    chunks.sort_by_key(|c| c.4.idx);
+    if src.get_storage(p)? == Storage::SCANLINE && src.get_lineorder(p)? == LineOrder::DECREASING_Y
+    {
+        chunks.reverse();
+    }
+    Ok(chunks)
+}
+
+/// The file the port writes for `src` from its pixels: the header copied ([`header_copy`]),
+/// then every chunk decoded into planar buffers and encoded by the encode pipeline with its
+/// default stages.
+fn reencode_file(src: &Context) -> Result<Vec<u8>, Error> {
+    let (mut dst, mem) = header_copy(src)?;
+    for p in 0..src.get_count() {
+        let scan = src.get_storage(p)? == Storage::SCANLINE;
+        for (a, b, lx, ly, rinfo) in chunks_in_write_order(src, p)? {
+            let planar = |chans: &mut [openexr_core::coding::CodingChannelInfo]| {
+                let mut bufs = Vec::new();
+                for (i, c) in chans.iter_mut().enumerate() {
+                    let bpe = i32::from(c.bytes_per_element);
+                    c.user_pixel_stride = bpe;
+                    c.user_line_stride = c.width * bpe;
+                    c.data = Some(BufferRef {
+                        buffer: i,
+                        offset: 0,
+                    });
+                    bufs.push(vec![0u8; (c.width.max(0) * c.height.max(0) * bpe) as usize]);
+                }
+                bufs
+            };
+            let mut dec = src.decoding_initialize(p, &rinfo)?;
+            let mut bufs = planar(&mut dec.channels);
+            src.decoding_choose_default_routines(p, &mut dec)?;
+            let mut outs: Vec<&mut [u8]> = bufs.iter_mut().map(|b| &mut b[..]).collect();
+            src.decoding_run(p, &mut dec, &mut outs)?;
+
+            let winfo = if scan {
+                dst.write_scanline_chunk_info(p, a)?
+            } else {
+                dst.write_tile_chunk_info(p, a, b, lx, ly)?
+            };
+            let mut enc = dst.encoding_initialize(p, &winfo)?;
+            planar(&mut enc.channels);
+            dst.encoding_choose_default_routines(p, &mut enc)?;
+            let ins: Vec<&[u8]> = bufs.iter().map(|b| &b[..]).collect();
+            dst.encoding_run(p, &mut enc, &ins)?;
+        }
+    }
+    let bytes = mem.lock().unwrap().clone();
+    Ok(bytes)
+}
+
+/// The wheel's file as the port writes it: for a single-part file, without the `type`
+/// attribute ([`without_type_attr`]) and with the chunk offsets moved back by its size.
+fn as_port_writes(src: &Context, file: &[u8]) -> Vec<u8> {
+    if src.get_count() != 1 {
+        return file.to_vec();
+    }
+    let table = src.get_chunk_table_offset(0).unwrap() as usize;
+    let n = src.get_chunk_count(0).unwrap() as usize;
+    let mut out = without_type_attr(&file[..table]);
+    let d = (table - out.len()) as u64;
+    for e in file[table..table + 8 * n].chunks_exact(8) {
+        out.extend_from_slice(&(u64::from_le_bytes(e.try_into().unwrap()) - d).to_le_bytes());
+    }
+    out.extend_from_slice(&file[table + 8 * n..]);
+    out
+}
+
+/// Heavy tier: the uncompressed and RLE files the wheel (the C++ library) writes come back
+/// byte for byte when the port encodes their pixels again, but for a single-part file's `type`
+/// attribute ([`as_port_writes`]): every scanline and tiled image of [`images`] whose parts
+/// all use one of [`ENCODES`]' compressions, in every layout `oracle/write_images.py` writes
+/// (subsampled, mixed types, mipmapped tiles among them).
+#[test]
+fn images_encode_as_the_wheel_wrote_them() {
+    let scratch =
+        std::env::temp_dir().join(format!("openexr_rs_heavy_encode_{}", std::process::id()));
+    let mut compared = 0;
+    for image in images(&scratch) {
+        let name = image.file_name().unwrap().to_string_lossy().into_owned();
+        let Ok(src) = Context::start_read(Some(image.to_str().unwrap()), None) else {
+            continue;
+        };
+        let encodable = (0..src.get_count()).all(|p| {
+            src.get_compression(p).is_ok_and(|c| ENCODES.contains(&c))
+                && src
+                    .get_storage(p)
+                    .is_ok_and(|s| s == Storage::SCANLINE || s == Storage::TILED)
+        });
+        if !encodable || name.contains("_with_") {
+            continue;
+        }
+        let file = as_port_writes(&src, &std::fs::read(&image).unwrap());
+        let out = reencode_file(&src).unwrap_or_else(|e| panic!("{name}: {e}"));
+        if out != file {
+            let at = out
+                .iter()
+                .zip(&file)
+                .position(|(a, b)| a != b)
+                .unwrap_or(out.len().min(file.len()));
+            panic!(
+                "{name}: the file differs at byte {at} (port {} bytes, wheel {})",
+                out.len(),
+                file.len()
+            );
+        }
+        compared += 1;
+    }
+    let _ = std::fs::remove_dir_all(&scratch);
+    eprintln!("files compared: {compared}");
     assert!(compared > 0);
 }

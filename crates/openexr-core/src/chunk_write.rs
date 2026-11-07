@@ -651,7 +651,6 @@ impl Context {
     }
 
     // used by the encode pipeline (encoding.c), the next chunk of Phase 6
-    #[allow(dead_code)]
     /// Port of `internal_validate_next_chunk` (src/lib/OpenEXRCore/chunk.c:2365-2428 @ v3.5.3):
     /// whether the encode pipeline's chunk is the next one this context can write.
     pub(crate) fn internal_validate_next_chunk(
@@ -706,58 +705,62 @@ impl Context {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::context::Context;
+pub(crate) mod tests {
+    use crate::chunk_info::ChunkInfo;
+    use crate::context::{Context, Error};
     use crate::openexr_attr::{Storage, TileLevelMode};
     use crate::upstream_tests::read::test_image_dir;
     use crate::write_header::tests::copy_header;
 
-    /// The whole file, rewritten: the header copied (legacy order), then every chunk's packed
-    /// bytes read from `src` and written in chunk order, with the chunk tables.
-    fn rewrite_file(src: &Context) -> Result<Vec<u8>, crate::context::Error> {
-        let (mut dst, mem) = copy_header(src)?;
-        for p in 0..src.get_count() {
-            let mut chunks = Vec::new();
-            if src.get_storage(p)? == Storage::SCANLINE {
-                let dw = src.get_data_window(p)?;
-                let lpc = src.get_scanlines_per_chunk(p)?;
-                let mut y = dw.min.y;
-                while y <= dw.max.y {
-                    chunks.push((y, 0, 0, 0, src.read_scanline_chunk_info(p, y)?));
-                    y += lpc;
-                }
+    /// A chunk of a file: its first line (or tile x, tile y and levels) and its information.
+    pub(crate) type FileChunk = (i32, i32, i32, i32, ChunkInfo);
+
+    /// Part `p`'s chunks of `src`, in the order the C++ library writes them: chunk order,
+    /// from the bottom for a decreasing-Y scanline part.
+    pub(crate) fn chunks_in_write_order(src: &Context, p: i32) -> Result<Vec<FileChunk>, Error> {
+        let mut chunks = Vec::new();
+        if src.get_storage(p)? == Storage::SCANLINE {
+            let dw = src.get_data_window(p)?;
+            let lpc = src.get_scanlines_per_chunk(p)?;
+            let mut y = dw.min.y;
+            while y <= dw.max.y {
+                chunks.push((y, 0, 0, 0, src.read_scanline_chunk_info(p, y)?));
+                y += lpc;
+            }
+        } else {
+            let (nlx, nly) = src.get_tile_levels(p)?;
+            let mode = src.get_tile_descriptor(p)?.2;
+            let levels: Vec<(i32, i32)> = if mode == TileLevelMode::RIPMAP_LEVELS {
+                (0..nly)
+                    .flat_map(|ly| (0..nlx).map(move |lx| (lx, ly)))
+                    .collect()
             } else {
-                let (nlx, nly) = src.get_tile_levels(p)?;
-                let mode = src.get_tile_descriptor(p)?.2;
-                let levels: Vec<(i32, i32)> = if mode == TileLevelMode::RIPMAP_LEVELS {
-                    (0..nly)
-                        .flat_map(|ly| (0..nlx).map(move |lx| (lx, ly)))
-                        .collect()
-                } else {
-                    (0..nlx).map(|l| (l, l)).collect()
-                };
-                for (lx, ly) in levels {
-                    let (cx, cy) = src.get_tile_counts(p, lx, ly)?;
-                    for ty in 0..cy {
-                        for tx in 0..cx {
-                            chunks.push((
-                                tx,
-                                ty,
-                                lx,
-                                ly,
-                                src.read_tile_chunk_info(p, tx, ty, lx, ly)?,
-                            ));
-                        }
+                (0..nlx).map(|l| (l, l)).collect()
+            };
+            for (lx, ly) in levels {
+                let (cx, cy) = src.get_tile_counts(p, lx, ly)?;
+                for ty in 0..cy {
+                    for tx in 0..cx {
+                        chunks.push((tx, ty, lx, ly, src.read_tile_chunk_info(p, tx, ty, lx, ly)?));
                     }
                 }
             }
-            chunks.sort_by_key(|c| c.4.idx);
-            if src.get_storage(p)? == Storage::SCANLINE
-                && src.get_lineorder(p)? == crate::openexr_attr::LineOrder::DECREASING_Y
-            {
-                chunks.reverse();
-            }
-            for (a, b, lx, ly, cinfo) in chunks {
+        }
+        chunks.sort_by_key(|c| c.4.idx);
+        if src.get_storage(p)? == Storage::SCANLINE
+            && src.get_lineorder(p)? == crate::openexr_attr::LineOrder::DECREASING_Y
+        {
+            chunks.reverse();
+        }
+        Ok(chunks)
+    }
+
+    /// The whole file, rewritten: the header copied (legacy order), then every chunk's packed
+    /// bytes read from `src` and written in chunk order, with the chunk tables.
+    fn rewrite_file(src: &Context) -> Result<Vec<u8>, Error> {
+        let (mut dst, mem) = copy_header(src)?;
+        for p in 0..src.get_count() {
+            for (a, b, lx, ly, cinfo) in chunks_in_write_order(src, p)? {
                 let mut packed = vec![0u8; cinfo.packed_size as usize];
                 src.read_chunk(p, &cinfo, Some(&mut packed))?;
                 if src.get_storage(p)? == Storage::SCANLINE {

@@ -210,37 +210,90 @@ pub(crate) fn check_regions(
     outs: &[&mut [u8]],
     regions: &[Region],
 ) -> Result<(), Error> {
+    let lens: Vec<usize> = outs.iter().map(|b| b.len()).collect();
+    check_extents(ctxt, channels, &lens, regions, false)
+}
+
+/// Checks, before the pack stage reads anything, that every byte it will read lies inside the
+/// caller's buffer it names (docs/improvements.md, U-12).
+pub(crate) fn check_input_regions(
+    ctxt: &Context,
+    channels: &[CodingChannelInfo],
+    inputs: &[&[u8]],
+    regions: &[Region],
+) -> Result<(), Error> {
+    let lens: Vec<usize> = inputs.iter().map(|b| b.len()).collect();
+    check_extents(ctxt, channels, &lens, regions, true)
+}
+
+/// The check of [`check_regions`] and [`check_input_regions`], over the buffers' lengths.
+fn check_extents(
+    ctxt: &Context,
+    channels: &[CodingChannelInfo],
+    lens: &[usize],
+    regions: &[Region],
+    input: bool,
+) -> Result<(), Error> {
     for r in regions {
         let Some((lo, hi)) = r.extent() else { continue };
         let name = channels
             .get(r.channel)
             .map_or(&[][..], |c| c.channel_name.as_slice());
-        let Some(buf) = outs.get(r.buffer) else {
+        let Some(&len) = lens.get(r.buffer) else {
             return Err(ctxt.print_error(
                 ErrorCode::InvalidArgument,
-                "Channel %d (%s): no output buffer %d (%d given)",
+                if input {
+                    "Channel %d (%s): no input buffer %d (%d given)"
+                } else {
+                    "Channel %d (%s): no output buffer %d (%d given)"
+                },
                 &[
                     (r.channel as i32).into(),
                     Arg::Str(name),
                     (r.buffer as i32).into(),
-                    (outs.len() as i32).into(),
+                    (lens.len() as i32).into(),
                 ],
             ));
         };
-        if lo < 0 || hi > buf.len() as i128 {
+        if lo < 0 || hi > len as i128 {
             return Err(ctxt.print_error(
                 ErrorCode::InvalidArgument,
-                "Channel %d (%s): the output reaches outside buffer %d (bytes %lld to %lld; the buffer holds %llu)",
+                if input {
+                    "Channel %d (%s): the input reaches outside buffer %d (bytes %lld to %lld; the buffer holds %llu)"
+                } else {
+                    "Channel %d (%s): the output reaches outside buffer %d (bytes %lld to %lld; the buffer holds %llu)"
+                },
                 &[
                     (r.channel as i32).into(),
                     Arg::Str(name),
                     (r.buffer as i32).into(),
                     Arg::I64(lo as i64),
                     Arg::I64((hi - 1) as i64),
-                    Arg::U64(buf.len() as u64),
+                    Arg::U64(len as u64),
                 ],
             ));
         }
     }
     Ok(())
+}
+
+/// The `len` bytes at position `pos` (C's pointer arithmetic, in 64 bits) of input buffer
+/// `buf`, or the refusal of a position outside it (docs/improvements.md, U-12).
+pub(crate) fn in_bytes<'b>(
+    inputs: &[&'b [u8]],
+    buf: usize,
+    pos: i64,
+    len: usize,
+) -> Result<&'b [u8], Error> {
+    let b: &'b [u8] = inputs
+        .get(buf)
+        .ok_or(Error::bare(ErrorCode::InvalidArgument))?;
+    if pos < 0
+        || (pos as u64)
+            .checked_add(len as u64)
+            .is_none_or(|end| end > b.len() as u64)
+    {
+        return Err(Error::bare(ErrorCode::InvalidArgument));
+    }
+    Ok(&b[pos as usize..pos as usize + len])
 }

@@ -19,5 +19,7 @@ names, and says which waiver.
 | W-11 | Which calls are refused; written files | Headers with a `deepImageState` attribute | Deviation D-12 (I-16) | Owner in chat, 2026-11-07 |
 | W-12 | Chunk info | `exr_write_scanline_chunk_info` for a line mid-chunk with y-subsampled channels, or a window ending near `INT_MAX` | Deviation D-13 (I-17) | Owner in chat, 2026-11-07 |
 | W-13 | Which writes are refused; written files | Decreasing-Y scanline parts: chunks written bottom up (as the C++ library writes them) | Deviation D-14 (I-18) | Owner in chat, 2026-11-07 |
+| W-14 | Error text | `exr_encoding_run` with an unsupported input size or type: the channel index | Deviation D-15 (I-19) | Owner in chat, 2026-11-07 |
+| W-15 | Written files | Encode pipelines without a pack stage: chunks hold the caller's packed data, not 0 bytes | Deviation D-16 (I-20) | Owner in chat, 2026-11-07 |
 
 D-8 (I-12) has no waiver: no input reaches it, so no output differs.

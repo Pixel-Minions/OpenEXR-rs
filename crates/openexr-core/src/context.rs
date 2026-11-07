@@ -21,7 +21,7 @@
 use std::any::Any;
 use std::fmt;
 use std::io::Write as _;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::attributes::{AttrId, Attribute, AttributeList};
@@ -518,6 +518,9 @@ pub struct Context {
     /// The registered opaque attribute handlers (`custom_handlers`).
     pub(crate) custom_handlers: AttributeList,
     finished: bool,
+    /// Which context this is, for the encode pipeline to know its own (upstream compares
+    /// `encode->context` with the context pointer): unique in the process, never 0.
+    pub(crate) id: u64,
 }
 
 impl fmt::Debug for Context {
@@ -529,6 +532,9 @@ impl fmt::Debug for Context {
             .finish_non_exhaustive()
     }
 }
+
+/// The next [`Context`] id.
+static NEXT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// The initializer after `fill_context_data`: what `internal_exr_alloc_context` reads.
 pub(crate) struct Inits {
@@ -658,6 +664,7 @@ impl Context {
             parts: Vec::new(),
             custom_handlers: AttributeList::default(),
             finished: false,
+            id: NEXT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),
         };
         // if we are reading the file, go ahead and set up the first part to make parsing
         // logic easier

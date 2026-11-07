@@ -24,4 +24,6 @@ outputs (I-5 to I-12), as deviations; and I-13 (D-9), the same day.
 | D-12 | I-16 | Core cannot write a `deepImageState` attribute (`EXR_ERR_INVALID_ATTR`) | Writes its byte, as the C++ library does | Which calls are refused; the files written | Owner in chat, 2026-11-07 |
 | D-13 | I-17 | `exr_write_scanline_chunk_info` computes the unpacked size from the line given, not the chunk's first, and the window's end in `int` | Computes as the read side does | The chunk info for a line mid-chunk with y-subsampled channels | Owner in chat, 2026-11-07 |
 | D-14 | I-18 | A `DECREASING_Y` scanline file's chunks must be written top down, against the line order | Bottom up, as the C++ library writes them | Which writes are refused, and the files written (now as the C++ library's) | Owner in chat, 2026-11-07 |
+| D-15 | I-19 | `exr_encoding_run` prints a channel's index with `%c`, as a character, in its two errors for an unsupported input size or type | Prints it with `%d` | Error text | Owner in chat, 2026-11-07 (the rule for I-13, and "anything that is a bug we can fix") |
+| D-16 | I-20 | An encode pipeline without a pack stage writes each chunk with 0 bytes of data | Writes the caller's packed bytes, compressed as the part says | The files such pipelines write | Owner in chat, 2026-11-07 ("anything that is a bug we can fix") |
 

@@ -1117,7 +1117,7 @@ path = "src/lib/OpenEXRCore/coding.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/coding.rs"
-note = "channel info fill and update, the decode buffers; the encode buffers with Phase 6"
+note = "channel info fill and update, the decode buffers (decoding.rs) and the encode buffers (encoding.rs)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/color_metadata.c"
@@ -1131,7 +1131,7 @@ path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/compression.rs"
-note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_uncompress_buffer and the cached deflate context, exr_rle_*_buffer; the other codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the compression side with Phase 6"
+note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_uncompress_buffer and the cached deflate context, exr_rle_*_buffer; exr_compress_max_buffer_size, the compression dispatch (exr_compress_chunk); the other codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), exr_compress_buffer with libdeflate's compressor, the deep sample table's compression with Phase 7"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
@@ -1157,7 +1157,9 @@ note = "ported whole; NONE and RLE parts match the wheel bit for bit in every la
 [[file]]
 path = "src/lib/OpenEXRCore/encoding.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/encoding.rs"
+note = "ported whole; files the C++ library wrote with NONE and RLE re-encode byte for byte (encoding::tests; heavy tier, tests/heavy_decode.rs, in every layout of oracle/write_images.py); the deep paths are tested with Phase 7"
 
 [[file]]
 path = "src/lib/OpenEXRCore/float_vector.c"
@@ -1314,7 +1316,9 @@ target = "crates/openexr-core/src/internal_ht_quality.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_huf.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_huf.rs"
+note = "the spare byte sizes exr_compress_max_buffer_size uses; the Huffman coder with PIZ"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_huf.h"
@@ -1365,7 +1369,7 @@ path = "src/lib/OpenEXRCore/internal_rle.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/internal_rle.rs"
-note = "the codec (run-length coding both ways, reorder and predict, internal_exr_undo_rle); internal_exr_apply_rle with the encode pipeline (Phase 6). Decoding matches the wheel bit for bit (heavy tier, tests/heavy_decode.rs)"
+note = "ported whole. Decoding matches the wheel bit for bit and encoding writes the C++ library's files byte for byte (heavy tier, tests/heavy_decode.rs)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_string.h"
@@ -1555,7 +1559,9 @@ target = "crates/openexr-core/src/version.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/pack.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/pack.rs"
+note = "ported whole (upstream has no deep packer); checked by the re-encode tests of encoding.c; heavy-tier check pending gate --full"
 
 [[file]]
 path = "src/lib/OpenEXRCore/parse_header.c"

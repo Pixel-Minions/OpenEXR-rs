@@ -3,10 +3,12 @@
 
 //! Port of `internal_rle.c` (src/lib/OpenEXRCore/internal_rle.c:1-230 @ v3.5.3): the RLE codec,
 //! with the byte reordering and delta prediction it applies around the run-length coding.
-//! `internal_exr_apply_rle`, which needs the encode pipeline, comes with Phase 6.
 
-use crate::context::Error;
-use crate::decoding::{DecodePipeline, internal_decode_alloc_buffer};
+use crate::context::{Context, Error};
+use crate::decoding::{Aliased, DecodePipeline, internal_decode_alloc_buffer};
+use crate::encoding::{
+    EXR_TRANSCODE_BUFFER_SCRATCH1, EncodePipeline, internal_encode_alloc_buffer,
+};
 use crate::errors::ErrorCode;
 
 const MIN_RUN_LENGTH: u8 = 3;
@@ -68,8 +70,6 @@ pub(crate) fn internal_rle_compress(out: &mut [u8], outbytes: u64, src: &[u8]) -
 /// Port of `reorder_and_predict` (src/lib/OpenEXRCore/internal_rle.c:67-91 @ v3.5.3): the even
 /// bytes of `packed` then the odd ones, each byte then stored as its difference from the
 /// previous one, offset by 128.
-// used by internal_exr_apply_rle, which comes with the encode pipeline (Phase 6)
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn reorder_and_predict(scratch: &mut [u8], packed: &[u8]) {
     let packedbytes = packed.len();
     let half = packedbytes.div_ceil(2);
@@ -95,6 +95,56 @@ pub(crate) fn reorder_and_predict(scratch: &mut [u8], packed: &[u8]) {
         p = *t as i8 as i32;
         *t = d as u8;
     }
+}
+
+/// Port of `internal_exr_apply_rle` (src/lib/OpenEXRCore/internal_rle.c:93-124 @ v3.5.3): the
+/// RLE compressor of the encode pipeline, the packed bytes into the compressed buffer; data
+/// the coding would not shrink is stored as it is.
+pub(crate) fn internal_exr_apply_rle(
+    encode: &mut EncodePipeline,
+    ctxt: &Context,
+) -> Result<(), Error> {
+    let srcb = encode.packed_bytes;
+
+    internal_encode_alloc_buffer(
+        ctxt,
+        encode.part_index,
+        EXR_TRANSCODE_BUFFER_SCRATCH1,
+        &mut encode.scratch_buffer_1,
+        srcb as usize,
+    )?;
+    let n = srcb as usize;
+    // a packed or compressed buffer too small for the chunk would be read or written past
+    // upstream (docs/improvements.md, U-12)
+    let bad = || Error::bare(ErrorCode::InvalidArgument);
+    let packed = encode
+        .packed_buffer
+        .as_deref()
+        .and_then(|b| b.get(..n))
+        .ok_or_else(bad)?;
+    let scratch = encode
+        .scratch_buffer_1
+        .as_deref_mut()
+        .and_then(|b| b.get_mut(..n))
+        .ok_or_else(bad)?;
+    let Aliased::Own(compressed) = &mut encode.compressed_buffer else {
+        return Err(bad());
+    };
+
+    reorder_and_predict(scratch, packed);
+
+    let alloc = compressed.len() as u64;
+    let mut outb = internal_rle_compress(compressed, alloc, scratch);
+
+    if outb >= srcb {
+        compressed
+            .get_mut(..n)
+            .ok_or_else(bad)?
+            .copy_from_slice(packed);
+        outb = srcb;
+    }
+    encode.compressed_bytes = outb as usize;
+    Ok(())
 }
 
 /// Port of `internal_rle_decompress` (src/lib/OpenEXRCore/internal_rle.c:128-168 @ v3.5.3): the
