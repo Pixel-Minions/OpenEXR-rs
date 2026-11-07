@@ -13,7 +13,6 @@ use std::sync::OnceLock;
 use crate::internal_coding::{float_to_half, half_to_float};
 
 /// `exrcore_dwaToLinearTable` and `exrcore_dwaToNonLinearTable`.
-#[allow(dead_code)] // to_non_linear is the encoder's (the next chunk)
 pub(crate) struct DwaTables {
     pub(crate) to_linear: Vec<u16>,
     pub(crate) to_non_linear: Vec<u16>,

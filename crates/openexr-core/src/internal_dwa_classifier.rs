@@ -46,7 +46,6 @@ const fn rule(
 use CompressorScheme::{LossyDct as LOSSY, Rle as RLE};
 
 /// `sDefaultChannelRules` (src/lib/OpenEXRCore/internal_dwa_classifier.h:27-42 @ v3.5.3).
-#[allow(dead_code)] // the encoder's (the next chunk)
 pub(crate) static DEFAULT_CHANNEL_RULES: [Classifier; 15] = [
     rule(b"R", LOSSY, PIXEL_HALF, 0, false),
     rule(b"R", LOSSY, PIXEL_FLOAT, 0, false),
@@ -179,7 +178,6 @@ pub(crate) fn classifier_size(me: &Classifier) -> u64 {
 
 /// Port of `Classifier_write` (src/lib/OpenEXRCore/internal_dwa_classifier.h:164-183
 /// @ v3.5.3): the rule at the front of `out`; returns the bytes written.
-#[allow(dead_code)] // the encoder's (the next chunk)
 pub(crate) fn classifier_write(me: &Classifier, out: &mut [u8]) -> usize {
     let size_bytes = me.suffix.len() + 1;
     out[..me.suffix.len()].copy_from_slice(&me.suffix);

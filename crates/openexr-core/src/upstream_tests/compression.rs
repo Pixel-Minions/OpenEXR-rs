@@ -18,7 +18,7 @@ use crate::coding::{BufferRef, CodingChannelInfo};
 use crate::context::{
     Context, DefaultWriteMode, EXR_CONTEXT_FLAG_WRITE_LEGACY_HEADER, Initializer,
 };
-use crate::imath_half::imath_float_to_half;
+use crate::imath_half::{imath_float_to_half, imath_half_to_float};
 use crate::openexr_attr::{
     Box2i, Compression, PerceptualTreatment, PixelType, Storage, TileLevelMode, TileRoundMode, V2i,
 };
@@ -162,14 +162,15 @@ impl Pixels {
         }
     }
 
-    /// `compareClose` (src/test/OpenEXRCoreTest/compression.cpp:564-694 @ v3.5.3), for the
-    /// codecs ported so far (PIZ, PXR24): the uint channel exactly, the float channel exactly
-    /// or, for PXR24, within one unit of its 24-bit value; then the half channels exactly. (The
-    /// bounds of B44 and DWA come with those codecs.)
+    /// `compareClose` (src/test/OpenEXRCoreTest/compression.cpp:564-694 @ v3.5.3): the uint
+    /// channel exactly, the float channel exactly or, for PXR24, within one unit of its 24-bit
+    /// value; then the half channels within B44's bounds, H exactly and R, G, B, A within DWA's,
+    /// or exactly.
     fn compare_close(&self, o: &Pixels, comp: Compression, otag: &str, selftag: &str) {
         let b44 = comp == Compression::B44 || comp == Compression::B44A;
+        let dwa = comp == Compression::DWAA || comp == Compression::DWAB;
         assert!(
-            comp == Compression::PIZ || comp == Compression::PXR24 || b44,
+            comp == Compression::PIZ || comp == Compression::PXR24 || b44 || dwa,
             "the bounds of this codec come with it"
         );
         for y in 0..self.h {
@@ -223,6 +224,24 @@ impl Pixels {
                     x += 4;
                 }
                 y += 4;
+            }
+            return;
+        }
+        if dwa {
+            for y in 0..self.h {
+                for x in 0..self.w {
+                    let idx = (y * self.stride_x + x) as usize;
+                    assert_eq!(
+                        o.hv[idx], self.hv[idx],
+                        "H at {x}, {y}: {otag} vs {selftag}"
+                    );
+                    for c in 0..4 {
+                        assert!(
+                            within_dwa_error_bounds(o.rgba[c][idx], self.rgba[c][idx]),
+                            "channel {c} at {x}, {y}"
+                        );
+                    }
+                }
             }
             return;
         }
@@ -284,6 +303,27 @@ fn shift_and_round(x: i32, shift: i32) -> i32 {
     let shift = shift + 1;
     let b = (x >> shift) & 1;
     (x + a + b) >> shift
+}
+
+/// Port of `withinDWAErrorBounds` (src/test/OpenEXRCoreTest/compression.cpp:176-196 @ v3.5.3):
+/// the two halves within 0.1 of each other, relative to the larger magnitude above 1 (a NaN
+/// original passes). `std::max (a, b)` is `(a < b) ? b : a`, and the difference is a float
+/// compared with the double 0.1.
+fn within_dwa_error_bounds(a: u16, b: u16) -> bool {
+    let std_max = |a: f32, b: f32| if a < b { b } else { a };
+    let a1 = imath_half_to_float(a);
+    if !a1.is_nan() {
+        let a2 = imath_half_to_float(b);
+        let denominator = std_max(1.0, std_max(a2.abs(), a1.abs()));
+        if f64::from((a1 / denominator - a2 / denominator).abs()) >= 0.1 {
+            eprintln!(
+                "DWA B bits {b:x} ({a2}) too different from A1 bits {a:x} ({a1}) delta {}",
+                (a1 / denominator - a2 / denominator).abs()
+            );
+            return false;
+        }
+    }
+    true
 }
 
 /// Port of `withinB44ErrorBounds` (src/test/OpenEXRCoreTest/compression.cpp:198-352 @ v3.5.3):
@@ -738,9 +778,12 @@ fn do_write_read(
         | Compression::ZIP
         | Compression::ZIPS
         | Compression::ZSTD => restore.compare_exact(p, "orig", "C loaded C"),
-        Compression::PIZ | Compression::PXR24 | Compression::B44 | Compression::B44A => {
-            restore.compare_close(p, comp, "orig", "C loaded C")
-        }
+        Compression::PIZ
+        | Compression::PXR24
+        | Compression::B44
+        | Compression::B44A
+        | Compression::DWAA
+        | Compression::DWAB => restore.compare_close(p, comp, "orig", "C loaded C"),
         _ => panic!("Unknown compression type {}", comp.0),
     }
 
@@ -785,6 +828,8 @@ fn cpp_half(
         Compression::PXR24 => "PXR24_COMPRESSION",
         Compression::B44 => "B44_COMPRESSION",
         Compression::B44A => "B44A_COMPRESSION",
+        Compression::DWAA => "DWAA_COMPRESSION",
+        Compression::DWAB => "DWAB_COMPRESSION",
         _ => panic!("no wheel name for this test's compression"),
     };
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -993,6 +1038,18 @@ fn test_b44_compression() {
 #[test]
 fn test_b44a_compression() {
     test_comp(Compression::B44A);
+}
+
+/// Port of `testDWAACompression` (src/test/OpenEXRCoreTest/compression.cpp:1695-1699) @ v3.5.3.
+#[test]
+fn test_dwaa_compression() {
+    test_comp(Compression::DWAA);
+}
+
+/// Port of `testDWABCompression` (src/test/OpenEXRCoreTest/compression.cpp:1701-1705) @ v3.5.3.
+#[test]
+fn test_dwab_compression() {
+    test_comp(Compression::DWAB);
 }
 
 /// B44 and B44A on perceptually linear half channels, which go through B44's exp and log

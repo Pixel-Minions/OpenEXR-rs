@@ -36,6 +36,7 @@ mod internal_dwa_channeldata;
 mod internal_dwa_classifier;
 mod internal_dwa_compressor;
 mod internal_dwa_decoder;
+mod internal_dwa_encoder;
 mod internal_dwa_helpers;
 mod internal_dwa_simd;
 mod internal_dwa_table;

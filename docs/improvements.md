@@ -233,6 +233,28 @@ section. An entry says:
   `chunk_write::tests::decreasing_mipmapped_tiles_go_in_the_cpp_librarys_order`, whose
   mipmapped file reads back tile by tile.
 
+### I-22. DWA's quantizer counts bits differently on Windows
+
+- **Upstream:** `countSetBits` is `__builtin_popcount` where `__has_builtin` reports it, and
+  otherwise a multiply trick (`src/lib/OpenEXRCore/internal_dwa_encoder.h:266-288` @ v3.5.3).
+  MSVC has no `__has_builtin` (checked with MSVC 19.44, the Windows wheel's compiler), so the
+  Windows wheel takes the trick, which loses bit 15 of its argument. The quantizer's rounded
+  candidate `(abssrc + npow2) & mask` can reach 0x8000 or more (a negative half) for a
+  coefficient of 32768 or more; as a negative value it always passes the tolerance test, and
+  it wins whenever it has fewer bits set than the source, its sign bit uncounted on Windows.
+  The coefficient then becomes a negative zero or a tiny negative value, more often on
+  Windows, so the two wheels can write different DWA bytes for very bright pixels. The test
+  copy of the quantizer (`compressionTables.cpp`) counts the same way; its table form then
+  counts a negative source's sign bit as unset, which is why its comparison reports
+  mismatches on Windows (it reports them and does not fail).
+- **Who notices:** writers of DWAA/DWAB files who compare Windows and Linux output.
+- **The port:** follows each wheel: the multiply trick with an MSVC target, the population
+  count elsewhere (`internal_dwa_encoder.rs`, and the test's copy in
+  `upstream_tests/compression_tables.rs`).
+- **A fix:** keep the rounded candidate below 0x8000, and count all 16 bits on every
+  platform. It would change both wheels' bytes for such pixels, so it waits for the owner.
+- **Status:** matched; listed for the owner's review.
+
 ## Messages and debug output
 
 ### I-7. A deep tile's unpacked size error prints the packed size
@@ -476,4 +498,15 @@ section. An entry says:
   values run past it with `EXR_ERR_CORRUPT_CHUNK`; every read and write outside the planar,
   RLE and unpacked buffers is refused the same way. Chunks that stay inside their buffers
   decode as upstream decodes them, bit for bit.
+- **Status:** the port's choice, as U-9.
+
+### U-14. The DWA compressor goes on after its buffers fail to allocate
+
+- **Upstream:** `DwaCompressor_compress` stores the result of `DwaCompressor_initializeBuffers`
+  and overwrites it with the next call's before checking it
+  (`src/lib/OpenEXRCore/internal_dwa_compressor.h:260-273` @ v3.5.3), so a chunk whose AC, DC,
+  RLE or planar buffers could not be allocated is compressed through NULL pointers.
+- **Who notices:** writers of DWAA/DWAB chunks too large for the memory at hand.
+- **The port:** returns the allocation's `EXR_ERR_OUT_OF_MEMORY`. Every read and write the
+  compressor makes outside its buffers is refused with `EXR_ERR_INVALID_ARGUMENT`, as U-12.
 - **Status:** the port's choice, as U-9.

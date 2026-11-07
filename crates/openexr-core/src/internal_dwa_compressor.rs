@@ -10,18 +10,23 @@
 
 use std::borrow::Cow;
 
-use crate::compression::{compress_max_buffer_size, uncompress_buffer};
-use crate::context::Error;
-use crate::decoding::{DecodePipeline, internal_decode_alloc_buffer};
+use crate::compression::{compress_buffer, compress_max_buffer_size, uncompress_buffer};
+use crate::context::{Context, Error};
+use crate::decoding::{Aliased, DecodePipeline, internal_decode_alloc_buffer};
+use crate::encoding::{
+    EXR_TRANSCODE_BUFFER_SCRATCH1, EncodePipeline, internal_encode_alloc_aliased,
+    internal_encode_alloc_buffer,
+};
 use crate::errors::ErrorCode;
 use crate::internal_dwa_channeldata::{
     ChanInfo, ChannelData, CscChannelSet, CscPrefixMapItem, csc_prefix_map_find,
 };
 use crate::internal_dwa_classifier::{
-    Classifier, LEGACY_CHANNEL_RULES, PIXEL_FLOAT, classifier_find_suffix, classifier_match,
-    classifier_read, classifier_size,
+    Classifier, DEFAULT_CHANNEL_RULES, LEGACY_CHANNEL_RULES, PIXEL_FLOAT, classifier_find_suffix,
+    classifier_match, classifier_read, classifier_size, classifier_write,
 };
 use crate::internal_dwa_decoder::LossyDctDecoder;
+use crate::internal_dwa_encoder::LossyDctEncoder;
 use crate::internal_dwa_helpers::{
     AC_COMPRESSED_SIZE, AC_COMPRESSION, AC_UNCOMPRESSED_COUNT, AcCompression, CompressorScheme,
     DC_COMPRESSED_SIZE, DC_UNCOMPRESSED_COUNT, NUM_COMPRESSOR_SCHEMES, NUM_SIZES_SINGLE,
@@ -30,9 +35,9 @@ use crate::internal_dwa_helpers::{
 };
 use crate::internal_dwa_simd::{DwaFuncs, initialize_funcs, interleave_byte2};
 use crate::internal_dwa_table::exrcore_ensure_dwa_tables;
-use crate::internal_huf::internal_huf_decompress;
-use crate::internal_rle::internal_rle_decompress;
-use crate::internal_zip::internal_zip_reconstruct_bytes;
+use crate::internal_huf::{internal_huf_compress, internal_huf_decompress};
+use crate::internal_rle::{internal_rle_compress, internal_rle_decompress};
+use crate::internal_zip::{internal_zip_deconstruct_bytes, internal_zip_reconstruct_bytes};
 
 fn corrupt() -> Error {
     Error::bare(ErrorCode::CorruptChunk)
@@ -40,7 +45,6 @@ fn corrupt() -> Error {
 
 /// Port of `DwaCompressor` (src/lib/OpenEXRCore/internal_dwa_compressor.h:11-44 @ v3.5.3).
 #[derive(Debug)]
-#[allow(dead_code)] // the encoder's fields (the next chunk)
 pub(crate) struct DwaCompressor {
     pub(crate) ac_compression: AcCompression,
     pub(crate) num_scan_lines: i32,
@@ -894,4 +898,467 @@ fn streams<'a>(
     let dc_end = (dc_at as u64).saturating_add(dc_count).min(dc.len() as u64) as usize;
     let dc_slice = dc.get(dc_at..dc_end.max(dc_at)).unwrap_or(&[]);
     (ac_slice, dc_slice)
+}
+
+impl DwaCompressor {
+    /// Port of `DwaCompressor_construct` (src/lib/OpenEXRCore/internal_dwa_compressor.h:96-196
+    /// @ v3.5.3), for an encode pipeline: the part's zip and DWA levels come from `ctxt`.
+    pub(crate) fn construct_encode(
+        ac_compression: AcCompression,
+        encode: &EncodePipeline,
+        ctxt: &Context,
+    ) -> Result<Self, Error> {
+        let funcs = initialize_funcs();
+        exrcore_ensure_dwa_tables();
+
+        let channel_data = encode
+            .channels
+            .iter()
+            .map(|c| ChannelData::new(ChanInfo::of(c), c.data_type))
+            .collect();
+
+        let chunk = &encode.chunk;
+        let zip_level = ctxt.get_zip_compression_level(encode.part_index)?;
+        let dwa_compression_level = ctxt.get_dwa_compression_level(encode.part_index)?;
+        Ok(DwaCompressor {
+            ac_compression,
+            // DWAA should be 32, DWAB should be 256
+            num_scan_lines: chunk.height,
+            min: [chunk.start_x, chunk.start_y],
+            max: [
+                chunk.start_x + chunk.width - 1,
+                chunk.start_y + chunk.height - 1,
+            ],
+            channel_data,
+            csc_channel_sets: Vec::new(),
+            channel_rules: Cow::Borrowed(&[]),
+            packed_ac_buffer: Vec::new(),
+            packed_dc_buffer: Vec::new(),
+            rle_buffer: Vec::new(),
+            planar_unc_buffer: [None, None, None],
+            zip_level,
+            dwa_compression_level,
+            funcs,
+        })
+    }
+
+    /// Port of `DwaCompressor_writeRelevantChannelRules`
+    /// (src/lib/OpenEXRCore/internal_dwa_compressor.h:1567-1610 @ v3.5.3): the rules that
+    /// some channel matches, after their total size, at `*out_ptr` in `out`.
+    fn write_relevant_channel_rules(
+        &self,
+        out: &mut [u8],
+        out_ptr: &mut usize,
+        n_avail: u64,
+        n_written: &mut u64,
+    ) -> Result<(), Error> {
+        let oom = || Error::bare(ErrorCode::OutOfMemory);
+        let mut n_out: u64 = 2;
+        let rule_size_at = *out_ptr;
+        let mut curp = *out_ptr + 2;
+
+        if n_avail < *n_written + n_out {
+            return Err(oom());
+        }
+
+        for rule in self.channel_rules.iter() {
+            for cd in &self.channel_data {
+                let suffix = classifier_find_suffix(&cd.chan.channel_name);
+                if classifier_match(rule, suffix, cd.chan.data_type) {
+                    if n_avail < *n_written + n_out + classifier_size(rule) {
+                        return Err(oom());
+                    }
+                    let room = out.get_mut(curp..).ok_or_else(oom)?;
+                    if (room.len() as u64) < classifier_size(rule) {
+                        return Err(oom());
+                    }
+                    let n = classifier_write(rule, room);
+                    curp += n;
+                    n_out += n as u64;
+                    break;
+                }
+            }
+        }
+
+        if n_out > 65535 {
+            return Err(oom());
+        }
+        out.get_mut(rule_size_at..rule_size_at + 2)
+            .ok_or_else(oom)?
+            .copy_from_slice(&(n_out as u16).to_le_bytes());
+        *n_written += n_out;
+
+        *out_ptr = curp;
+        Ok(())
+    }
+
+    /// Port of `DwaCompressor_compress` (src/lib/OpenEXRCore/internal_dwa_compressor.h:227-693
+    /// @ v3.5.3): the pipeline's packed chunk into its compressed buffer: the counters, the
+    /// channel rules, then the UNKNOWN data (deflated), the AC values (Huffman or deflate),
+    /// the DC values (predicted and deflated) and the RLE data (deflated). A result no smaller
+    /// than the packed bytes is replaced by them.
+    pub(crate) fn compress(
+        &mut self,
+        encode: &mut EncodePipeline,
+        ctxt: &Context,
+    ) -> Result<(), Error> {
+        let oom = || Error::bare(ErrorCode::OutOfMemory);
+        let file_version: u64 = 2;
+        let header = (NUM_SIZES_SINGLE * 8) as u64;
+
+        // Starting with DWA v2, we write the channel classification rules into the file
+        self.channel_rules = Cow::Borrowed(&DEFAULT_CHANNEL_RULES);
+
+        // (upstream goes on after a failed allocation here, with NULL buffers: U-14)
+        let out_buffer_size = self.initialize_buffers()?;
+
+        let compressed_alloc_size = match &encode.compressed_buffer {
+            Aliased::Own(b) => b.len() as u64,
+            _ => 0,
+        };
+        if compressed_alloc_size < header {
+            return Err(oom());
+        }
+
+        internal_encode_alloc_aliased(
+            ctxt,
+            encode.part_index,
+            EXR_TRANSCODE_BUFFER_SCRATCH1,
+            &mut encode.compressed_buffer,
+            out_buffer_size as usize,
+        )?;
+        let n_avail = out_buffer_size;
+        let Aliased::Own(mut out) = std::mem::take(&mut encode.compressed_buffer) else {
+            return Err(oom());
+        };
+        let rv = self.compress_into(encode, ctxt, &mut out, n_avail, file_version);
+        encode.compressed_buffer = Aliased::Own(out);
+        rv
+    }
+
+    /// The body of [`Self::compress`], with the compressed buffer lent out of the pipeline.
+    fn compress_into(
+        &mut self,
+        encode: &mut EncodePipeline,
+        ctxt: &Context,
+        out: &mut [u8],
+        n_avail: u64,
+        file_version: u64,
+    ) -> Result<(), Error> {
+        let oom = || Error::bare(ErrorCode::OutOfMemory);
+        let bad = || Error::bare(ErrorCode::InvalidArgument);
+        let header = NUM_SIZES_SINGLE * 8;
+        let out_buffer_size = n_avail as usize;
+
+        // Zero all the numbers in the chunk header (upstream zeroes the whole buffer)
+        out.fill(0);
+        let mut sizes = [0u64; NUM_SIZES_SINGLE];
+
+        // Now write in the channel rules...
+        let mut out_ptr = header;
+        let mut n_written: u64 = 0;
+        if file_version >= 2 {
+            self.write_relevant_channel_rules(out, &mut out_ptr, n_avail, &mut n_written)?;
+        }
+
+        // post add this so we have a 0 value for the relevant channel rules to fill up
+        n_written += header as u64;
+
+        if n_written >= out.len() as u64 {
+            return Err(oom());
+        }
+
+        let mut out_data_ptr = out_ptr;
+
+        // Setup the AC compression strategy and the version in the data block
+        sizes[VERSION] = file_version;
+        sizes[AC_COMPRESSION] = self.ac_compression as u64;
+
+        self.setup_channel_data();
+
+        // Determine the start of each row in the input buffer. Channels are interleaved by
+        // scanline
+        for cd in &mut self.channel_data {
+            cd.processed = false;
+        }
+
+        let mut in_data_ptr = 0usize;
+        for y in self.min[1]..=self.max[1] {
+            for cd in &mut self.channel_data {
+                if y.checked_rem(cd.chan.y_samples) != Some(0) {
+                    continue;
+                }
+                cd.dct_data.rows.push(in_data_ptr);
+                in_data_ptr = in_data_ptr.wrapping_add(
+                    (cd.chan.width as usize).wrapping_mul(cd.chan.bytes_per_element as usize),
+                );
+            }
+        }
+
+        let packed = encode.packed_buffer.as_deref().unwrap_or(&[]);
+        let to_non_linear = &exrcore_ensure_dwa_tables().to_non_linear[..];
+        let quant = self.dwa_compression_level / 100000.0f32;
+        let mut ac_at = 0usize;
+        let mut dc_at = 0usize;
+
+        // Make a pass over all our CSC sets and try to encode them first
+        for csc in 0..self.csc_channel_sets.len() {
+            let [r_chan, g_chan, b_chan] = self.csc_channel_sets[csc].map(|v| v as usize);
+            let width = self.channel_data[r_chan].chan.width;
+            let height = self.channel_data[r_chan].chan.height;
+
+            let mut enc = LossyDctEncoder::new(
+                quant,
+                self.packed_ac_buffer.get_mut(ac_at..).ok_or_else(bad)?,
+                self.packed_dc_buffer.get_mut(2 * dc_at..).ok_or_else(bad)?,
+                Some(to_non_linear),
+                width,
+                height,
+            );
+            let [r, g, b] = three_mut(&mut self.channel_data, r_chan, g_chan, b_chan);
+            let rv = enc.execute(
+                &mut [&mut r.dct_data, &mut g.dct_data, &mut b.dct_data],
+                packed,
+            );
+
+            sizes[AC_UNCOMPRESSED_COUNT] += enc.num_ac_comp;
+            sizes[DC_UNCOMPRESSED_COUNT] += enc.num_dc_comp;
+
+            ac_at += enc.num_ac_comp as usize;
+            dc_at += enc.num_dc_comp as usize;
+
+            self.channel_data[r_chan].processed = true;
+            self.channel_data[g_chan].processed = true;
+            self.channel_data[b_chan].processed = true;
+
+            rv?;
+        }
+
+        let unknown = CompressorScheme::Unknown as usize;
+        let rle = CompressorScheme::Rle as usize;
+        for c in 0..self.channel_data.len() {
+            if self.channel_data[c].processed {
+                continue;
+            }
+            let pchan = self.channel_data[c].chan.clone();
+
+            match self.channel_data[c].compression {
+                CompressorScheme::LossyDct => {
+                    // For LOSSY_DCT, treat this just like the CSC'd case, but only operate on
+                    // one channel
+                    let nonlinear_lut = if pchan.p_linear == 0 {
+                        Some(to_non_linear)
+                    } else {
+                        None
+                    };
+
+                    let mut enc = LossyDctEncoder::new(
+                        quant,
+                        self.packed_ac_buffer.get_mut(ac_at..).ok_or_else(bad)?,
+                        self.packed_dc_buffer.get_mut(2 * dc_at..).ok_or_else(bad)?,
+                        nonlinear_lut,
+                        pchan.width,
+                        pchan.height,
+                    );
+                    let rv = enc.execute(&mut [&mut self.channel_data[c].dct_data], packed);
+
+                    sizes[AC_UNCOMPRESSED_COUNT] += enc.num_ac_comp;
+                    sizes[DC_UNCOMPRESSED_COUNT] += enc.num_dc_comp;
+
+                    ac_at += enc.num_ac_comp as usize;
+                    dc_at += enc.num_dc_comp as usize;
+
+                    rv?;
+                }
+
+                CompressorScheme::Rle => {
+                    // For RLE, bash the bytes up so that the first bytes of each pixel are
+                    // contiguous, as are the second bytes, and so on.
+                    let planar = self.planar_unc_buffer[rle].as_deref_mut().ok_or_else(bad)?;
+                    let cd = &mut self.channel_data[c];
+                    let bpe = pchan.bytes_per_element.max(0) as usize;
+                    let width = pchan.width.max(0) as usize;
+                    for y in 0..cd.dct_data.rows.len() {
+                        let mut row = cd.dct_data.rows[y];
+                        for _x in 0..width {
+                            for byte in 0..bpe {
+                                let at = cd.planar_unc_rle_end[byte];
+                                *planar.get_mut(at).ok_or_else(bad)? =
+                                    *packed.get(row).ok_or_else(bad)?;
+                                cd.planar_unc_rle_end[byte] += 1;
+                                row += 1;
+                            }
+                        }
+
+                        sizes[RLE_RAW_SIZE] = sizes[RLE_RAW_SIZE].wrapping_add(
+                            (pchan.width as u64).wrapping_mul(pchan.bytes_per_element as u64),
+                        );
+                    }
+                }
+
+                CompressorScheme::Unknown => {
+                    // Otherwise, just copy data over verbatim
+                    let planar = self.planar_unc_buffer[unknown]
+                        .as_deref_mut()
+                        .ok_or_else(bad)?;
+                    let cd = &mut self.channel_data[c];
+                    let scanline_size =
+                        (pchan.width as usize).wrapping_mul(pchan.bytes_per_element as usize);
+                    for y in 0..cd.dct_data.rows.len() {
+                        let src = cd.dct_data.rows[y];
+                        let dst = cd.planar_unc_buffer_end;
+                        planar
+                            .get_mut(dst..dst + scanline_size)
+                            .ok_or_else(bad)?
+                            .copy_from_slice(packed.get(src..src + scanline_size).ok_or_else(bad)?);
+                        cd.planar_unc_buffer_end += scanline_size;
+                    }
+
+                    sizes[UNKNOWN_UNCOMPRESSED_SIZE] =
+                        sizes[UNKNOWN_UNCOMPRESSED_SIZE].wrapping_add(cd.planar_unc_size as u64);
+                }
+            }
+
+            self.channel_data[c].processed = true;
+        }
+
+        // The room for `n` bytes deflated at `at`: upstream gives exr_compress_max_buffer_size
+        // of the input, which the buffer holds.
+        let room = |len: usize, at: usize, n: usize| -> Result<std::ops::Range<usize>, Error> {
+            let cap = compress_max_buffer_size(n);
+            let end = at.checked_add(cap).ok_or_else(oom)?.min(len);
+            if at > end {
+                return Err(oom());
+            }
+            Ok(at..end)
+        };
+
+        // Pack the Unknown data into the output buffer first. Instead of just copying it
+        // uncompressed, try zlib compression at least.
+        if sizes[UNKNOWN_UNCOMPRESSED_SIZE] > 0 {
+            let n = sizes[UNKNOWN_UNCOMPRESSED_SIZE] as usize;
+            let src = self.planar_unc_buffer[unknown]
+                .as_deref()
+                .and_then(|b| b.get(..n))
+                .ok_or_else(bad)?;
+            let r = room(out.len(), out_data_ptr, n)?;
+            // TODO: use default??? the old call to zlib had 9 hardcoded
+            let out_size = compress_buffer(9, src, &mut out[r])?;
+
+            out_data_ptr += out_size;
+            sizes[UNKNOWN_COMPRESSED_SIZE] = out_size as u64;
+            n_written += out_size as u64;
+        }
+
+        // Now, pack all the Lossy DCT coefficients into our output buffer, with Huffman
+        // encoding. Also, record the compressed size and the number of uncompressed
+        // componentns we have.
+        if sizes[AC_UNCOMPRESSED_COUNT] > 0 {
+            let total = sizes[AC_UNCOMPRESSED_COUNT] as usize;
+            let ac = self.packed_ac_buffer.get(..total).ok_or_else(bad)?;
+            match self.ac_compression {
+                AcCompression::StaticHuffman => {
+                    let out_data_size = out_buffer_size.wrapping_sub(out_data_ptr);
+                    let end = out_data_ptr.saturating_add(out_data_size).min(out.len());
+                    // The packed AC buffer is XDR (little-endian), but the Huffman coder works
+                    // on native 16-bit values, as in PIZ.
+                    let spare = encode
+                        .scratch_buffer_1
+                        .as_ref()
+                        .map_or(0, |b| b.len() as u64);
+                    match internal_huf_compress(&mut out[out_data_ptr..end], ac, spare) {
+                        Ok(n) => sizes[AC_COMPRESSED_SIZE] = n,
+                        Err(e) if e.code == ErrorCode::ArgumentOutOfRange => {
+                            let n = packed.len();
+                            out.get_mut(..n).ok_or_else(bad)?.copy_from_slice(packed);
+                            encode.compressed_bytes = n;
+                            return Ok(());
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                AcCompression::Deflate => {
+                    let bytes: Vec<u8> = ac.iter().flat_map(|v| v.to_le_bytes()).collect();
+                    let r = room(out.len(), out_data_ptr, bytes.len())?;
+                    // TODO: use default??? the old call to zlib had 9 hardcoded
+                    let dest_len = compress_buffer(9, &bytes, &mut out[r])?;
+                    sizes[AC_COMPRESSED_SIZE] = dest_len as u64;
+                }
+            }
+
+            out_data_ptr += sizes[AC_COMPRESSED_SIZE] as usize;
+            n_written += sizes[AC_COMPRESSED_SIZE];
+        }
+
+        // Handle the DC components separately
+        if sizes[DC_UNCOMPRESSED_COUNT] > 0 {
+            let uncomp_bytes = (sizes[DC_UNCOMPRESSED_COUNT] as usize).wrapping_mul(2);
+
+            internal_encode_alloc_buffer(
+                ctxt,
+                encode.part_index,
+                EXR_TRANSCODE_BUFFER_SCRATCH1,
+                &mut encode.scratch_buffer_1,
+                uncomp_bytes,
+            )?;
+            let scratch = encode.scratch_buffer_1.as_deref_mut().ok_or_else(bad)?;
+
+            internal_zip_deconstruct_bytes(
+                &mut scratch[..uncomp_bytes],
+                self.packed_dc_buffer.get(..uncomp_bytes).ok_or_else(bad)?,
+            );
+
+            let r = room(out.len(), out_data_ptr, uncomp_bytes)?;
+            let comp_bytes =
+                compress_buffer(self.zip_level, &scratch[..uncomp_bytes], &mut out[r])?;
+
+            sizes[DC_COMPRESSED_SIZE] = comp_bytes as u64;
+            out_data_ptr += comp_bytes;
+            n_written += comp_bytes as u64;
+        }
+
+        // If we have RLE data, first RLE encode it and set the uncompressed size. Then,
+        // deflate the results and set the compressed size.
+        if sizes[RLE_RAW_SIZE] > 0 {
+            let raw = sizes[RLE_RAW_SIZE] as usize;
+            let src = self.planar_unc_buffer[rle]
+                .as_deref()
+                .and_then(|b| b.get(..raw))
+                .ok_or_else(bad)?;
+            let rle_buffer_size = self.rle_buffer.len() as u64;
+            sizes[RLE_UNCOMPRESSED_SIZE] =
+                internal_rle_compress(&mut self.rle_buffer, rle_buffer_size, src);
+
+            let n = sizes[RLE_UNCOMPRESSED_SIZE] as usize;
+            let r = room(out.len(), out_data_ptr, n)?;
+            // TODO: use default??? the old call to zlib had 9 hardcoded
+            let comp_bytes =
+                compress_buffer(9, self.rle_buffer.get(..n).ok_or_else(bad)?, &mut out[r])?;
+
+            sizes[RLE_COMPRESSED_SIZE] = comp_bytes as u64;
+            out_data_ptr += comp_bytes;
+            n_written += comp_bytes as u64;
+        }
+
+        // Flip the counters to XDR format
+        for (i, s) in sizes.iter().enumerate() {
+            out[8 * i..8 * i + 8].copy_from_slice(&s.to_le_bytes());
+        }
+
+        let data_bytes = out_data_ptr as u64;
+        if n_written != data_bytes {
+            return Err(Error::bare(ErrorCode::CorruptChunk));
+        }
+
+        if n_written >= encode.packed_bytes {
+            let n = encode.packed_bytes as usize;
+            out.get_mut(..n)
+                .ok_or_else(bad)?
+                .copy_from_slice(packed.get(..n).ok_or_else(bad)?);
+            encode.compressed_bytes = n;
+        } else {
+            encode.compressed_bytes = n_written as usize;
+        }
+        Ok(())
+    }
 }

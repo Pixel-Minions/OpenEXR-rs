@@ -1248,7 +1248,7 @@ path = "src/lib/OpenEXRCore/internal_dwa.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/internal_dwa.rs"
-note = "the decoder is in (checked against the Windows wheel, heavy tier); the encoder comes next"
+note = "ported whole; both ways; checked against the Windows wheel (heavy tier: the decode check, and the C++ half of testDWAACompression and testDWABCompression, byte for byte); the Linux run pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_channeldata.h"
@@ -1269,7 +1269,7 @@ path = "src/lib/OpenEXRCore/internal_dwa_compressor.h"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/internal_dwa_compressor.rs"
-note = "DwaCompressor_uncompress, initializeBuffers, readChannelRules, classifyChannels, setupChannelData; the decoder is in (checked against the Windows wheel, heavy tier); the encoder comes next"
+note = "ported whole; both ways; checked against the Windows wheel (heavy tier: the decode check, and the C++ half of testDWAACompression and testDWABCompression, byte for byte); the Linux run pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_decoder.h"
@@ -1281,7 +1281,9 @@ note = "ported whole; checked against the Windows wheel (heavy tier), the Linux 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_encoder.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_encoder.rs"
+note = "ported whole; countSetBits follows each platform (I-22); both ways; checked against the Windows wheel (heavy tier: the decode check, and the C++ half of testDWAACompression and testDWABCompression, byte for byte); the Linux run pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_helpers.h"
@@ -1711,7 +1713,7 @@ path = "src/test/OpenEXRCoreTest/compression.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/compression.rs"
-note = "testNoCompression, testRLECompression, testZIPCompression, testZIPSCompression (the C++ half by the wheel, oracle/save_load.py, heavy tier), testHUF (its comparison with the C++ hufCompress, which the wheel does not expose, n/a), testPIZCompression, testPXR24Compression, testB44Compression, testB44ACompression; the other codecs' tests with their codecs"
+note = "testNoCompression, testRLECompression, testZIPCompression, testZIPSCompression (the C++ half by the wheel, oracle/save_load.py, heavy tier), testHUF (its comparison with the C++ hufCompress, which the wheel does not expose, n/a), testPIZCompression, testPXR24Compression, testB44Compression, testB44ACompression, testDWAACompression, testDWABCompression; the ZSTD and HTJ2K tests with their codecs"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/compression.h"

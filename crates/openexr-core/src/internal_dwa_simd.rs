@@ -71,7 +71,6 @@ pub(crate) fn csc709_inverse64(comp0: &mut Block, comp1: &mut Block, comp2: &mut
 
 /// Port of `csc709Forward64` (src/lib/OpenEXRCore/internal_dwa_simd.h:191-206 @ v3.5.3):
 /// forward 709 color conversion, R'G'B' to Y'CbCr, of a block.
-#[allow(dead_code)] // the encoder's (the next chunk)
 pub(crate) fn csc709_forward64(comp0: &mut Block, comp1: &mut Block, comp2: &mut Block) {
     for i in 0..64 {
         let src = [comp0[i], comp1[i], comp2[i]];
@@ -863,7 +862,6 @@ fn dct_inverse_8x8_avx_7(data: &mut Block) {
 
 /// Port of the SSE2 `dctForward8x8` (src/lib/OpenEXRCore/internal_dwa_simd.h:2108-2306
 /// @ v3.5.3): the 1D DCT on four columns at a time, then a transpose by 4x4 blocks, twice.
-#[allow(dead_code)] // the encoder's (the next chunk)
 pub(crate) fn dct_forward_8x8(data: &mut Block) {
     let mut src_vec = load_vecs(data);
 

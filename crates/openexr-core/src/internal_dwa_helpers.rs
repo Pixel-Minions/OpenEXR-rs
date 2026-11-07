@@ -6,7 +6,6 @@
 
 /// `AcCompression`: how the AC coefficients are compressed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // DEFLATE is the encoder's (the next chunk)
 pub(crate) enum AcCompression {
     StaticHuffman = 0,
     Deflate = 1,

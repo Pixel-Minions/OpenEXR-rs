@@ -12,7 +12,7 @@ without the owner's OK.
 | The source-built harness (PLAN.md O1) for Core's error and warning text and `exr_print_*` text, which the wheel can't show | Owner decision O1 open | When O1 is decided |
 | The vendored libraries (PLAN.md O2, decided A: each ported exactly as its own crate): libdeflate's decompressor and its compressor's levels 0 to 9 are in; its other levels, zstd and OpenJPH remain | Ported with the codecs that use them | 6 (libdeflate's other levels), 5e (zstd), 5f (OpenJPH) |
 | Decode: drop the per-store bounds checks of the unpack routines once a benchmark shows they cost (the up-front check of U-9 already covers every store) | Needs a benchmark | Phase 8, or earlier if decoding is slow |
-| The codecs' decompressors and compressors (`decompress_data` and `exr_compress_chunk` answer `EXR_ERR_FEATURE_NOT_IMPLEMENTED` until then); NONE, RLE, ZIP, ZIPS, PIZ, PXR24, B44 and B44A are in both ways, DWAA and DWAB decode | Phase 5 | 5b-5f |
+| The codecs' decompressors and compressors (`decompress_data` and `exr_compress_chunk` answer `EXR_ERR_FEATURE_NOT_IMPLEMENTED` until then); NONE, RLE, ZIP, ZIPS, PIZ, PXR24, B44, B44A, DWAA and DWAB are in both ways | Phase 5 | 5b-5f |
 | The deep unpackers (`generic_unpack_deep`, `generic_unpack_deep_pointers`); `internal_exr_match_decode` has none for deep parts yet | Phase 7 | 7 |
 | Tests of D-3 (deep tile unpacked size message) and two D-6 messages | Need corrupt deep files | 7 |
 | The F16C kernel of `half_to_float_buffer` (unpack.c:25-81), which GCC builds take at run time | SIMD | 8 |
