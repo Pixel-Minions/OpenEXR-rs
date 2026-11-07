@@ -36,7 +36,11 @@ end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
    - Don't guess behavior, simplify it, or "fix" it. Upstream bugs that change outputs are ported
      too, and listed in `docs/improvements.md` in the same chunk. The exceptions are the
      deviations the owner approved (`docs/deviations.md`, with their waivers in
-     `docs/waivers.md`; owner, 2026-11-07); a new one needs the owner's OK.
+     `docs/waivers.md`). **Owner, 2026-11-07:** "match, quality and stability": outputs match
+     the oracle, but a real upstream bug, or a needlessly slow path, may be fixed. Each fix is
+     a `D-` entry (with its `I-`/`U-` entry marked fixed, and a `W-` waiver when an output the
+     oracle checks changes), named to the owner in the chunk's report. Pixels and file bytes
+     stay bit-exact.
    - Where upstream reads or writes memory it doesn't own, return an error instead and list it
      as a `U-` entry; where both wheels resolve undefined behavior the same predictable way, match
      them and list it as an `I-` entry. If neither fits, stop and report it.

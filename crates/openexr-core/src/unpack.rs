@@ -8,15 +8,16 @@
 //! Each of upstream's specialized routines is kept, with its own write pattern: which
 //! channel's pointer it starts from, which line stride it advances by, and in which order it
 //! stores the channels. They share the helpers below, parameterized as the C routines differ.
-//! Positions are C's pointer arithmetic in 64 bits, and every store is bounds-checked
-//! (docs/improvements.md, U-9).
+//! Positions are C's pointer arithmetic in 64 bits. Each routine first checks that its whole
+//! write set lies inside the caller's buffers, and refuses the layout with a message before
+//! writing anything if not (docs/improvements.md, U-9); every store is bounds-checked as well.
 //!
 //! `half_to_float_buffer` is the scalar `half_to_float` loop. Upstream's GCC build can take an
 //! F16C kernel at run time (`half_to_float_buffer_f16c`, lines 25-81, chosen by
 //! `choose_half_to_float_impl`, lines 143-155); that kernel comes with the SIMD work of Phase
 //! 8. MSVC never builds it, so on Windows the scalar loop is upstream's path.
 
-use crate::coding::{BufferRef, out_bytes, put16, put32};
+use crate::coding::{BufferRef, Region, check_regions, out_bytes, put16, put32};
 use crate::context::Error;
 use crate::decoding::{DecodeFn, DecodePipeline};
 use crate::errors::ErrorCode;
@@ -37,6 +38,12 @@ fn src_at(src: &[u8], off: i64, len: usize) -> Result<&[u8], Error> {
         return Err(Error::bare(ErrorCode::InvalidArgument));
     }
     Ok(&src[off as usize..off as usize + len])
+}
+
+/// The output rows the fast paths write: one for each `y` from `skip` below `h`, counted from 0.
+fn rows_from(skip: i32, h: i32) -> Option<(i64, i64)> {
+    let n = i64::from(h) - i64::from(skip);
+    (n > 0).then_some((0, n - 1))
 }
 
 /// A channel's output position (every channel of the fast paths has one).
@@ -83,6 +90,29 @@ fn interleave(
     conv: Conv,
 ) -> Result<(), Error> {
     let src = decode.unpacked();
+    // the whole write set first, so that a refused layout writes nothing (U-9)
+    {
+        let rows = rows_from(
+            decode.user_line_begin_skip,
+            decode
+                .chunk
+                .height
+                .wrapping_sub(decode.user_line_end_ignore),
+        );
+        let b = if rev { n - 1 } else { 0 };
+        let r = out_ref(decode, b)?;
+        let region = Region {
+            channel: b,
+            buffer: r.buffer,
+            start: r.offset as i64,
+            rows,
+            line: i64::from(decode.channels[0].user_line_stride),
+            cols: i64::from(decode.channels[0].width) * n as i64,
+            col_stride: conv.out_size(),
+            elem: conv.out_size(),
+        };
+        check_regions(decode.ctxt()?, &decode.channels, outs, &[region])?;
+    }
     let w = decode.channels[0].width;
     let h = decode
         .chunk
@@ -125,6 +155,30 @@ fn planar(
     conv: Conv,
 ) -> Result<(), Error> {
     let src = decode.unpacked();
+    {
+        let rows = rows_from(
+            decode.user_line_begin_skip,
+            decode
+                .chunk
+                .height
+                .wrapping_sub(decode.user_line_end_ignore),
+        );
+        let mut regions = Vec::with_capacity(n);
+        for c in 0..n {
+            let r = out_ref(decode, c)?;
+            regions.push(Region {
+                channel: c,
+                buffer: r.buffer,
+                start: r.offset as i64,
+                rows,
+                line: i64::from(decode.channels[c].user_line_stride),
+                cols: i64::from(decode.channels[0].width),
+                col_stride: conv.out_size(),
+                elem: conv.out_size(),
+            });
+        }
+        check_regions(decode.ctxt()?, &decode.channels, outs, &regions)?;
+    }
     let w = decode.channels[0].width;
     let h = decode
         .chunk
@@ -182,6 +236,31 @@ fn half_to_float_buffer(out: &mut [u8], inp: &[u8]) {
 /// 875-929 @ v3.5.3): each channel at its own pointer with its own pixel and line strides.
 fn nchan16(decode: &DecodePipeline<'_>, outs: &mut [&mut [u8]], n: usize) -> Result<(), Error> {
     let src = decode.unpacked();
+    {
+        let rows = rows_from(
+            decode.user_line_begin_skip,
+            decode
+                .chunk
+                .height
+                .wrapping_sub(decode.user_line_end_ignore),
+        );
+        let mut regions = Vec::with_capacity(n);
+        for c in 0..n {
+            let r = out_ref(decode, c)?;
+            let d = &decode.channels[c];
+            regions.push(Region {
+                channel: c,
+                buffer: r.buffer,
+                start: r.offset as i64,
+                rows,
+                line: i64::from(d.user_line_stride),
+                cols: i64::from(decode.channels[0].width),
+                col_stride: i64::from(d.user_pixel_stride),
+                elem: 2,
+            });
+        }
+        check_regions(decode.ctxt()?, &decode.channels, outs, &regions)?;
+    }
     let w = decode.channels[0].width;
     let h = decode
         .chunk
@@ -220,6 +299,27 @@ fn nchan16(decode: &DecodePipeline<'_>, outs: &mut [&mut [u8]], n: usize) -> Res
 /// `user_line_begin_skip` lines of every channel, and the output starts at line 0.
 fn same_size(decode: &DecodePipeline<'_>, outs: &mut [&mut [u8]], bpc: usize) -> Result<(), Error> {
     let src = decode.unpacked();
+    {
+        let h = i64::from(decode.chunk.height)
+            - i64::from(decode.user_line_end_ignore)
+            - i64::from(decode.user_line_begin_skip);
+        let rows = (h > 0).then_some((0, h - 1));
+        let mut regions = Vec::with_capacity(decode.channels.len());
+        for (c, d) in decode.channels.iter().enumerate() {
+            let r = out_ref(decode, c)?;
+            regions.push(Region {
+                channel: c,
+                buffer: r.buffer,
+                start: r.offset as i64,
+                rows,
+                line: i64::from(d.user_line_stride),
+                cols: i64::from(d.width),
+                col_stride: i64::from(d.user_pixel_stride),
+                elem: bpc as i64,
+            });
+        }
+        check_regions(decode.ctxt()?, &decode.channels, outs, &regions)?;
+    }
     let mut h = i64::from(decode.chunk.height) - i64::from(decode.user_line_end_ignore);
     // if we have user_line_begin_skip, the user data pointer is at THAT offset but our
     // unpacked data is at y of '0' (well idx * height)
@@ -404,6 +504,47 @@ fn unpack_samples(
 /// layout, sampling and conversion, channel by channel.
 fn generic_unpack(decode: &mut DecodePipeline<'_>, outs: &mut [&mut [u8]]) -> Result<(), Error> {
     let src = decode.unpacked();
+    {
+        let uls = decode.user_line_begin_skip;
+        let h = decode
+            .chunk
+            .height
+            .wrapping_sub(decode.user_line_end_ignore);
+        let mut regions = Vec::with_capacity(decode.channels.len());
+        for (c, d) in decode.channels.iter().enumerate() {
+            let Some(r) = d.data else { continue };
+            // the row indices generic_unpack writes, as its loop computes them
+            let mut rows: Option<(i64, i64)> = None;
+            for y in uls.max(0)..h {
+                let cury = (i64::from(y) + i64::from(decode.chunk.start_y)) as i32;
+                let row = if d.y_samples > 1 {
+                    if cury % d.y_samples != 0 {
+                        continue;
+                    }
+                    let fb_y = uls.wrapping_add(decode.chunk.start_y);
+                    i64::from((cury / d.y_samples).wrapping_sub(fb_y / d.y_samples))
+                } else {
+                    i64::from(y - uls)
+                };
+                rows = Some(rows.map_or((row, row), |(a, b)| (a.min(row), b.max(row))));
+            }
+            regions.push(Region {
+                channel: c,
+                buffer: r.buffer,
+                start: r.offset as i64,
+                rows,
+                line: i64::from(d.user_line_stride),
+                cols: i64::from(d.width),
+                col_stride: i64::from(d.user_pixel_stride),
+                elem: if d.user_data_type == PixelType::HALF.0 as u16 {
+                    2
+                } else {
+                    4
+                },
+            });
+        }
+        check_regions(decode.ctxt()?, &decode.channels, outs, &regions)?;
+    }
     let mut srcoff: i64 = 0;
     let uls = decode.user_line_begin_skip;
     let h = decode
@@ -575,4 +716,282 @@ pub(crate) fn internal_exr_match_decode(
     }
 
     Some(generic_unpack)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decoding::DecodeFn;
+
+    /// The name of an unpack routine of this module.
+    fn routine_name(f: Option<DecodeFn>) -> &'static str {
+        let Some(f) = f else { return "none" };
+        let known: [(DecodeFn, &str); 17] = [
+            (
+                unpack_16bit_3chan_interleave,
+                "unpack_16bit_3chan_interleave",
+            ),
+            (
+                unpack_16bit_3chan_interleave_rev,
+                "unpack_16bit_3chan_interleave_rev",
+            ),
+            (
+                unpack_half_to_float_3chan_interleave,
+                "unpack_half_to_float_3chan_interleave",
+            ),
+            (
+                unpack_half_to_float_3chan_interleave_rev,
+                "unpack_half_to_float_3chan_interleave_rev",
+            ),
+            (unpack_16bit_3chan_planar, "unpack_16bit_3chan_planar"),
+            (
+                unpack_half_to_float_3chan_planar,
+                "unpack_half_to_float_3chan_planar",
+            ),
+            (unpack_16bit_3chan, "unpack_16bit_3chan"),
+            (
+                unpack_16bit_4chan_interleave,
+                "unpack_16bit_4chan_interleave",
+            ),
+            (
+                unpack_16bit_4chan_interleave_rev,
+                "unpack_16bit_4chan_interleave_rev",
+            ),
+            (
+                unpack_half_to_float_4chan_interleave,
+                "unpack_half_to_float_4chan_interleave",
+            ),
+            (
+                unpack_half_to_float_4chan_interleave_rev,
+                "unpack_half_to_float_4chan_interleave_rev",
+            ),
+            (unpack_16bit_4chan_planar, "unpack_16bit_4chan_planar"),
+            (
+                unpack_half_to_float_4chan_planar,
+                "unpack_half_to_float_4chan_planar",
+            ),
+            (unpack_16bit_4chan, "unpack_16bit_4chan"),
+            (unpack_16bit, "unpack_16bit"),
+            (unpack_32bit, "unpack_32bit"),
+            (generic_unpack, "generic_unpack"),
+        ];
+        known
+            .iter()
+            .find(|(k, _)| *k as usize == f as usize)
+            .map_or("unknown", |(_, n)| n)
+    }
+    use crate::chunk_info::ChunkInfo;
+    use crate::coding::BufferRef;
+    use crate::context::{Context, Error};
+    use crate::decoding::DecodePipeline;
+    use crate::errors::ErrorCode;
+    use crate::openexr_attr::PixelType;
+    use crate::upstream_tests::read::test_image_dir;
+
+    fn open(name: &str) -> Context {
+        Context::start_read(Some(&(test_image_dir() + name)), None).expect("exr_start_read")
+    }
+
+    /// Decodes `cinfo` into `bufs` with the channels set up by `layout`, through the routine
+    /// the pipeline chooses, or through `generic_unpack`.
+    fn decode(
+        f: &Context,
+        cinfo: &ChunkInfo,
+        layout: &dyn Fn(&mut DecodePipeline<'_>),
+        bufs: &mut [Vec<u8>],
+        generic: bool,
+        chosen: &mut &'static str,
+    ) -> Result<(), Error> {
+        let mut d = f.decoding_initialize(0, cinfo)?;
+        layout(&mut d);
+        f.decoding_choose_default_routines(0, &mut d)?;
+        *chosen = routine_name(d.unpack_and_convert_fn);
+        if generic {
+            d.read_fn = Some(crate::decoding::default_read_chunk);
+            d.unpack_and_convert_fn = Some(generic_unpack);
+        }
+        let mut outs: Vec<&mut [u8]> = bufs.iter_mut().map(Vec::as_mut_slice).collect();
+        f.decoding_run(0, &mut d, &mut outs)
+    }
+
+    /// Every layout of comp_none.exr's four half channels (A, B, G, R) that picks a fast
+    /// path writes exactly what `generic_unpack` writes for the same layout; the planar
+    /// layout, read straight in, too.
+    #[test]
+    fn fast_paths_write_as_the_generic_routine() {
+        let f = open("comp_none.exr");
+        let dw = f.get_data_window(0).unwrap();
+        let w = (dw.max.x - dw.min.x + 1) as usize;
+        let cinfo = f.read_scanline_chunk_info(0, dw.min.y + 7).unwrap();
+        // (the routine upstream's internal_exr_match_decode picks, buffers, layout)
+        type Layout = (&'static str, usize, Box<dyn Fn(&mut DecodePipeline<'_>)>);
+        let set = move |ty: u16, ubpe: i16, off: usize, ps: i32, buf: usize| {
+            move |c: &mut crate::coding::CodingChannelInfo| {
+                c.data = Some(BufferRef {
+                    buffer: buf,
+                    offset: off,
+                });
+                c.user_data_type = ty;
+                c.user_bytes_per_element = ubpe;
+                c.user_pixel_stride = ps;
+                c.user_line_stride = ps * 4 * w as i32;
+            }
+        };
+        let (half, float) = (PixelType::HALF.0 as u16, PixelType::FLOAT.0 as u16);
+        let layouts: Vec<Layout> = vec![
+            (
+                "unpack_16bit_4chan_interleave",
+                1,
+                Box::new(move |d| {
+                    for c in 0..4 {
+                        set(half, 2, c * 2, 8, 0)(&mut d.channels[c]);
+                    }
+                }),
+            ),
+            (
+                "unpack_16bit_4chan_interleave_rev",
+                1,
+                Box::new(move |d| {
+                    for c in 0..4 {
+                        set(half, 2, (3 - c) * 2, 8, 0)(&mut d.channels[c]);
+                    }
+                }),
+            ),
+            (
+                "unpack_half_to_float_4chan_interleave",
+                1,
+                Box::new(move |d| {
+                    for c in 0..4 {
+                        set(float, 4, c * 4, 16, 0)(&mut d.channels[c]);
+                    }
+                }),
+            ),
+            (
+                "unpack_half_to_float_4chan_interleave_rev",
+                1,
+                Box::new(move |d| {
+                    for c in 0..4 {
+                        set(float, 4, (3 - c) * 4, 16, 0)(&mut d.channels[c]);
+                    }
+                }),
+            ),
+            (
+                "unpack_half_to_float_4chan_planar",
+                4,
+                Box::new(move |d| {
+                    for c in 0..4 {
+                        set(float, 4, 0, 4, c)(&mut d.channels[c]);
+                    }
+                }),
+            ),
+            (
+                "unpack_16bit_4chan",
+                4,
+                Box::new(move |d| {
+                    for c in 0..4 {
+                        set(half, 2, 0, 4, c)(&mut d.channels[c]);
+                    }
+                }),
+            ),
+            (
+                "none",
+                4,
+                Box::new(move |d| {
+                    for c in 0..4 {
+                        set(half, 2, 0, 2, c)(&mut d.channels[c]);
+                    }
+                }),
+            ),
+        ];
+        for (what, nbuf, layout) in &layouts {
+            let size = w * 16 * 4;
+            let mut fast = vec![vec![0xAAu8; size]; *nbuf];
+            let mut slow = fast.clone();
+            let mut chosen = "";
+            decode(&f, &cinfo, layout.as_ref(), &mut fast, false, &mut chosen).unwrap();
+            assert_eq!(chosen, *what, "the routine chosen");
+            decode(&f, &cinfo, layout.as_ref(), &mut slow, true, &mut "").unwrap();
+            assert!(
+                fast == slow,
+                "{what}: the fast path and generic_unpack differ"
+            );
+            assert!(
+                fast.iter().any(|b| b.iter().any(|&v| v != 0xAA)),
+                "{what}: nothing written"
+            );
+        }
+    }
+
+    /// A layout reaching outside its buffer is refused before anything is written
+    /// (docs/improvements.md, U-9).
+    #[test]
+    fn a_layout_outside_its_buffer_writes_nothing() {
+        let f = open("comp_none.exr");
+        let dw = f.get_data_window(0).unwrap();
+        let w = (dw.max.x - dw.min.x + 1) as usize;
+        let cinfo = f.read_scanline_chunk_info(0, dw.min.y).unwrap();
+        let layout = move |d: &mut DecodePipeline<'_>| {
+            for c in 0..4 {
+                let ch = &mut d.channels[c];
+                ch.data = Some(BufferRef {
+                    buffer: 0,
+                    offset: c * 2,
+                });
+                ch.user_pixel_stride = 8;
+                ch.user_line_stride = 8 * w as i32;
+            }
+        };
+        let mut bufs = vec![vec![0xAAu8; w * 8 - 1]];
+        let e = decode(&f, &cinfo, &layout, &mut bufs, false, &mut "").unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        assert!(bufs[0].iter().all(|&v| v == 0xAA), "a refused layout wrote");
+        let mut bufs = vec![vec![0xAAu8; w * 8]];
+        decode(&f, &cinfo, &layout, &mut bufs, false, &mut "").unwrap();
+    }
+
+    /// A negative line stride writes the tile bottom up; starting it at the first line
+    /// instead of the last reaches before the buffer and is refused.
+    #[test]
+    fn negative_line_strides() {
+        let f = open("v1.7.test.tiled.exr");
+        let cinfo = f.read_tile_chunk_info(0, 4, 2, 0, 0).unwrap();
+        let (w, h) = (cinfo.width as usize, cinfo.height as usize);
+        let layout = |down: bool, start_last: bool| {
+            move |d: &mut DecodePipeline<'_>| {
+                for c in 0..2 {
+                    let bpe = d.channels[c].bytes_per_element as usize;
+                    let ch = &mut d.channels[c];
+                    let first = if start_last { (h - 1) * w * bpe } else { 0 };
+                    ch.data = Some(BufferRef {
+                        buffer: c,
+                        offset: if down { 0 } else { first },
+                    });
+                    ch.user_pixel_stride = bpe as i32;
+                    ch.user_line_stride = if down {
+                        (w * bpe) as i32
+                    } else {
+                        -((w * bpe) as i32)
+                    };
+                }
+            }
+        };
+        let fresh = || vec![vec![0u8; w * h * 2], vec![0u8; w * h * 4]];
+        let mut down = fresh();
+        decode(&f, &cinfo, &layout(true, false), &mut down, false, &mut "").unwrap();
+        let mut up = fresh();
+        decode(&f, &cinfo, &layout(false, true), &mut up, false, &mut "").unwrap();
+        for (c, bpe) in [(0, 2), (1, 4)] {
+            for y in 0..h {
+                let line = w * bpe;
+                assert_eq!(
+                    down[c][y * line..(y + 1) * line],
+                    up[c][(h - 1 - y) * line..(h - y) * line]
+                );
+            }
+        }
+        let mut bad = fresh();
+        let e = decode(&f, &cinfo, &layout(false, false), &mut bad, false, &mut "").unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        assert!(bad.iter().all(|b| b.iter().all(|&v| v == 0)));
+    }
 }

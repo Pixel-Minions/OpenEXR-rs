@@ -14,6 +14,7 @@
 //! (PLAN.md O8).
 
 use crate::attributes::AttrValue;
+use crate::cfmt::Arg;
 use crate::chunk_info::ChunkInfo;
 use crate::context::{Context, Error, Part};
 use crate::errors::ErrorCode;
@@ -162,5 +163,84 @@ pub(crate) fn put16(outs: &mut [&mut [u8]], buf: usize, pos: i64, v: u16) -> Res
 /// `store_native32` at `pos` of buffer `buf`.
 pub(crate) fn put32(outs: &mut [&mut [u8]], buf: usize, pos: i64, v: u32) -> Result<(), Error> {
     out_bytes(outs, buf, pos, 4)?.copy_from_slice(&v.to_ne_bytes());
+    Ok(())
+}
+
+/// The bytes a decode stage will write for one channel: for each row index `r` from `rows.0`
+/// to `rows.1` and each column `x` below `cols`, `elem` bytes at
+/// `start + r * line + x * col_stride` of buffer `buffer`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Region {
+    /// The channel the stage writes for (named in a refusal).
+    pub(crate) channel: usize,
+    pub(crate) buffer: usize,
+    pub(crate) start: i64,
+    /// The first and last row index written; `None` when no row is.
+    pub(crate) rows: Option<(i64, i64)>,
+    pub(crate) line: i64,
+    pub(crate) cols: i64,
+    pub(crate) col_stride: i64,
+    pub(crate) elem: i64,
+}
+
+impl Region {
+    /// The first byte written and the byte after the last, or `None` if nothing is written.
+    fn extent(&self) -> Option<(i128, i128)> {
+        let (r0, r1) = self.rows?;
+        if self.cols <= 0 || r1 < r0 {
+            return None;
+        }
+        let (a, b) = (
+            i128::from(r0) * i128::from(self.line),
+            i128::from(r1) * i128::from(self.line),
+        );
+        let x = i128::from(self.cols - 1) * i128::from(self.col_stride);
+        let lo = i128::from(self.start) + a.min(b) + x.min(0);
+        let hi = i128::from(self.start) + a.max(b) + x.max(0) + i128::from(self.elem);
+        Some((lo, hi))
+    }
+}
+
+/// Checks, before a stage writes anything, that every byte it will write lies inside the
+/// buffer it names: the refusal of docs/improvements.md, U-9, made up front so that a refused
+/// run leaves the buffers untouched.
+pub(crate) fn check_regions(
+    ctxt: &Context,
+    channels: &[CodingChannelInfo],
+    outs: &[&mut [u8]],
+    regions: &[Region],
+) -> Result<(), Error> {
+    for r in regions {
+        let Some((lo, hi)) = r.extent() else { continue };
+        let name = channels
+            .get(r.channel)
+            .map_or(&[][..], |c| c.channel_name.as_slice());
+        let Some(buf) = outs.get(r.buffer) else {
+            return Err(ctxt.print_error(
+                ErrorCode::InvalidArgument,
+                "Channel %d (%s): no output buffer %d (%d given)",
+                &[
+                    (r.channel as i32).into(),
+                    Arg::Str(name),
+                    (r.buffer as i32).into(),
+                    (outs.len() as i32).into(),
+                ],
+            ));
+        };
+        if lo < 0 || hi > buf.len() as i128 {
+            return Err(ctxt.print_error(
+                ErrorCode::InvalidArgument,
+                "Channel %d (%s): the output reaches outside buffer %d (bytes %lld to %lld; the buffer holds %llu)",
+                &[
+                    (r.channel as i32).into(),
+                    Arg::Str(name),
+                    (r.buffer as i32).into(),
+                    Arg::I64(lo as i64),
+                    Arg::I64((hi - 1) as i64),
+                    Arg::U64(buf.len() as u64),
+                ],
+            ));
+        }
+    }
     Ok(())
 }

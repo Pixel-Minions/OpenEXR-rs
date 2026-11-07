@@ -17,7 +17,7 @@ use std::any::Any;
 use crate::cfmt::Arg;
 use crate::chunk_info::ChunkInfo;
 use crate::coding::{
-    BufferRef, CodingChannelInfo, internal_coding_fill_channel_info,
+    BufferRef, CodingChannelInfo, Region, check_regions, internal_coding_fill_channel_info,
     internal_coding_update_channel_info, out_bytes,
 };
 use crate::context::{Context, ContextMode, Error, ReadMode, dispatch_read};
@@ -221,6 +221,37 @@ fn read_uncompressed_direct(
     let mut dataoffset = decode.chunk.data_offset;
     let height = decode.chunk.height;
     let start_y = decode.chunk.start_y;
+
+    // the whole write set first, so that a refused layout writes nothing (U-9)
+    let mut regions = Vec::with_capacity(decode.channels.len());
+    for (c, decc) in decode.channels.iter().enumerate() {
+        let Some(r) = decc.data.filter(|_| decc.height != 0) else {
+            continue;
+        };
+        let mut rows: Option<(i64, i64)> = None;
+        for y in 0..height {
+            let row = if decc.y_samples > 1 {
+                if start_y.wrapping_add(y) % decc.y_samples != 0 {
+                    continue;
+                }
+                i64::from(y / decc.y_samples)
+            } else {
+                i64::from(y)
+            };
+            rows = Some(rows.map_or((row, row), |(a, b)| (a.min(row), b.max(row))));
+        }
+        regions.push(Region {
+            channel: c,
+            buffer: r.buffer,
+            start: r.offset as i64,
+            rows,
+            line: i64::from(decc.user_line_stride),
+            cols: i64::from(decc.width),
+            col_stride: i64::from(decc.bytes_per_element),
+            elem: i64::from(decc.bytes_per_element),
+        });
+    }
+    check_regions(ctxt, &decode.channels, outs, &regions)?;
     for y in 0..height {
         for decc in &decode.channels {
             let toread = (decc.width as u64).wrapping_mul(decc.bytes_per_element as u64);
@@ -273,7 +304,7 @@ fn read_uncompressed_direct(
 }
 
 /// Port of `default_read_chunk` (src/lib/OpenEXRCore/decoding.c:152-218 @ v3.5.3).
-fn default_read_chunk(
+pub(crate) fn default_read_chunk(
     decode: &mut DecodePipeline<'_>,
     _outs: &mut [&mut [u8]],
 ) -> Result<(), Error> {

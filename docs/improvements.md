@@ -297,12 +297,18 @@ section. An entry says:
 
 - **Upstream:** the decode pipeline writes each channel at `decode_to_ptr` plus the pixel
   and line strides, and reads the unpacked data by the channels' sizes, without bounds
-  (`src/lib/OpenEXRCore/decoding.c:91-147`, `unpack.c:209-1299` @ v3.5.3); a layout that
+  (`src/lib/OpenEXRCore/decoding.c:92-150`, `unpack.c:209-1299` @ v3.5.3); a layout that
   reaches outside the caller's memory writes outside it.
 - **Who notices:** callers whose strides or buffers do not fit the chunk.
 - **The port:** a channel names one of the run's buffers and an offset into it
-  (`crates/openexr-core/src/coding.rs`, `BufferRef`); a store outside its buffer, or a read
-  past the unpacked data, stops the stage with `EXR_ERR_INVALID_ARGUMENT`, which
-  `exr_decoding_run` reports as upstream reports a failed stage. Every store inside the
-  buffers lands where upstream's pointer arithmetic puts it, in the same order.
-- **Status:** the port's choice; listed for the owner's review.
+  (`crates/openexr-core/src/coding.rs`, `BufferRef`). Before writing anything, each of the
+  pipeline's own stages (the direct read and every unpack routine) works out the whole set
+  of bytes it will write, with the routine's own pattern (the interleaved paths, for
+  instance, start from channel 0's or channel `n - 1`'s position and advance by channel 0's
+  line stride), and refuses a layout that reaches outside its buffer with
+  `EXR_ERR_INVALID_ARGUMENT` and "Channel %d (%s): the output reaches outside buffer %d
+  (bytes %lld to %lld; the buffer holds %llu)", leaving the buffers untouched; every store is
+  bounds-checked as well. Layouts inside the buffers, negative strides included, decode as
+  upstream does, byte for byte. Checked by `unpack::tests` (a buffer one byte short, a
+  bottom-up tile, each fast path against `generic_unpack`).
+- **Status:** the port's choice, made up front at the owner's request (2026-11-07).
