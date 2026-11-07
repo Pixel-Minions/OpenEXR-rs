@@ -1104,8 +1104,8 @@ target = "crates/openexr-core/src/channel_list.rs"
 path = "src/lib/OpenEXRCore/chunk.c"
 kind = "src"
 status = "partial"
-target = "crates/openexr-core/src/chunk.rs,crates/openexr-core/src/chunk_info.rs"
-note = "the read side: chunk table (read, validate, reconstruct), the scanline and tile chunk info (chunk_info.rs), exr_read_chunk, exr_read_deep_chunk, exr_get_chunk_table_offset; exr_chunk_default_initialize with Phase 5; the writes with Phase 6"
+target = "crates/openexr-core/src/chunk.rs,crates/openexr-core/src/chunk_info.rs,crates/openexr-core/src/chunk_write.rs"
+note = "ported whole (reads, writes, the chunk tables, exr_chunk_default_initialize, internal_validate_next_chunk) with D-13 and D-14; the C++ library's files rewrite byte for byte. Tiled decreasing-Y order: docs/deferred.md"
 
 [[file]]
 path = "src/lib/OpenEXRCore/coding.c"

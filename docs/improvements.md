@@ -176,6 +176,31 @@ section. An entry says:
 - **Status:** **fixed**, deviation D-12 (owner, 2026-11-07) (`crates/openexr-core/src/write_header.rs`); checked
   by `write_header::tests::deep_image_state_reads_back`.
 
+### I-17. exr_write_scanline_chunk_info sizes a chunk from the line it was given
+
+- **Upstream:** `exr_write_scanline_chunk_info` computes the chunk's unpacked size from `y`,
+  the line it was asked about, rather than the chunk's first line, and tests the end of the
+  data window with `miny + lpc` in `int` (`src/lib/OpenEXRCore/chunk.c:1870-1958` @ v3.5.3);
+  the read side (`exr_read_scanline_chunk_info`) uses the first line and 64 bits.
+- **Who notices:** writers asking about a line in the middle of a chunk of a part with
+  y-subsampled channels (a wrong size); windows ending near `INT_MAX` (an overflow).
+- **A fix:** compute as the read side does.
+- **Status:** **fixed**, deviation D-13 (owner, 2026-11-07) (`crates/openexr-core/src/chunk_write.rs`).
+
+### I-18. Core writes a decreasing-Y scanline file's chunks top down
+
+- **Upstream:** the chunk writes accept only the next chunk index up, whatever the line
+  order (`src/lib/OpenEXRCore/chunk.c:1779-1783`, `2415-2424` @ v3.5.3; the reversal is
+  commented out), so a `DECREASING_Y` file stores its chunks from the top, against its line
+  order, where the C++ library stores them from the bottom (`ImfOutputFile.cpp`).
+- **Who notices:** readers that rely on the line order to read a file in storage order, and
+  anyone comparing Core's files with the C++ library's.
+- **A fix:** for scanline parts, ask for the chunks from the last one down.
+- **Status:** **fixed** for scanline parts, deviation D-14 (owner, 2026-11-07) (`crates/openexr-core/src/
+  chunk_write.rs`); checked by `chunk_write::tests::files_rewrite_as_the_cpp_library_wrote_them`
+  on lineOrder_decreasing.exr. Tiled parts keep upstream's order for now (the C++ library's
+  tile order is rows bottom up within each level; `docs/deferred.md`).
+
 ## Messages and debug output
 
 ### I-7. A deep tile's unpacked size error prints the packed size
@@ -363,5 +388,15 @@ section. An entry says:
   data; the RLE compressor's buffer is sized for its input (Phase 6 will say how much).
 - **The port:** returns the same size and writes the same bytes inside the buffer, and
   nothing past it. Checked by `internal_rle::tests::rle_compress_stops_at_its_buffer`.
+- **Status:** the port's choice; listed for the owner's review.
+
+### U-11. exr_chunk_default_initialize divides by a zero tile size
+
+- **Upstream:** `exr_chunk_default_initialize` divides by the tile width and height
+  (`src/lib/OpenEXRCore/chunk.c:796-797` @ v3.5.3), which a write or temporary context can
+  hold as 0 (`exr_set_tile_descriptor` stores any size); the division traps.
+- **Who notices:** callers of the chunk initializer (the C++ library's compressors among
+  them) on a part with a zero tile size.
+- **The port:** refuses it with `EXR_ERR_INVALID_ARGUMENT`, as the function's other refusals.
 - **Status:** the port's choice; listed for the owner's review.
 

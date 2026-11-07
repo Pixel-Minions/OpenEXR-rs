@@ -436,7 +436,7 @@ impl Context {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::sync::{Arc, Mutex};
 
     use crate::context::{
@@ -444,9 +444,12 @@ mod tests {
     };
     use crate::upstream_tests::read::test_image_dir;
 
+    /// The bytes a memory writer has received.
+    pub(crate) type Memory = Arc<Mutex<Vec<u8>>>;
+
     /// A write context whose writes land in memory, with a legacy header (the C++ library's
     /// attribute order).
-    pub(crate) fn memory_writer(flags: i32) -> (Context, Arc<Mutex<Vec<u8>>>) {
+    pub(crate) fn memory_writer(flags: i32) -> (Context, Memory) {
         let mem = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&mem);
         let cinit = Initializer {
@@ -471,8 +474,8 @@ mod tests {
         (f, mem)
     }
 
-    /// The header the port writes for `src`'s parts, copied into a new context.
-    pub(crate) fn rewrite_header(src: &Context) -> Result<Vec<u8>, crate::context::Error> {
+    /// A write context holding `src`'s parts (a legacy header), its header written.
+    pub(crate) fn copy_header(src: &Context) -> Result<(Context, Memory), crate::context::Error> {
         let (mut dst, mem) = memory_writer(EXR_CONTEXT_FLAG_WRITE_LEGACY_HEADER);
         for p in 0..src.get_count() {
             let name = src
@@ -483,6 +486,12 @@ mod tests {
             dst.copy_unset_attributes(q, src, p)?;
         }
         dst.write_header()?;
+        Ok((dst, mem))
+    }
+
+    /// The header the port writes for `src`'s parts, copied into a new context.
+    pub(crate) fn rewrite_header(src: &Context) -> Result<Vec<u8>, crate::context::Error> {
+        let (_, mem) = copy_header(src)?;
         let bytes = mem.lock().unwrap().clone();
         Ok(bytes)
     }
@@ -548,7 +557,7 @@ mod tests {
     }
 
     /// A one-part write context with the required attributes and one half channel.
-    fn simple_writer(storage: crate::openexr_attr::Storage) -> (Context, Arc<Mutex<Vec<u8>>>) {
+    fn simple_writer(storage: crate::openexr_attr::Storage) -> (Context, Memory) {
         use crate::openexr_attr::{Compression, PerceptualTreatment, PixelType};
         let (mut f, mem) = memory_writer(0);
         f.add_part(Some("p"), storage).unwrap();

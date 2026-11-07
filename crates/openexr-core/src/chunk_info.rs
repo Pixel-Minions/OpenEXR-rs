@@ -43,7 +43,7 @@ pub struct ChunkInfo {
 }
 
 /// The part's channel list (a part being read has one: header validation requires it).
-fn part_channels(part: &Part) -> &[AttrChlistEntry] {
+pub(crate) fn part_channels(part: &Part) -> &[AttrChlistEntry] {
     match part.attr(part.channels).map(|a| a.value()) {
         Some(AttrValue::Chlist(cl)) => &cl.entries[..cl.num_channels.max(0) as usize],
         _ => &[],
@@ -51,7 +51,7 @@ fn part_channels(part: &Part) -> &[AttrChlistEntry] {
 }
 
 /// Port of `compute_chunk_unpack_size` (src/lib/OpenEXRCore/chunk.c:676-700 @ v3.5.3).
-fn compute_chunk_unpack_size(
+pub(crate) fn compute_chunk_unpack_size(
     x: i32,
     y: i32,
     width: i32,

@@ -14,6 +14,7 @@ pub mod cfmt;
 pub mod channel_list;
 pub mod chunk;
 pub mod chunk_info;
+pub mod chunk_write;
 pub mod coding;
 pub mod color_metadata;
 pub mod compression;

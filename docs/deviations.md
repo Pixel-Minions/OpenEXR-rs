@@ -22,4 +22,6 @@ outputs (I-5 to I-12), as deviations; and I-13 (D-9), the same day.
 | D-10 | I-14 | Core writes a `bytes` attribute as size and data, without the hint length and hint the format holds, and refuses an empty one | Writes the hint length, hint and data, as the C++ library does; writes an empty one | Files Core writes with `bytes` attributes: they now read back, and match the C++ library's | Owner in chat, 2026-11-07 |
 | D-11 | I-15 | `exr_write_header` writes multipart files whose parts disagree on a shared attribute | Refuses them with the reader's message | Which calls are refused | Owner in chat, 2026-11-07 |
 | D-12 | I-16 | Core cannot write a `deepImageState` attribute (`EXR_ERR_INVALID_ATTR`) | Writes its byte, as the C++ library does | Which calls are refused; the files written | Owner in chat, 2026-11-07 |
+| D-13 | I-17 | `exr_write_scanline_chunk_info` computes the unpacked size from the line given, not the chunk's first, and the window's end in `int` | Computes as the read side does | The chunk info for a line mid-chunk with y-subsampled channels | Owner in chat, 2026-11-07 |
+| D-14 | I-18 | A `DECREASING_Y` scanline file's chunks must be written top down, against the line order | Bottom up, as the C++ library writes them | Which writes are refused, and the files written (now as the C++ library's) | Owner in chat, 2026-11-07 |
 

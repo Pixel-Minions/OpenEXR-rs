@@ -17,5 +17,7 @@ names, and says which waiver.
 | W-9 | Written files | Headers with `bytes` attributes: Core's layout is replaced by the C++ library's (the wheel writes headers with the C++ library, so against the wheel these now match) | Deviation D-10 (I-14) | Owner in chat, 2026-11-07 |
 | W-10 | Which calls are refused | `exr_write_header` for multipart parts that disagree on a shared attribute | Deviation D-11 (I-15) | Owner in chat, 2026-11-07 |
 | W-11 | Which calls are refused; written files | Headers with a `deepImageState` attribute | Deviation D-12 (I-16) | Owner in chat, 2026-11-07 |
+| W-12 | Chunk info | `exr_write_scanline_chunk_info` for a line mid-chunk with y-subsampled channels, or a window ending near `INT_MAX` | Deviation D-13 (I-17) | Owner in chat, 2026-11-07 |
+| W-13 | Which writes are refused; written files | Decreasing-Y scanline parts: chunks written bottom up (as the C++ library writes them) | Deviation D-14 (I-18) | Owner in chat, 2026-11-07 |
 
 D-8 (I-12) has no waiver: no input reaches it, so no output differs.
