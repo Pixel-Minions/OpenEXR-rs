@@ -11,9 +11,11 @@ to 5 half channels, 3 and 4 float or uint channels, mixed types, x and y subsamp
 38 x 24 window, a whole number of samples); tiled layouts with 3 and 4 channels (one level);
 a scanline and a tiled layout in decreasing-Y line order ("_dec"); half channels flagged
 perceptually linear ("linear_", which B44 maps through its log tables); a header holding an
-attribute of every type the binding writes; and two large images whose pixels
+attribute of every type the binding writes; large images whose pixels
 compress ("smooth": gradients, flat areas, repeats and noisy bands, 2000 x 40), so that the
-codecs' compressed paths are taken, not their fallback to the raw bytes. Pixel bits come from
+codecs' compressed paths are taken, not their fallback to the raw bytes; and two of them with
+chunks over 128 KiB ("smooth_big": 256 x 256 tiles of 4 floats on 300 x 260, and 9000 x 4
+scanlines of 4 floats), which zstd compresses in several blocks. Pixel bits come from
 a fixed seed. The images' pixels are what the wheel reads back (oracle/dump_pixels.py), not
 what was written.
 
@@ -37,6 +39,9 @@ SAMPLED_W, SAMPLED_H = 38, 24
 # the "smooth" layouts: a ZIP chunk of 4 float channels is over 300 000 bytes, a ZIPS one
 # over the 32 KiB deflate window
 SMOOTH_W, SMOOTH_H = 2000, 40
+# the "smooth_big" layouts: a ZSTD chunk over 128 KiB, zstd's largest block
+BIG_TILED_W, BIG_TILED_H, BIG_TILE = 300, 260, 256
+BIG_SCAN_W, BIG_SCAN_H = 9000, 4
 
 
 def smooth(rng, w, h, phase):
@@ -87,6 +92,8 @@ LAYOUTS = {
     "tiled3_dec": ("tiled", [("B", "half", 1, 1), ("G", "half", 1, 1), ("R", "half", 1, 1)]),
     "smooth_half4": ("scanline", [(c, "half", 1, 1) for c in "ABGR"]),
     "smooth_mixed": ("scanline", [("B", "half", 1, 1), ("G", "float", 1, 1), ("R", "float", 1, 1), ("id", "uint", 1, 1)]),
+    "smooth_big_tiled4": ("tiled", [(c, "float", 1, 1) for c in "ABGR"]),
+    "smooth_big_float4": ("scanline", [(c, "float", 1, 1) for c in "ABGR"]),
     # a header with an attribute of every type the binding writes (EXTRA_ATTRS)
     "attrs": ("scanline", [("B", "half", 1, 1), ("G", "half", 1, 1), ("R", "half", 1, 1)]),
 }
@@ -128,7 +135,7 @@ def main():
             header = {"compression": comp}
             if storage == "tiled":
                 tiles = OpenEXR.TileDescription()
-                tiles.xSize, tiles.ySize = 16, 8
+                tiles.xSize, tiles.ySize = (BIG_TILE, BIG_TILE) if name.startswith("smooth_big") else (16, 8)
                 header["type"] = OpenEXR.tiledimage
                 header["tiles"] = tiles
             else:
@@ -142,6 +149,10 @@ def main():
             is_smooth = name.startswith("smooth")
             if is_smooth:
                 w, h = SMOOTH_W, SMOOTH_H
+            if name == "smooth_big_tiled4":
+                w, h = BIG_TILED_W, BIG_TILED_H
+            elif name == "smooth_big_float4":
+                w, h = BIG_SCAN_W, BIG_SCAN_H
             channels = {}
             for i, (cname, kind, xs, ys) in enumerate(chans):
                 # the wheel takes every channel at full size and keeps the samples it stores
