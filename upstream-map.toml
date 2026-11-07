@@ -1095,7 +1095,9 @@ note = "the read side: chunk table (read, validate, reconstruct), the scanline a
 [[file]]
 path = "src/lib/OpenEXRCore/coding.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/coding.rs"
+note = "channel info fill and update, the decode buffers; the encode buffers with Phase 6"
 
 [[file]]
 path = "src/lib/OpenEXRCore/color_metadata.c"
@@ -1109,7 +1111,7 @@ path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/compression.rs"
-note = "lines_per_chunk, is_valid_for_deep, exr_compression_name; the codec dispatch with Phase 4"
+note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch (decompress_data, exr_uncompress_chunk); the codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the compression side with Phase 6"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
@@ -1128,7 +1130,9 @@ note = "exr_print_context_info, ported whole; its text is compared with C's only
 [[file]]
 path = "src/lib/OpenEXRCore/decoding.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/decoding.rs"
+note = "ported whole; the deep paths are tested with Phase 7, and the pixels against the oracle in the heavy tier"
 
 [[file]]
 path = "src/lib/OpenEXRCore/encoding.c"
@@ -1452,7 +1456,9 @@ note = "as chunk.c"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_coding.h"
 kind = "api"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/coding.rs"
+note = "exr_coding_channel_info_t; decode_to_ptr is a BufferRef (U-9)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_color_metadata.h"
@@ -1488,7 +1494,9 @@ note = "with debug.c"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_decode.h"
 kind = "api"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/decoding.rs"
+note = "exr_decode_pipeline_t; pipe_size, the custom allocators and free_compression_context n/a (PLAN.md O8)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_encode.h"
@@ -1573,7 +1581,9 @@ target = "crates/openexr-core/src/string_vector.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/unpack.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/unpack.rs"
+note = "the image unpackers and internal_exr_match_decode; the deep unpackers with Phase 7; the F16C half_to_float_buffer kernel (GCC builds, chosen at run time) with Phase 8"
 
 [[file]]
 path = "src/lib/OpenEXRCore/validation.c"
@@ -1704,9 +1714,9 @@ note = "CorePerfTest; profiling comes later (owner, 2026-11-06)"
 [[file]]
 path = "src/test/OpenEXRCoreTest/read.cpp"
 kind = "test"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/upstream_tests/read.rs"
-note = "testReadBadArgs, testReadBadFiles, testReadMeta, testOpenScans, testOpenTiles, testOpenMultiPart; testReadScans' chunk info part; the decoding tests with Phase 4"
+note = "all 11 tests"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/read.h"

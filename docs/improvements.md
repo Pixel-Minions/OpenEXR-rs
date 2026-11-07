@@ -174,6 +174,18 @@ section. An entry says:
   `part_attr_set.rs`); the part type message is checked by
   `part_attr_set::tests::refusals_carry_messages`.
 
+### I-13. Two decode errors print the channel index as a character
+
+- **Upstream:** `exr_decoding_choose_default_routines` reports an unsupported output size or
+  type "for channel %c (%s)", passing the channel's index `c` as an `int`: `%c` prints the byte
+  of that value, a control character for the first channels
+  (`src/lib/OpenEXRCore/decoding.c:403`, `414` @ v3.5.3).
+- **Who notices:** readers of the error text for a channel set up with a bad
+  `user_bytes_per_element` or `user_data_type`.
+- **A fix:** print the index with `%d`.
+- **Status:** matched (`crates/openexr-core/src/decoding.rs`); not verified against a running
+  library (the wheel can't call Core's C API).
+
 ## Undefined behaviour the port does not copy
 
 ### U-1. A string created from no data has an unset terminator
@@ -278,4 +290,18 @@ section. An entry says:
   internal state ever break them.
 - **The port:** refuses 0 lines per chunk with `EXR_ERR_BAD_CHUNK_LEADER`, and level arrays
   shorter than the level counts with the existing "Tile descriptor data missing or corrupt".
+- **Status:** the port's choice; listed for the owner's review.
+
+### U-9. Decoding outside the caller's buffers
+
+- **Upstream:** the decode pipeline writes each channel at `decode_to_ptr` plus the pixel
+  and line strides, and reads the unpacked data by the channels' sizes, without bounds
+  (`src/lib/OpenEXRCore/decoding.c:91-147`, `unpack.c:209-1299` @ v3.5.3); a layout that
+  reaches outside the caller's memory writes outside it.
+- **Who notices:** callers whose strides or buffers do not fit the chunk.
+- **The port:** a channel names one of the run's buffers and an offset into it
+  (`crates/openexr-core/src/coding.rs`, `BufferRef`); a store outside its buffer, or a read
+  past the unpacked data, stops the stage with `EXR_ERR_INVALID_ARGUMENT`, which
+  `exr_decoding_run` reports as upstream reports a failed stage. Every store inside the
+  buffers lands where upstream's pointer arithmetic puts it, in the same order.
 - **Status:** the port's choice; listed for the owner's review.
