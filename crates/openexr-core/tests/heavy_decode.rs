@@ -22,13 +22,15 @@ use openexr_core::context::{Context, Error};
 use openexr_core::openexr_attr::{Compression, Storage};
 
 /// The compressions the port decodes, with the wheel's names for them.
-const DECODES: [(Compression, &str); 6] = [
+const DECODES: [(Compression, &str); 8] = [
     (Compression::NONE, "NO_COMPRESSION"),
     (Compression::RLE, "RLE_COMPRESSION"),
     (Compression::ZIPS, "ZIPS_COMPRESSION"),
     (Compression::ZIP, "ZIP_COMPRESSION"),
     (Compression::PIZ, "PIZ_COMPRESSION"),
     (Compression::PXR24, "PXR24_COMPRESSION"),
+    (Compression::B44, "B44_COMPRESSION"),
+    (Compression::B44A, "B44A_COMPRESSION"),
 ];
 
 fn root() -> PathBuf {
@@ -499,7 +501,10 @@ fn headers_rewrite_as_the_wheel_wrote_them() {
     assert!(compared > 0);
 }
 
-/// The compressions the port encodes.
+/// The compressions the port encodes whose decoded pixels encode back to the same chunks:
+/// the lossless ones, and PXR24 (rounding a float to 24 bits twice changes nothing). B44 and
+/// B44A are lossy and not idempotent: their encoding is checked on the original pixels, by
+/// the C++ half of upstream's compression tests (`upstream_tests::compression`).
 const ENCODES: [Compression; 6] = [
     Compression::NONE,
     Compression::RLE,

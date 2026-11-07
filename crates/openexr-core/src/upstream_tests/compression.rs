@@ -167,8 +167,9 @@ impl Pixels {
     /// or, for PXR24, within one unit of its 24-bit value; then the half channels exactly. (The
     /// bounds of B44 and DWA come with those codecs.)
     fn compare_close(&self, o: &Pixels, comp: Compression, otag: &str, selftag: &str) {
+        let b44 = comp == Compression::B44 || comp == Compression::B44A;
         assert!(
-            comp == Compression::PIZ || comp == Compression::PXR24,
+            comp == Compression::PIZ || comp == Compression::PXR24 || b44,
             "the bounds of this codec come with it"
         );
         for y in 0..self.h {
@@ -189,6 +190,41 @@ impl Pixels {
                     }
                 }
             }
+        }
+        if b44 {
+            let block = |v: &[u16], x: i32, y: i32| {
+                let mut b = [[0u16; 4]; 4];
+                for (y1, row) in b.iter_mut().enumerate() {
+                    for (x1, s) in row.iter_mut().enumerate() {
+                        let y2 = (y + y1 as i32).min(self.h - 1);
+                        let x2 = (x + x1 as i32).min(self.w - 1);
+                        *s = v[(y2 * self.stride_x + x2) as usize];
+                    }
+                }
+                b
+            };
+            let mut y = 0;
+            while y < self.h {
+                let mut x = 0;
+                while x < self.w {
+                    assert!(
+                        within_b44_error_bounds(&block(&o.hv, x, y), &block(&self.hv, x, y)),
+                        "H block at {x}, {y}"
+                    );
+                    for c in 0..4 {
+                        assert!(
+                            within_b44_error_bounds(
+                                &block(&o.rgba[c], x, y),
+                                &block(&self.rgba[c], x, y)
+                            ),
+                            "channel {c} block at {x}, {y}"
+                        );
+                    }
+                    x += 4;
+                }
+                y += 4;
+            }
+            return;
         }
         for y in 0..self.h {
             for x in 0..self.w {
@@ -240,7 +276,137 @@ impl Pixels {
     }
 }
 
-/// Port of `fill_pointers` (src/test/OpenEXRCoreTest/compression.cpp:700-760 @ v3.5.3): the
+/// Port of the test's `shiftAndRound` (src/test/OpenEXRCoreTest/compression.cpp:166-174
+/// @ v3.5.3).
+fn shift_and_round(x: i32, shift: i32) -> i32 {
+    let x = x << 1;
+    let a = (1 << shift) - 1;
+    let shift = shift + 1;
+    let b = (x >> shift) & 1;
+    (x + a + b) >> shift
+}
+
+/// Port of `withinB44ErrorBounds` (src/test/OpenEXRCoreTest/compression.cpp:198-352 @ v3.5.3):
+/// whether block `b` is what compressing and uncompressing block `a` with B44 should give,
+/// within a couple of units in the last place (upstream's tolerance).
+fn within_b44_error_bounds(a: &[[u16; 4]; 4], b: &[[u16; 4]; 4]) -> bool {
+    // The block may not have been compressed at all if it was part of a very small tile.
+    if a == b {
+        return true;
+    }
+
+    // The block was compressed. Perform a "light" version of the B44 compression on A (see
+    // the pack() function in ImfB44Compressor.cpp).
+    let mut t = [0u16; 16];
+    for (i, ti) in t.iter_mut().enumerate() {
+        let abits = a[i / 4][i % 4];
+        *ti = if (abits & 0x7c00) == 0x7c00 {
+            0x8000
+        } else if abits & 0x8000 != 0 {
+            !abits
+        } else {
+            abits | 0x8000
+        };
+    }
+
+    let mut t_max = 0u16;
+    for &v in &t {
+        if t_max < v {
+            t_max = v;
+        }
+    }
+
+    let mut shift = -1;
+    let mut d = [0i32; 16];
+    let mut r = [0i32; 15];
+    loop {
+        shift += 1;
+        for i in 0..16 {
+            d[i] = shift_and_round(i32::from(t_max) - i32::from(t[i]), shift);
+        }
+        let bias = 0x20;
+        r[0] = d[0] - d[4] + bias;
+        r[1] = d[4] - d[8] + bias;
+        r[2] = d[8] - d[12] + bias;
+
+        r[3] = d[0] - d[1] + bias;
+        r[4] = d[4] - d[5] + bias;
+        r[5] = d[8] - d[9] + bias;
+        r[6] = d[12] - d[13] + bias;
+
+        r[7] = d[1] - d[2] + bias;
+        r[8] = d[5] - d[6] + bias;
+        r[9] = d[9] - d[10] + bias;
+        r[10] = d[13] - d[14] + bias;
+
+        r[11] = d[2] - d[3] + bias;
+        r[12] = d[6] - d[7] + bias;
+        r[13] = d[10] - d[11] + bias;
+        r[14] = d[14] - d[15] + bias;
+
+        let (mut r_min, mut r_max) = (r[0], r[0]);
+        for &v in &r[1..] {
+            if r_min > v {
+                r_min = v;
+            }
+            if r_max < v {
+                r_max = v;
+            }
+        }
+        if !(r_min < 0 || r_max > 0x3f) {
+            break;
+        }
+    }
+
+    t[0] = (i32::from(t_max) - (d[0] << shift)) as u16;
+
+    // Now perform a "light" version of the decompression method (see the unpack() function in
+    // ImfB44Compressor.cpp).
+    let mut a1 = [0u16; 16];
+    let bias = 0x20 << shift;
+    let next = |prev: u16, rv: i32| (i32::from(prev) + (rv << shift) - bias) as u16;
+    a1[0] = t[0];
+    a1[4] = next(a1[0], r[0]);
+    a1[8] = next(a1[4], r[1]);
+    a1[12] = next(a1[8], r[2]);
+
+    a1[1] = next(a1[0], r[3]);
+    a1[5] = next(a1[4], r[4]);
+    a1[9] = next(a1[8], r[5]);
+    a1[13] = next(a1[12], r[6]);
+
+    a1[2] = next(a1[1], r[7]);
+    a1[6] = next(a1[5], r[8]);
+    a1[10] = next(a1[9], r[9]);
+    a1[14] = next(a1[13], r[10]);
+
+    a1[3] = next(a1[2], r[11]);
+    a1[7] = next(a1[6], r[12]);
+    a1[11] = next(a1[10], r[13]);
+    a1[15] = next(a1[14], r[14]);
+
+    // Compare the result with B, allowing for an difference of a couple of units in the last
+    // place.
+    for (i, &a1bits) in a1.iter().enumerate() {
+        let mut bbits = b[i / 4][i % 4];
+        if bbits & 0x8000 != 0 {
+            bbits = !bbits;
+        } else {
+            bbits |= 0x8000;
+        }
+        let (bb, aa) = (i32::from(bbits), i32::from(a1bits));
+        if bb > aa + 5 || bb < aa - 5 {
+            eprintln!(
+                "B44 idx {i}: B bits {bbits:x} too different from A1 bits {a1bits:x} orig {:x}",
+                a[i / 4][i % 4]
+            );
+            return false;
+        }
+    }
+    true
+}
+
+/// Port of `fill_pointers`(src/test/OpenEXRCoreTest/compression.cpp:700-760 @ v3.5.3): the
 /// channel's buffer, its byte offset for sample `idxoffset`, and its pixel and line strides.
 fn fill_pointers(p: &Pixels, curchan: &CodingChannelInfo, idxoffset: i32) -> (BufferRef, i32, i32) {
     let name = curchan.channel_name.as_slice();
@@ -441,6 +607,9 @@ struct Layout {
     fh: i32,
     dwx: i32,
     dwy: i32,
+    /// The half channels perceptually linear: the port's own check of B44's tables, which
+    /// upstream's tests never flag.
+    linear: bool,
 }
 
 /// Port of `doWriteRead` (src/test/OpenEXRCoreTest/compression.cpp:1273-1463 @ v3.5.3), for
@@ -455,6 +624,7 @@ fn do_write_read(
     ys: i32,
     comp: Compression,
     pattern: &str,
+    linear: bool,
 ) {
     let (fw, fh) = (p.w * xs, p.h * ys);
     let (dwx, dwy) = (IMG_DATA_X * xs, IMG_DATA_Y * ys);
@@ -466,6 +636,7 @@ fn do_write_read(
         fh,
         dwx,
         dwy,
+        linear,
     };
 
     crate::base::set_default_zip_compression_level(-1);
@@ -517,8 +688,13 @@ fn do_write_read(
     let log = PerceptualTreatment::LOGARITHMIC;
     f.add_channel(partidx, Some("I"), PixelType::UINT, log, xs, ys)
         .unwrap();
+    let half_treatment = if linear {
+        PerceptualTreatment::LINEAR
+    } else {
+        log
+    };
     for c in ["R", "G", "B", "A", "H"] {
-        f.add_channel(partidx, Some(c), PixelType::HALF, log, xs, ys)
+        f.add_channel(partidx, Some(c), PixelType::HALF, half_treatment, xs, ys)
             .unwrap();
     }
     f.add_channel(partidx, Some("F"), PixelType::FLOAT, log, xs, ys)
@@ -549,13 +725,20 @@ fn do_write_read(
     #[cfg(not(feature = "heavy"))]
     let _ = (cppfilename, layout);
 
+    // (upstream's bounds are for channels that are not linear; the port's linear check compares
+    // the two libraries only)
+    if linear {
+        let _ = std::fs::remove_file(filename);
+        let _ = std::fs::remove_file(cppfilename);
+        return;
+    }
     match comp {
         Compression::NONE
         | Compression::RLE
         | Compression::ZIP
         | Compression::ZIPS
         | Compression::ZSTD => restore.compare_exact(p, "orig", "C loaded C"),
-        Compression::PIZ | Compression::PXR24 => {
+        Compression::PIZ | Compression::PXR24 | Compression::B44 | Compression::B44A => {
             restore.compare_close(p, comp, "orig", "C loaded C")
         }
         _ => panic!("Unknown compression type {}", comp.0),
@@ -600,6 +783,8 @@ fn cpp_half(
         Compression::ZIP => "ZIP_COMPRESSION",
         Compression::PIZ => "PIZ_COMPRESSION",
         Compression::PXR24 => "PXR24_COMPRESSION",
+        Compression::B44 => "B44_COMPRESSION",
+        Compression::B44A => "B44A_COMPRESSION",
         _ => panic!("no wheel name for this test's compression"),
     };
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -619,6 +804,7 @@ fn cpp_half(
             l.dwx.to_string(),
             l.dwy.to_string(),
         ])
+        .args(l.linear.then_some("linear"))
         .status()
         .expect("uv runs the oracle");
     assert!(status.success(), "save_load.py failed");
@@ -676,9 +862,29 @@ fn test_write_read(p: &Pixels, tempdir: &str, comp: Compression, pattern: &str) 
     let maxsampling = 2;
     for xs in 1..=maxsampling {
         for ys in 1..=maxsampling {
-            do_write_read(p, &filename, &cppfilename, false, xs, ys, comp, pattern);
+            do_write_read(
+                p,
+                &filename,
+                &cppfilename,
+                false,
+                xs,
+                ys,
+                comp,
+                pattern,
+                false,
+            );
             if xs == 1 && ys == 1 {
-                do_write_read(p, &filename, &cppfilename, true, xs, ys, comp, pattern);
+                do_write_read(
+                    p,
+                    &filename,
+                    &cppfilename,
+                    true,
+                    xs,
+                    ys,
+                    comp,
+                    pattern,
+                    false,
+                );
             }
         }
     }
@@ -775,4 +981,53 @@ fn test_piz_compression() {
 #[test]
 fn test_pxr24_compression() {
     test_comp(Compression::PXR24);
+}
+
+/// Port of `testB44Compression` (src/test/OpenEXRCoreTest/compression.cpp:1683-1687) @ v3.5.3.
+#[test]
+fn test_b44_compression() {
+    test_comp(Compression::B44);
+}
+
+/// Port of `testB44ACompression` (src/test/OpenEXRCoreTest/compression.cpp:1689-1693) @ v3.5.3.
+#[test]
+fn test_b44a_compression() {
+    test_comp(Compression::B44A);
+}
+
+/// B44 and B44A on perceptually linear half channels, which go through B44's exp and log
+/// tables: Core's files equal the wheel's byte for byte, and both libraries read both to the
+/// same pixels (the C++ half of doWriteRead, `oracle/save_load.py`). Not an upstream test:
+/// upstream's never flag a channel linear.
+#[cfg(feature = "heavy")]
+#[test]
+fn b44_linear_channels_encode_as_the_wheel_does() {
+    let _defaults = DEFAULTS.lock().unwrap_or_else(|e| e.into_inner());
+    let tempdir = make_temp_dir();
+    let mut p = Pixels::new(IMG_WIDTH, IMG_HEIGHT, IMG_STRIDE_X);
+    type Fill = (&'static str, fn(&mut Pixels));
+    let fills: [Fill; 2] = [
+        ("pattern2", Pixels::fill_pattern2),
+        ("random", Pixels::fill_random),
+    ];
+    for comp in [Compression::B44, Compression::B44A] {
+        for (pattern, fill) in fills {
+            fill(&mut p);
+            let filename = format!("{tempdir}{pattern}_linear.exr");
+            let cppfilename = format!("{tempdir}{pattern}_linear_cpp.exr");
+            for tiled in [false, true] {
+                do_write_read(
+                    &p,
+                    &filename,
+                    &cppfilename,
+                    tiled,
+                    1,
+                    1,
+                    comp,
+                    pattern,
+                    true,
+                );
+            }
+        }
+    }
 }

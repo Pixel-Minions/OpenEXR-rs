@@ -26,6 +26,8 @@ pub mod errors;
 mod file_impl;
 pub mod float_vector;
 mod imath_half;
+mod internal_b44;
+mod internal_b44_table;
 mod internal_coding;
 mod internal_constants;
 mod internal_cpuid;

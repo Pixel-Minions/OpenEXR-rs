@@ -1138,7 +1138,7 @@ path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/compression.rs"
-note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_uncompress_buffer and the cached deflate context, exr_rle_*_buffer; exr_compress_max_buffer_size, exr_compress_buffer, the compression dispatch (exr_compress_chunk); PIZ and PXR24 both ways; the other codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the deep sample table's compression with Phase 7"
+note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_uncompress_buffer and the cached deflate context, exr_rle_*_buffer; exr_compress_max_buffer_size, exr_compress_buffer, the compression dispatch (exr_compress_chunk); PIZ, PXR24, B44 and B44A both ways; the other codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the deep sample table's compression with Phase 7"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
@@ -1183,17 +1183,23 @@ target = "crates/openexr-core/src/attributes.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_b44.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_b44.rs"
+note = "ported whole; decodes as the wheel does (heavy tier, linear channels included); encodes as the wheel does on the same pixels (testB44Compression, testB44ACompression and the linear check, their C++ halves by the wheel); the Linux run pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_b44_table.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_b44_table.rs"
+note = "ported whole; the tables use the platform's expf and logf: checked on Windows, the Linux run pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_b44_table_init.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_b44_table.rs"
+note = "ported whole, with internal_b44_table.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_bytes.h"
@@ -1687,7 +1693,7 @@ path = "src/test/OpenEXRCoreTest/compression.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/compression.rs"
-note = "testNoCompression, testRLECompression, testZIPCompression, testZIPSCompression (the C++ half by the wheel, oracle/save_load.py, heavy tier), testHUF (its comparison with the C++ hufCompress, which the wheel does not expose, n/a), testPIZCompression, testPXR24Compression; the other codecs' tests with their codecs"
+note = "testNoCompression, testRLECompression, testZIPCompression, testZIPSCompression (the C++ half by the wheel, oracle/save_load.py, heavy tier), testHUF (its comparison with the C++ hufCompress, which the wheel does not expose, n/a), testPIZCompression, testPXR24Compression, testB44Compression, testB44ACompression; the other codecs' tests with their codecs"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/compression.h"

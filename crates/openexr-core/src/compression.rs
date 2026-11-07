@@ -147,9 +147,9 @@ pub fn compress_chunk(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(),
         }
         Compression::PIZ => crate::internal_piz::internal_exr_apply_piz(encode, ctxt),
         Compression::PXR24 => crate::internal_pxr24::internal_exr_apply_pxr24(encode, ctxt),
-        Compression::B44
-        | Compression::B44A
-        | Compression::DWAA
+        Compression::B44 => crate::internal_b44::internal_exr_apply_b44(encode, ctxt),
+        Compression::B44A => crate::internal_b44::internal_exr_apply_b44a(encode, ctxt),
+        Compression::DWAA
         | Compression::DWAB
         | Compression::HTJ2K32
         | Compression::HTJ2K256
@@ -326,9 +326,14 @@ fn decompress_data(
             unpacksz,
             crate::internal_pxr24::internal_exr_undo_pxr24,
         ),
-        Compression::B44
-        | Compression::B44A
-        | Compression::DWAA
+        Compression::B44 | Compression::B44A => run_codec(
+            decode,
+            target,
+            packsz,
+            unpacksz,
+            crate::internal_b44::internal_exr_undo_b44,
+        ),
+        Compression::DWAA
         | Compression::DWAB
         | Compression::HTJ2K256
         | Compression::HTJ2K32
