@@ -643,7 +643,7 @@ mod tests {
         }
         let e = f.write_header().unwrap_err();
         assert_eq!(e.code, ErrorCode::AttrTypeMismatch);
-                let msg = e.message.unwrap();
+        let msg = e.message.unwrap();
         assert!(
             msg.windows(16).any(|w| w == b"pixelAspectRatio"),
             "{}",
