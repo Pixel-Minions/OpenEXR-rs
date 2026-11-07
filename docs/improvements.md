@@ -179,3 +179,15 @@ section. An entry says:
 - **The port:** refuses the copy with `EXR_ERR_ATTR_TYPE_MISMATCH` and its default message,
   before adding anything; the attributes copied before it stay.
 - **Status:** the port's choice; listed for the owner's review.
+
+### U-7. A tile index past 2^31 within its level
+
+- **Upstream:** `validate_and_compute_tile_chunk_off` adds `tiley * numx + tilex` to the chunk
+  offset in `int` (`src/lib/OpenEXRCore/chunk.c:109` and `170` @ v3.5.3), which overflows for
+  a level of more than 2^31 tiles; it then checks only `chunkoff >= chunk_count`. A header
+  whose chunk count wrapped (I-4) can pass a negative offset, and the chunk table is read
+  before its start.
+- **Who notices:** crafted files with huge data windows and small tiles.
+- **The port:** wraps the sum as the wheels' code does, and refuses a negative offset with the
+  same `EXR_ERR_UNKNOWN` "Invalid tile chunk offset" error.
+- **Status:** the port's choice; listed for the owner's review.

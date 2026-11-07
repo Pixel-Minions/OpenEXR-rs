@@ -22,7 +22,7 @@ use std::any::Any;
 use std::fmt;
 use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::attributes::{AttrId, Attribute, AttributeList};
 use crate::base::{
@@ -406,8 +406,7 @@ impl ContextCore {
     }
 }
 
-/// Port of `struct _priv_exr_part_t` (src/lib/OpenEXRCore/internal_structs.h:91-145 @ v3.5.3),
-/// so far without its attributes (Phase 2) and chunk table (Phase 4).
+/// Port of `struct _priv_exr_part_t` (src/lib/OpenEXRCore/internal_structs.h:91-145 @ v3.5.3).
 #[derive(Debug, Clone)]
 pub(crate) struct Part {
     pub(crate) part_index: i32,
@@ -460,6 +459,16 @@ pub(crate) struct Part {
 
     pub(crate) chunk_count: i32,
     pub(crate) chunk_table_offset: u64,
+    /// `chunk_table`: unset until first read; set once, as upstream's compare-exchange sets it.
+    pub(crate) chunk_table: OnceLock<ChunkTable>,
+}
+
+/// The states of `chunk_table` past NULL: a table, or `UINTPTR_MAX` for a table that could not
+/// be read.
+#[derive(Debug, Clone)]
+pub(crate) enum ChunkTable {
+    Table(Vec<u64>),
+    Failed,
 }
 
 impl Part {
@@ -696,6 +705,7 @@ impl Context {
             chan_has_line_sampling: 0,
             chunk_count: -1,
             chunk_table_offset: 0,
+            chunk_table: OnceLock::new(),
         });
         index
     }

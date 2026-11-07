@@ -42,6 +42,8 @@ manual_range_contains = "allow"
 neg_cmp_op_on_partial_ord = "allow"
 # `(a + b - 1) / b` stays as C writes it (its overflow is C's).
 manual_div_ceil = "allow"
+# C index loops (`for (int i = 0; i < n; ++i) a[i] ...`) stay as written.
+needless_range_loop = "allow"
 too_many_arguments = "allow"
 dbg_macro = "deny"
 todo = "deny"

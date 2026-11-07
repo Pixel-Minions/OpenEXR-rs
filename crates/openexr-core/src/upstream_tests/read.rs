@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::context::{Context, ErrorReport, Initializer};
 use crate::errors::ErrorCode;
+use crate::openexr_attr::{Compression, Storage};
 
 /// `ILM_IMF_TEST_IMAGEDIR` (src/test/OpenEXRCoreTest/CMakeLists.txt:27 @ v3.5.3): upstream's
 /// test images, with a trailing separator.
@@ -171,4 +172,58 @@ fn test_read_meta() {
     assert_eq!(f.get_zstd_compression_level(0).unwrap(), 5);
     assert_eq!(f.set_zstd_compression_level(0, 5).unwrap_err().code, now);
     f.finish().expect("finish");
+}
+
+/// Partial port of `testReadScans` (src/test/OpenEXRCoreTest/read.cpp:257-404 @ v3.5.3): the
+/// checks up to `exr_decoding_initialize` (lines 266-336); the decoding follows with
+/// `decoding.c`. Left out: the NULL context and output calls (PLAN.md O8).
+#[test]
+fn test_read_scans_chunk_info() {
+    let fn_ = test_image_dir() + "v1.7.test.interleaved.exr";
+    let f = Context::start_read(Some(&fn_), cinit()).expect("exr_start_read");
+
+    let oor = ErrorCode::ArgumentOutOfRange;
+    assert_eq!(f.get_chunk_count(-1).unwrap_err().code, oor);
+    assert_eq!(f.get_chunk_count(11).unwrap_err().code, oor);
+    f.get_chunk_count(0).unwrap();
+
+    assert_eq!(f.get_scanlines_per_chunk(-1).unwrap_err().code, oor);
+    assert_eq!(f.get_scanlines_per_chunk(11).unwrap_err().code, oor);
+    let ccount = f.get_scanlines_per_chunk(0).unwrap();
+    assert_eq!(ccount, 1);
+
+    assert_eq!(f.get_data_window(-1).unwrap_err().code, oor);
+    assert_eq!(f.get_data_window(1).unwrap_err().code, oor);
+    let dw = f.get_data_window(0).unwrap();
+
+    assert_eq!(f.read_scanline_chunk_info(-1, 42).unwrap_err().code, oor);
+    assert_eq!(f.read_scanline_chunk_info(1, 42).unwrap_err().code, oor);
+
+    assert_eq!(
+        f.read_tile_chunk_info(0, 4, 2, 0, 0).unwrap_err().code,
+        ErrorCode::TileScanMixedapi
+    );
+
+    let inval = ErrorCode::InvalidArgument;
+    assert_eq!(
+        f.read_scanline_chunk_info(0, dw.min.y - 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        f.read_scanline_chunk_info(0, dw.max.y + 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    let cinfo = f.read_scanline_chunk_info(0, dw.min.y).unwrap();
+
+    let pchunksz = f.get_chunk_unpacked_size(0).unwrap();
+    assert_eq!(cinfo.type_, Storage::SCANLINE.0 as u8);
+    assert_eq!(cinfo.compression, Compression::NONE.0 as u8);
+    assert_eq!(cinfo.packed_size, pchunksz);
+    assert_eq!(cinfo.unpacked_size, pchunksz);
+    assert_eq!(cinfo.sample_count_data_offset, 0);
+    assert_eq!(cinfo.sample_count_table_size, 0);
 }

@@ -1090,7 +1090,7 @@ path = "src/lib/OpenEXRCore/chunk.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/chunk.rs"
-note = "exr_get_chunk_table_offset; the rest with Phase 4"
+note = "chunk table (read, validate, reconstruct), exr_read_scanline_chunk_info, exr_read_tile_chunk_info, exr_get_chunk_table_offset; exr_read_chunk and exr_read_deep_chunk next; default_initialize with Phase 5; the writes with Phase 6"
 
 [[file]]
 path = "src/lib/OpenEXRCore/coding.c"
@@ -1445,7 +1445,9 @@ note = "exr_set_default_memory_routines is n/a (PLAN.md O8)"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_chunkio.h"
 kind = "api"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/chunk.rs"
+note = "as chunk.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_coding.h"
@@ -1704,7 +1706,7 @@ path = "src/test/OpenEXRCoreTest/read.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/read.rs"
-note = "testReadBadArgs, testReadBadFiles, testReadMeta, testOpenScans, testOpenTiles, testOpenMultiPart; the read tests need decoding (Phase 4)"
+note = "testReadBadArgs, testReadBadFiles, testReadMeta, testOpenScans, testOpenTiles, testOpenMultiPart; testReadScans' chunk info part; the decoding tests with Phase 4"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/read.h"
