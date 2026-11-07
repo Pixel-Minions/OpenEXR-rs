@@ -15,6 +15,9 @@ use crate::context::{Context, Error, Part};
 use crate::errors::ErrorCode;
 use crate::opaque::Unpacked;
 use crate::openexr_attr::*;
+use crate::openexr_attr::{
+    Box2i, Compression, LineOrder, PerceptualTreatment, PixelType, V2f, V2i,
+};
 
 /// Port of `exr_attr_list_access_mode_t` (src/lib/OpenEXRCore/openexr_part.h:293-297 @ v3.5.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -468,5 +471,292 @@ impl Context {
             false,
         )
         .map(|(id, _)| id)
+    }
+}
+
+/// The slot of a required attribute in a part.
+pub(crate) type ReqSlot = fn(&mut Part) -> &mut Option<AttrId>;
+
+impl Context {
+    /// `REQ_ATTR_FIND_CREATE` (src/lib/OpenEXRCore/part_attr.c:623-645 @ v3.5.3): the required
+    /// attribute `cname` of type `t` of a part open for writing, added if absent; returns it.
+    fn req_attr_find_create(
+        &mut self,
+        part_index: i32,
+        slot: ReqSlot,
+        cname: &str,
+        t: AttributeType,
+    ) -> Result<AttrId, Error> {
+        self.part_ref(part_index)?;
+        if self.mode == crate::context::ContextMode::Read {
+            return Err(self.standard_error(ErrorCode::NotOpenWrite));
+        }
+        if self.mode == crate::context::ContextMode::WritingData {
+            return Err(self.standard_error(ErrorCode::AlreadyWroteAttrs));
+        }
+        let Context {
+            core,
+            parts,
+            custom_handlers,
+            ..
+        } = self;
+        let part = &mut parts[part_index as usize];
+        match *slot(part) {
+            None => {
+                let (id, _) = core.attr_list_add(
+                    custom_handlers,
+                    &mut part.attributes,
+                    Some(cname.as_bytes()),
+                    t,
+                    0,
+                    false,
+                )?;
+                *slot(part) = Some(id);
+                Ok(id)
+            }
+            Some(id) => {
+                let attr = part.attributes.get(id).expect("slot");
+                if attr.attr_type() != t {
+                    return Err(core.print_error(
+                        ErrorCode::FileBadHeader,
+                        "Invalid required attribute type '%s' for '%s'",
+                        &[Arg::Str(&attr.type_name), cname.into()],
+                    ));
+                }
+                Ok(id)
+            }
+        }
+    }
+
+    fn req_value(&mut self, part_index: i32, id: AttrId) -> &mut AttrValue {
+        &mut self.parts[part_index as usize]
+            .attributes
+            .get_mut(id)
+            .expect("attribute")
+            .value
+    }
+
+    /// Port of `exr_add_channel` (src/lib/OpenEXRCore/part_attr.c:658-675 @ v3.5.3).
+    pub fn add_channel(
+        &mut self,
+        part_index: i32,
+        name: Option<&str>,
+        ptype: PixelType,
+        islinear: PerceptualTreatment,
+        xsamp: i32,
+        ysamp: i32,
+    ) -> Result<(), Error> {
+        let id = self.req_attr_find_create(
+            part_index,
+            |p| &mut p.channels,
+            "channels",
+            AttributeType::CHLIST,
+        )?;
+        let Context { core, parts, .. } = self;
+        let AttrValue::Chlist(cl) = &mut parts[part_index as usize]
+            .attributes
+            .get_mut(id)
+            .expect("attr")
+            .value
+        else {
+            unreachable!("checked")
+        };
+        core.attr_chlist_add(cl, name.map(str::as_bytes), ptype, islinear, xsamp, ysamp)
+    }
+
+    /// Port of `exr_set_channels` (src/lib/OpenEXRCore/part_attr.c:679-703 @ v3.5.3): a copy of
+    /// `channels` replaces the part's channel list.
+    pub fn set_channels(&mut self, part_index: i32, channels: &AttrChlist) -> Result<(), Error> {
+        let id = self.req_attr_find_create(
+            part_index,
+            |p| &mut p.channels,
+            "channels",
+            AttributeType::CHLIST,
+        )?;
+        let mut clist = AttrChlist::default();
+        self.core.attr_chlist_duplicate(&mut clist, channels)?;
+        *self.req_value(part_index, id) = AttrValue::Chlist(clist);
+        Ok(())
+    }
+
+    /// Port of `exr_set_compression` (src/lib/OpenEXRCore/part_attr.c:716-729 @ v3.5.3).
+    pub fn set_compression(&mut self, part_index: i32, ctype: Compression) -> Result<(), Error> {
+        let id = self.req_attr_find_create(
+            part_index,
+            |p| &mut p.compression,
+            "compression",
+            AttributeType::COMPRESSION,
+        )?;
+        *self.req_value(part_index, id) = AttrValue::Compression(ctype.0 as u8);
+        let part = &mut self.parts[part_index as usize];
+        part.comp_type = ctype;
+        part.lines_per_chunk = crate::compression::compression_lines_per_chunk(ctype) as i16;
+        Ok(())
+    }
+
+    /// Port of `exr_set_data_window` (src/lib/OpenEXRCore/part_attr.c:742-765 @ v3.5.3): also
+    /// recomputes the tile information.
+    pub fn set_data_window(&mut self, part_index: i32, dw: Option<&Box2i>) -> Result<(), Error> {
+        let Some(dw) = dw else {
+            return Err(self.report_error(
+                ErrorCode::InvalidArgument,
+                b"Missing value for data window assignment",
+            ));
+        };
+        let id = self.req_attr_find_create(
+            part_index,
+            |p| &mut p.data_window_attr,
+            "dataWindow",
+            AttributeType::BOX2I,
+        )?;
+        *self.req_value(part_index, id) = AttrValue::Box2i(*dw);
+        let Context { core, parts, .. } = self;
+        let part = &mut parts[part_index as usize];
+        part.data_window = *dw;
+        crate::parse_header::internal_exr_compute_tile_information(core, part, true)
+    }
+
+    /// Port of `exr_set_display_window` (src/lib/OpenEXRCore/part_attr.c:778-798 @ v3.5.3).
+    pub fn set_display_window(&mut self, part_index: i32, dw: Option<&Box2i>) -> Result<(), Error> {
+        let Some(dw) = dw else {
+            return Err(self.report_error(
+                ErrorCode::InvalidArgument,
+                b"Missing value for data window assignment",
+            ));
+        };
+        let id = self.req_attr_find_create(
+            part_index,
+            |p| &mut p.display_window_attr,
+            "displayWindow",
+            AttributeType::BOX2I,
+        )?;
+        *self.req_value(part_index, id) = AttrValue::Box2i(*dw);
+        self.parts[part_index as usize].display_window = *dw;
+        Ok(())
+    }
+
+    /// Port of `exr_set_lineorder` (src/lib/OpenEXRCore/part_attr.c:811-833 @ v3.5.3).
+    pub fn set_lineorder(&mut self, part_index: i32, lo: LineOrder) -> Result<(), Error> {
+        // `exr_lineorder_t` is `int` under MSVC and `unsigned int` under GCC, so a negative
+        // value passes this check on Windows only (docs/improvements.md, I-5)
+        let out_of_range = if cfg!(target_env = "msvc") {
+            lo.0 >= LineOrder::LAST_TYPE.0
+        } else {
+            lo.0 as u32 >= LineOrder::LAST_TYPE.0 as u32
+        };
+        if out_of_range {
+            return Err(self.print_error(
+                ErrorCode::ArgumentOutOfRange,
+                "'lineOrder' value for line order (%d) out of range (%d - %d)",
+                &[lo.0.into(), 0i32.into(), LineOrder::LAST_TYPE.0.into()],
+            ));
+        }
+        let id = self.req_attr_find_create(
+            part_index,
+            |p| &mut p.line_order,
+            "lineOrder",
+            AttributeType::LINEORDER,
+        )?;
+        *self.req_value(part_index, id) = AttrValue::LineOrder(lo.0 as u8);
+        self.parts[part_index as usize].lineorder = lo;
+        Ok(())
+    }
+
+    /// Port of `exr_set_pixel_aspect_ratio` (src/lib/OpenEXRCore/part_attr.c:846-852 @ v3.5.3).
+    pub fn set_pixel_aspect_ratio(&mut self, part_index: i32, par: f32) -> Result<(), Error> {
+        let id = self.req_attr_find_create(
+            part_index,
+            |p| &mut p.pixel_aspect_ratio,
+            "pixelAspectRatio",
+            AttributeType::FLOAT,
+        )?;
+        *self.req_value(part_index, id) = AttrValue::Float(par);
+        Ok(())
+    }
+
+    /// Port of `exr_set_screen_window_center` (src/lib/OpenEXRCore/part_attr.c:865-880 @ v3.5.3).
+    pub fn set_screen_window_center(
+        &mut self,
+        part_index: i32,
+        swc: Option<&V2f>,
+    ) -> Result<(), Error> {
+        let id = self.req_attr_find_create(
+            part_index,
+            |p| &mut p.screen_window_center,
+            "screenWindowCenter",
+            AttributeType::V2F,
+        )?;
+        let Some(swc) = swc else {
+            return Err(self.report_error(
+                ErrorCode::InvalidArgument,
+                b"Missing value for data window assignment",
+            ));
+        };
+        *self.req_value(part_index, id) = AttrValue::V2f(*swc);
+        Ok(())
+    }
+
+    /// Port of `exr_set_screen_window_width` (src/lib/OpenEXRCore/part_attr.c:893-899 @ v3.5.3).
+    pub fn set_screen_window_width(&mut self, part_index: i32, ssw: f32) -> Result<(), Error> {
+        let id = self.req_attr_find_create(
+            part_index,
+            |p| &mut p.screen_window_width,
+            "screenWindowWidth",
+            AttributeType::FLOAT,
+        )?;
+        *self.req_value(part_index, id) = AttrValue::Float(ssw);
+        Ok(())
+    }
+
+    /// Port of `exr_initialize_required_attr` (src/lib/OpenEXRCore/part_attr.c:174-202 @ v3.5.3).
+    #[allow(clippy::too_many_arguments)]
+    pub fn initialize_required_attr(
+        &mut self,
+        part_index: i32,
+        display_window: Option<&Box2i>,
+        data_window: Option<&Box2i>,
+        pixelaspectratio: f32,
+        screen_window_center: Option<&V2f>,
+        screen_window_width: f32,
+        lineorder: LineOrder,
+        ctype: Compression,
+    ) -> Result<(), Error> {
+        self.set_compression(part_index, ctype)?;
+        self.set_data_window(part_index, data_window)?;
+        self.set_display_window(part_index, display_window)?;
+        self.set_lineorder(part_index, lineorder)?;
+        self.set_pixel_aspect_ratio(part_index, pixelaspectratio)?;
+        self.set_screen_window_center(part_index, screen_window_center)?;
+        self.set_screen_window_width(part_index, screen_window_width)
+    }
+
+    /// Port of `exr_initialize_required_attr_simple` (src/lib/OpenEXRCore/part_attr.c:206-227
+    /// @ v3.5.3): both windows `(0, 0) - (width - 1, height - 1)`, aspect ratio 1, centre 0,
+    /// width 1, increasing Y.
+    pub fn initialize_required_attr_simple(
+        &mut self,
+        part_index: i32,
+        width: i32,
+        height: i32,
+        ctype: Compression,
+    ) -> Result<(), Error> {
+        let disp_window = Box2i {
+            min: V2i { x: 0, y: 0 },
+            max: V2i {
+                x: width.wrapping_sub(1),
+                y: height.wrapping_sub(1),
+            },
+        };
+        let swc = V2f { x: 0.0, y: 0.0 };
+        self.initialize_required_attr(
+            part_index,
+            Some(&disp_window),
+            Some(&disp_window),
+            1.0,
+            Some(&swc),
+            1.0,
+            LineOrder::INCREASING_Y,
+            ctype,
+        )
     }
 }

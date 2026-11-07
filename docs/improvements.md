@@ -78,6 +78,18 @@ section. An entry says:
 - **Status:** matched (wrapping arithmetic, `crates/openexr-core/src/parse_header.rs`); the
   oracle check of such a file belongs to the heavy tier.
 
+### I-5. A negative line order passes exr_set_lineorder on Windows
+
+- **Upstream:** `exr_set_lineorder` refuses `lo >= EXR_LINEORDER_LAST_TYPE`
+  (`src/lib/OpenEXRCore/part_attr.c:813-821` @ v3.5.3). The enum's underlying type is
+  implementation-defined: `int` under MSVC, `unsigned int` under GCC (an enum with no negative
+  enumerators). So a negative value passed in is refused on Linux and stored on Windows, as
+  `(uint8_t) lo`.
+- **Who notices:** callers passing an invalid line order through a cast.
+- **A fix:** check `lo < 0` too.
+- **Status:** matched on both platforms (`crates/openexr-core/src/part_attr.rs`); the Linux side
+  is checked in the heavy tier.
+
 ## Undefined behaviour the port does not copy
 
 ### U-1. A string created from no data has an unset terminator
