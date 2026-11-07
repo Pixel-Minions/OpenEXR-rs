@@ -939,12 +939,16 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_internal.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_compress_internal.rs"
+note = "the types and helpers the ported compressor needs, as it needs them; the length codes checked against the decoder's tables"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_literals.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_compress_literals.rs"
+note = "ported; checked against the wheel's bytes with Core's ZSTD encoder"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_literals.h"
@@ -954,7 +958,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_sequences.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_compress_sequences.rs"
+note = "ported (with FSE_bitCost, fse.h); checked against the wheel's bytes with Core's ZSTD encoder"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_sequences.h"

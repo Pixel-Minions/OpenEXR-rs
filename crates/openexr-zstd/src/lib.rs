@@ -24,6 +24,12 @@ mod huf_compress;
 mod huf_decompress;
 mod mem;
 mod xxhash;
+#[allow(dead_code)] // the compressor's, used with zstd_compress.c
+mod zstd_compress_internal;
+#[allow(dead_code)] // the compressor's, used with zstd_compress.c
+mod zstd_compress_literals;
+#[allow(dead_code)] // the compressor's, used with zstd_compress.c
+mod zstd_compress_sequences;
 mod zstd_decompress;
 mod zstd_decompress_block;
 mod zstd_decompress_internal;
