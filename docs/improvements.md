@@ -33,3 +33,19 @@ section. An entry says:
 - **Status:** matched (`crates/openexr-core/src/base.rs`). Not verified against a running
   library: the wheel can't call Core's C API, so this waits for the source-built harness
   (PLAN.md O1, heavy tier).
+
+## Pixel conversions
+
+### I-2. The float 2^32 converts to the integer 0
+
+- **Upstream:** `float_to_uint` returns `UINT32_MAX` for values above `(float) UINT32_MAX`,
+  which is 2^32, so exactly 2^32 reaches `(uint32_t) fv`, undefined in C
+  (`src/lib/OpenEXRCore/internal_coding.h:260-266` @ v3.5.3). MSVC 19.44 (`/O2`) and GCC 11.5
+  (`-O2`, `-O3`, a loop as well as a single call) both convert through a 64-bit integer and keep
+  the low 32 bits: 0 (a standalone probe of the same function, 2026-11-07).
+- **Who notices:** a float channel read into a uint channel, at the one float value 2^32
+  (`4294967296.0f`); every larger float already gives `UINT32_MAX`.
+- **A fix:** compare with `>=`, so 2^32 gives `UINT32_MAX` like its neighbours.
+- **Status:** matched (`crates/openexr-core/src/internal_coding.rs`). The probe compiled the
+  function on its own; Core's unpackers inline it, so the heavy tier checks it again at their
+  call sites when unpacking lands (Phase 4).

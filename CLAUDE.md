@@ -13,8 +13,9 @@ github.com/Pixel-Minions/OpenEXR-rs) unless the owner asks. The owner's open dec
 
 **Test tiers (owner, 2026-11-07, `PLAN.md` §8).** Every chunk passes the fast tier,
 `cargo xtask gate`. Heavy checks (the Rocky Linux run, oracle fixtures and corpus, exhaustive
-sweeps, SDE) are deferred: write them with the chunk, in `tests/heavy_*.rs` with
-`required-features = ["heavy"]`, and leave the chunk `partial` in `upstream-map.toml` until
+sweeps, SDE) are deferred: write them with the chunk, behind the `heavy` feature
+(`#[cfg(feature = "heavy")]` in the crate, or `tests/heavy_*.rs` with
+`required-features = ["heavy"]`), and leave the chunk `partial` in `upstream-map.toml` until
 `cargo xtask gate --full` has run them. Deferring a test is not skipping it.
 
 ## Identity
@@ -98,7 +99,9 @@ end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
   `crates/openexr-core/src/parse_header.rs` (layout pending PLAN.md O4). `upstream-map.toml`
   records each upstream file's target and status (`todo | partial | done | n/a`); regenerate new
   entries with `uv run --no-project python -I scripts/upstream_map.py`, which keeps existing ones.
-- **Ported upstream tests** carry a marker directly above `#[test]`:
+- **Ported upstream tests** live in `crates/openexr-core/src/upstream_tests/<file>.rs`, one module
+  per upstream test file (they reach internal functions, as upstream's do), and carry a marker
+  directly above `#[test]`:
   ``/// Port of `testReadScans` (src/test/OpenEXRCoreTest/read.cpp:257-403) @ v3.5.3.``
 - **Headers.** Every `.rs` file starts with `// SPDX-License-Identifier: BSD-3-Clause` and
   `// Copyright Contributors to the OpenEXR Project.` Ports of vendored code keep their own

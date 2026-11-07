@@ -1160,7 +1160,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_coding.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_coding.rs,crates/openexr-core/src/imath_half.rs"
+note = "pixel conversions and Imath half done; pipeline declarations with coding.c (Phase 4); heavy tier: every half and float through the source-built harness (O1)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_compress.h"
@@ -1351,7 +1353,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_xdr.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/internal_xdr.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zip.c"
@@ -1532,8 +1535,8 @@ note = "build system"
 path = "src/test/OpenEXRCoreTest/base_units.cpp"
 kind = "test"
 status = "partial"
-target = "crates/openexr-core/tests/base_units.rs"
-note = "testBase, testBaseErrors, testBaseLimits; testBaseDebug, testCPUIdent, testHalf, testTempContext follow in Phase 1"
+target = "crates/openexr-core/src/upstream_tests/base_units.rs"
+note = "testBase, testBaseErrors, testBaseLimits, testHalf; testBaseDebug, testCPUIdent, testTempContext follow in Phase 1"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/base_units.h"
@@ -1600,7 +1603,9 @@ note = "generated tables the DWA tests compare against"
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.cpp"
 kind = "test"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
+note = "testXDR; the attribute tests come with Phase 2"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"

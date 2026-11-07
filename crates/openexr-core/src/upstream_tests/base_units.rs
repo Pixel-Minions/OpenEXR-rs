@@ -2,16 +2,11 @@
 // Copyright Contributors to the OpenEXR Project.
 
 //! Ports of `src/test/OpenEXRCoreTest/base_units.cpp` @ v3.5.3.
-//!
-//! `testBaseLimits` changes the process-wide defaults; the tests of this binary that read or
-//! change them hold [`DEFAULTS`] so they never interleave.
 
-use std::sync::Mutex;
-
-use openexr_core::version::OPENEXR_VERSION_HEX;
-use openexr_core::*;
-
-static DEFAULTS: Mutex<()> = Mutex::new(());
+use crate::internal_coding::*;
+use crate::upstream_tests::DEFAULTS;
+use crate::version::OPENEXR_VERSION_HEX;
+use crate::*;
 
 /// `COMP_MAJ`, `COMP_MIN`, `COMP_PATCH`, `COMP_EXTRA`: what upstream's test build compiles in
 /// (src/test/OpenEXRCoreTest/CMakeLists.txt:31-36 @ v3.5.3), from
@@ -174,4 +169,24 @@ fn test_base_limits() {
     set_default_lossy_htj2k_quality(200.0);
     assert_eq!(get_default_lossy_htj2k_quality(), 150.0);
     set_default_lossy_htj2k_quality(110.0);
+}
+
+/// Port of `testHalf` (src/test/OpenEXRCoreTest/base_units.cpp:424-442) @ v3.5.3.
+#[test]
+fn test_half() {
+    assert_eq!(half_to_float(0), 0.0);
+    assert_eq!(float_to_half(0.0), 0);
+    assert_eq!(float_to_half_int(0), 0);
+    assert_eq!(half_to_float_int(0), 0);
+    assert_eq!(half_to_uint(0), 0);
+    assert_eq!(half_to_uint(0x8000), 0);
+    assert_eq!(float_to_uint(0.0), 0);
+    assert_eq!(float_to_uint(-1.0), 0);
+    assert_eq!(float_to_uint_int(0), 0);
+
+    assert_eq!(uint_to_half(0), 0);
+    assert_eq!(uint_to_half(128344), 0x7c00);
+
+    assert_eq!(uint_to_float(0), 0.0);
+    assert_eq!(uint_to_float_int(0), 0);
 }

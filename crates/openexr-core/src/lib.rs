@@ -8,8 +8,14 @@
 
 pub mod base;
 pub mod errors;
+mod imath_half;
+mod internal_coding;
 mod internal_ht_quality;
+mod internal_xdr;
 pub mod version;
+
+#[cfg(test)]
+mod upstream_tests;
 
 pub use base::*;
 pub use errors::{ErrorCode, ExrResult};

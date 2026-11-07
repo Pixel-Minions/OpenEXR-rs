@@ -249,9 +249,8 @@ Owner, 2026-11-07: "delay heavy tests to when all is set so we speed up things".
 - **Heavy tier, deferred** (`cargo xtask gate --full`, once Core's read path is in place, at
   the latest before each milestone of §10): the Rocky Linux 9 run, oracle fixtures and the
   corpus, exhaustive sweeps (every float for half conversion, every codec level), the
-  source-built harness (O1), and SDE. Heavy tests are written with the chunk that needs them, in
-  `tests/heavy_*.rs` behind the `heavy` feature, so they compile on every gate but run only in
-  `--full`. Nothing is weakened: a chunk is *done* only after its heavy tests pass; until then
+  source-built harness (O1), and SDE. Heavy tests are written with the chunk that needs them,
+  behind the `heavy` feature, so they run only in `--full`. Nothing is weakened: a chunk is *done* only after its heavy tests pass; until then
   `upstream-map.toml` marks it `partial`.
 - **The cost:** a mismatch the heavy tier finds is found later, so it may touch several chunks.
 
