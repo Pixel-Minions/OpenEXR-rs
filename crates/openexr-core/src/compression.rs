@@ -339,7 +339,17 @@ fn decompress_data(
             unpacksz,
             crate::internal_dwa::internal_exr_undo_dwa,
         ),
-        Compression::HTJ2K256 | Compression::HTJ2K32 | Compression::LJ2K | Compression::ZSTD => {
+        Compression::ZSTD => run_codec(
+            decode,
+            target,
+            packsz,
+            unpacksz,
+            match target {
+                Target::SampleTable => crate::internal_zstd::internal_exr_undo_zstd_sample_table,
+                Target::Image => crate::internal_zstd::internal_exr_undo_zstd,
+            },
+        ),
+        Compression::HTJ2K256 | Compression::HTJ2K32 | Compression::LJ2K => {
             Err(Error::bare(ErrorCode::FeatureNotImplemented))
         }
         _ => Err(ctxt.print_error(

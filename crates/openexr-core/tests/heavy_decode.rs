@@ -22,7 +22,7 @@ use openexr_core::context::{Context, Error};
 use openexr_core::openexr_attr::{Compression, Storage};
 
 /// The compressions the port decodes, with the wheel's names for them.
-const DECODES: [(Compression, &str); 10] = [
+const DECODES: [(Compression, &str); 11] = [
     (Compression::NONE, "NO_COMPRESSION"),
     (Compression::RLE, "RLE_COMPRESSION"),
     (Compression::ZIPS, "ZIPS_COMPRESSION"),
@@ -33,6 +33,7 @@ const DECODES: [(Compression, &str); 10] = [
     (Compression::B44A, "B44A_COMPRESSION"),
     (Compression::DWAA, "DWAA_COMPRESSION"),
     (Compression::DWAB, "DWAB_COMPRESSION"),
+    (Compression::ZSTD, "ZSTD_COMPRESSION"),
 ];
 
 fn root() -> PathBuf {

@@ -16,6 +16,7 @@ name = "openexr_core"
 
 [dependencies]
 openexr-deflate = { workspace = true }
+openexr-zstd = { workspace = true }
 
 [features]
 # The heavy test tier (PLAN.md §8): tests/heavy_*.rs, run by `cargo xtask gate --full`.

@@ -773,7 +773,7 @@ path = "external/zstd/lib/common/bitstream.h"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/bitstream.rs"
-note = "its decoding half ported; checked with the decompressor (heavy tier, ZSTD images); the encoding half comes with the compressor"
+note = "its decoding half ported; checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier); the encoding half comes with the compressor"
 
 [[file]]
 path = "external/zstd/lib/common/compiler.h"
@@ -800,7 +800,7 @@ path = "external/zstd/lib/common/entropy_common.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/entropy_common.rs"
-note = "ported whole; checked with the decompressor (heavy tier, ZSTD images)"
+note = "ported whole; checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier)"
 
 [[file]]
 path = "external/zstd/lib/common/error_private.c"
@@ -819,14 +819,14 @@ path = "external/zstd/lib/common/fse.h"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/fse_decompress.rs"
-note = "its decoding half ported; checked with the decompressor (heavy tier, ZSTD images); the encoding half comes with the compressor"
+note = "its decoding half ported; checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier); the encoding half comes with the compressor"
 
 [[file]]
 path = "external/zstd/lib/common/fse_decompress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/fse_decompress.rs"
-note = "ported whole; checked with the decompressor (heavy tier, ZSTD images)"
+note = "ported whole; checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier)"
 
 [[file]]
 path = "external/zstd/lib/common/huf.h"
@@ -1049,7 +1049,7 @@ path = "external/zstd/lib/decompress/huf_decompress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/huf_decompress.rs"
-note = "the portable decoders ported; the fast C and assembly loops (same symbols) are performance work (O3); checked with the decompressor (heavy tier, ZSTD images)"
+note = "the portable decoders ported; the fast C and assembly loops (same symbols) are performance work (O3); checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier)"
 
 [[file]]
 path = "external/zstd/lib/decompress/huf_decompress_amd64.S"
@@ -1072,14 +1072,14 @@ path = "external/zstd/lib/decompress/zstd_decompress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/zstd_decompress.rs"
-note = "one-shot decompression without dictionaries ported (Core's use); streaming and dictionaries n/a; checked through Core's ZSTD codec against the wheel (heavy tier, next)"
+note = "one-shot decompression without dictionaries ported (Core's use); streaming and dictionaries n/a; checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier)"
 
 [[file]]
 path = "external/zstd/lib/decompress/zstd_decompress_block.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/zstd_decompress_block.rs"
-note = "the portable decoder ported (literals kept in their own buffer; the prefetching sequence decoder, same output, is O3); checked through Core's ZSTD codec against the wheel (heavy tier, next)"
+note = "the portable decoder ported (literals kept in their own buffer; the prefetching sequence decoder, same output, is O3); checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier)"
 
 [[file]]
 path = "external/zstd/lib/decompress/zstd_decompress_block.h"
@@ -1496,17 +1496,23 @@ note = "ported whole (scalar reconstruct and interleave); the SSE2/SSE4.1/NEON k
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_zstd.rs"
+note = "the decoder is in (flat parts decode as the wheel does, heavy tier; the deep scenarios wait for Phase 7); the encoder comes with zstd's compressor"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd_delta.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_zstd_delta.rs"
+note = "the scalar deltas ported (GCC's AVX2 decode computes the same sums, O3); the encode side checked with the encoder"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd_shuffle.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_zstd_shuffle.rs"
+note = "the scalar shuffles ported (GCC's AVX2 unshuffle moves the same bytes, O3); the encode side checked with the encoder"
 
 [[file]]
 path = "src/lib/OpenEXRCore/memory.c"
