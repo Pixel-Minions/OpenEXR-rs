@@ -465,13 +465,16 @@ impl Context {
                 continue;
             }
 
+            // upstream prints the channel index with %c, as a character; the port prints it
+            // with %d, a deviation (docs/improvements.md, I-13)
+            //
             // if a user specifies a bad pixel stride / line stride we can't know this
             // realistically, and they may want to use 0 to cause things to collapse for
             // testing purposes so only test the values we know we use for decisions
             if decc.user_bytes_per_element != 2 && decc.user_bytes_per_element != 4 {
                 return Err(self.print_error(
                     ErrorCode::InvalidArgument,
-                    "Invalid / unsupported output bytes per element (%d) for channel %c (%s)",
+                    "Invalid / unsupported output bytes per element (%d) for channel %d (%s)",
                     &[
                         i32::from(decc.user_bytes_per_element).into(),
                         c.into(),
@@ -485,7 +488,7 @@ impl Context {
             {
                 return Err(self.print_error(
                     ErrorCode::InvalidArgument,
-                    "Invalid / unsupported output data type (%d) for channel %c (%s)",
+                    "Invalid / unsupported output data type (%d) for channel %d (%s)",
                     &[
                         i32::from(decc.user_data_type).into(),
                         c.into(),
@@ -781,5 +784,39 @@ impl Context {
     pub fn decoding_destroy(&self, decode: &mut DecodePipeline<'_>) -> Result<(), Error> {
         *decode = DecodePipeline::default();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::coding::BufferRef;
+    use crate::context::Context;
+    use crate::errors::ErrorCode;
+    use crate::upstream_tests::read::test_image_dir;
+
+    /// An unsupported output size names the channel by its index, printed as a number
+    /// (docs/improvements.md, I-13).
+    #[test]
+    fn bad_output_size_names_the_channel() {
+        let path = test_image_dir() + "v1.7.test.interleaved.exr";
+        let f = Context::start_read(Some(&path), None).expect("exr_start_read");
+        let dw = f.get_data_window(0).unwrap();
+        let cinfo = f.read_scanline_chunk_info(0, dw.min.y).unwrap();
+        let mut decoder = f.decoding_initialize(0, &cinfo).unwrap();
+        decoder.channels[1].data = Some(BufferRef {
+            buffer: 0,
+            offset: 0,
+        });
+        decoder.channels[1].user_bytes_per_element = 3;
+        let e = f
+            .decoding_choose_default_routines(0, &mut decoder)
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        let msg = e.message.expect("message");
+        assert!(
+            msg.ends_with(b"output bytes per element (3) for channel 1 (Z)"),
+            "{}",
+            String::from_utf8_lossy(&msg)
+        );
     }
 }

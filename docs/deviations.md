@@ -6,7 +6,7 @@ approval, and one that changes an output covered by the byte-exact definition of
 `docs/improvements.md` gives the upstream source, who notices, and how it is checked.
 
 **Owner's decision (chat, 2026-11-07):** fix the upstream bugs found in Phases 2-4 that change
-outputs (I-5 to I-12), as deviations.
+outputs (I-5 to I-12), as deviations; and I-13 (D-9), the same day.
 
 | Id | Entry | Upstream behaviour | Port behaviour | Affects outputs? | Approved |
 |---|---|---|---|---|---|
@@ -18,3 +18,4 @@ outputs (I-5 to I-12), as deviations.
 | D-6 | I-10 | Three garbled error messages ("Preparing read scanline", "Preparing to scanline", "must be implicitly only") | Corrected text | Error text | Owner in chat, 2026-11-07 |
 | D-7 | I-11 | `exr_set_version` refuses a version other than 1 without a message | Reports one | Error text (the handler is called); the code is unchanged | Owner in chat, 2026-11-07 |
 | D-8 | I-12 | `exr_copy_unset_attributes` counts a lookup failing for another reason than a missing name as found | Returns the lookup's error | None today (the lookup cannot fail that way with a source's names) | Owner in chat, 2026-11-07 |
+| D-9 | I-13 | `exr_decoding_choose_default_routines` prints a channel's index with `%c`, as a character, in its two errors for an unsupported output size or type | Prints it with `%d` | Error text | Owner in chat, 2026-11-07 |

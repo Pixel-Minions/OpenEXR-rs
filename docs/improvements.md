@@ -183,8 +183,9 @@ section. An entry says:
 - **Who notices:** readers of the error text for a channel set up with a bad
   `user_bytes_per_element` or `user_data_type`.
 - **A fix:** print the index with `%d`.
-- **Status:** matched (`crates/openexr-core/src/decoding.rs`); not verified against a running
-  library (the wheel can't call Core's C API).
+- **Status:** **fixed**, deviation D-9 (owner, 2026-11-07): printed with `%d`
+  (`crates/openexr-core/src/decoding.rs`); checked by
+  `decoding::tests::bad_output_size_names_the_channel`.
 
 ## Undefined behaviour the port does not copy
 
