@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright Contributors to the OpenEXR Project.
 
-//! Port of `internal_zstd.c` (src/lib/OpenEXRCore/internal_zstd.c:1-1497 @ v3.5.3), so far
-//! its decoder: an EXR-ZSTD chunk is a 24-byte prefix (magic, wire format, flags, payload
+//! Port of `internal_zstd.c` (src/lib/OpenEXRCore/internal_zstd.c:1-1497 @ v3.5.3), both
+//! ways: an EXR-ZSTD chunk is a 24-byte prefix (magic, wire format, flags, payload
 //! size) and a ZSTD frame, whose inner stream is one or two shuffled segments of the chunk's
 //! data sorted into its 16-bit then its 32-bit channel rows, with a delta along each row in
 //! wire format 2. A chunk ZSTD did not shrink is stored raw, without the prefix.
 //!
-//! Upstream keeps a ZSTD context and a buffer per thread; so does the port.
+//! Upstream keeps a ZSTD context of each kind and a buffer per thread; so does the port.
 
 use std::cell::RefCell;
 
