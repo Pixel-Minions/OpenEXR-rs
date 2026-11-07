@@ -1111,7 +1111,7 @@ path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/compression.rs"
-note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch (decompress_data, exr_uncompress_chunk); the codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the compression side with Phase 6"
+note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_rle_compress_buffer and exr_rle_uncompress_buffer; the other codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the compression side with Phase 6"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
@@ -1132,7 +1132,7 @@ path = "src/lib/OpenEXRCore/decoding.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/decoding.rs"
-note = "ported whole; uncompressed scanline and tiled parts match the wheel bit for bit (heavy tier, tests/heavy_decode_none.rs); the deep paths are tested with Phase 7"
+note = "ported whole; NONE and RLE parts match the wheel bit for bit in every layout tested (heavy tier, tests/heavy_decode.rs); the deep paths are tested with Phase 7"
 
 [[file]]
 path = "src/lib/OpenEXRCore/encoding.c"
@@ -1343,7 +1343,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_rle.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_rle.rs"
+note = "the codec (run-length coding both ways, reorder and predict, internal_exr_undo_rle); internal_exr_apply_rle with the encode pipeline (Phase 6). Decoding matches the wheel bit for bit (heavy tier, tests/heavy_decode.rs)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_string.h"

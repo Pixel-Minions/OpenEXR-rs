@@ -814,12 +814,23 @@ mod tests {
         f.decoding_run(0, &mut d, &mut outs)
     }
 
-    /// Every layout of comp_none.exr's four half channels (A, B, G, R) that picks a fast
-    /// path writes exactly what `generic_unpack` writes for the same layout; the planar
-    /// layout, read straight in, too.
+    /// Every layout of the four half channels (A, B, G, R) of comp_none.exr and comp_rle.exr
+    /// that picks a fast path writes exactly what `generic_unpack` writes for the same layout;
+    /// the planar layout too (read straight in, or unpacked from the RLE data).
     #[test]
     fn fast_paths_write_as_the_generic_routine() {
-        let f = open("comp_none.exr");
+        for (image, planar) in [
+            ("comp_none.exr", "none"),
+            ("comp_rle.exr", "unpack_16bit_4chan_planar"),
+        ] {
+            check_fast_paths(image, planar);
+        }
+    }
+
+    /// The fast path comparison on one image; `planar` names the routine the planar layout
+    /// picks ("none" for an uncompressed image: it is read straight in).
+    fn check_fast_paths(image: &str, planar: &'static str) {
+        let f = open(image);
         let dw = f.get_data_window(0).unwrap();
         let w = (dw.max.x - dw.min.x + 1) as usize;
         let cinfo = f.read_scanline_chunk_info(0, dw.min.y + 7).unwrap();
@@ -894,7 +905,7 @@ mod tests {
                 }),
             ),
             (
-                "none",
+                planar,
                 4,
                 Box::new(move |d| {
                     for c in 0..4 {

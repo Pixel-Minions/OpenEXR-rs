@@ -29,6 +29,7 @@ mod internal_constants;
 mod internal_cpuid;
 mod internal_file;
 mod internal_ht_quality;
+mod internal_rle;
 mod internal_util;
 mod internal_xdr;
 pub mod opaque;

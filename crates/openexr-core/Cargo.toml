@@ -29,5 +29,5 @@ name = "heavy_cfmt_crt"
 required-features = ["heavy"]
 
 [[test]]
-name = "heavy_decode_none"
+name = "heavy_decode"
 required-features = ["heavy"]

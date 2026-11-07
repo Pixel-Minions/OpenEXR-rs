@@ -312,3 +312,17 @@ section. An entry says:
   upstream does, byte for byte. Checked by `unpack::tests` (a buffer one byte short, a
   bottom-up tile, each fast path against `generic_unpack`).
 - **Status:** the port's choice, made up front at the owner's request (2026-11-07).
+
+### U-10. RLE coding writes up to a run past its output buffer
+
+- **Upstream:** `internal_rle_compress` (behind `exr_rle_compress_buffer` and the RLE
+  compressor) checks the output size only after writing each run, so the run that crosses
+  the end of the buffer, up to 128 bytes, is written past it
+  (`src/lib/OpenEXRCore/internal_rle.c:17-63` @ v3.5.3); the size it returns is then larger
+  than the buffer.
+- **Who notices:** callers of `exr_rle_compress_buffer` with a buffer smaller than the coded
+  data; the RLE compressor's buffer is sized for its input (Phase 6 will say how much).
+- **The port:** returns the same size and writes the same bytes inside the buffer, and
+  nothing past it. Checked by `internal_rle::tests::rle_compress_stops_at_its_buffer`.
+- **Status:** the port's choice; listed for the owner's review.
+

@@ -11,6 +11,8 @@ use crate::decoding::{Aliased, DecodePipeline, EXR_DECODE_SAMPLE_DATA_ONLY};
 use crate::errors::ErrorCode;
 use crate::openexr_attr::Compression;
 
+pub use crate::internal_rle::{rle_compress_buffer, rle_uncompress_buffer};
+
 /// Port of `exr_compression_lines_per_chunk` (src/lib/OpenEXRCore/compression.c:321-348
 /// @ v3.5.3): -1 for an invalid compression.
 pub fn compression_lines_per_chunk(comptype: Compression) -> i32 {
@@ -57,6 +59,54 @@ enum Target {
     Image,
 }
 
+/// A codec's decompressor: `src` into all of `out`, with the pipeline's scratch buffers.
+type UndoFn = fn(&mut DecodePipeline<'_>, &[u8], &mut [u8]) -> Result<(), Error>;
+
+/// Calls `undo` on the first `packsz` bytes of the packed buffer (or table) and the first
+/// `unpacksz` bytes of the unpacked one, which upstream passes as pointers into the pipeline.
+/// The buffers are lent out of the pipeline for the call, so the codec can use its scratch
+/// buffers.
+fn run_codec(
+    decode: &mut DecodePipeline<'_>,
+    target: Target,
+    packsz: u64,
+    unpacksz: u64,
+    undo: UndoFn,
+) -> Result<(), Error> {
+    let (src_slot, dst_slot) = match target {
+        Target::SampleTable => (
+            &mut decode.packed_sample_count_table,
+            &mut decode.sample_count_table,
+        ),
+        Target::Image => (&mut decode.packed_buffer, &mut decode.unpacked_buffer),
+    };
+    let src = src_slot.take();
+    let dst = std::mem::take(dst_slot);
+    let restore = |decode: &mut DecodePipeline<'_>, src, dst| match target {
+        Target::SampleTable => {
+            decode.packed_sample_count_table = src;
+            decode.sample_count_table = dst;
+        }
+        Target::Image => {
+            decode.packed_buffer = src;
+            decode.unpacked_buffer = dst;
+        }
+    };
+    let (p, u) = (packsz as usize, unpacksz as usize);
+    match (&src, dst) {
+        (Some(s), Aliased::Own(mut d)) if s.len() >= p && d.len() >= u => {
+            let rv = undo(decode, &s[..p], &mut d[..u]);
+            restore(decode, src, Aliased::Own(d));
+            rv
+        }
+        // the buffers hold the chunk's sizes (docs/improvements.md, U-9)
+        (_, d) => {
+            restore(decode, src, d);
+            Err(Error::bare(ErrorCode::InvalidArgument))
+        }
+    }
+}
+
 /// Port of `decompress_data` (src/lib/OpenEXRCore/compression.c:662-745 @ v3.5.3): `packsz`
 /// bytes of the packed buffer (or table) into `unpacksz` bytes of the unpacked one. Each
 /// codec is ported with its Phase 5 chunk; until then it is `EXR_ERR_FEATURE_NOT_IMPLEMENTED`.
@@ -98,8 +148,14 @@ fn decompress_data(
             ErrorCode::InvalidArgument,
             b"no compression set but still trying to decompress",
         )),
-        Compression::RLE
-        | Compression::ZIP
+        Compression::RLE => run_codec(
+            decode,
+            target,
+            packsz,
+            unpacksz,
+            crate::internal_rle::internal_exr_undo_rle,
+        ),
+        Compression::ZIP
         | Compression::ZIPS
         | Compression::PIZ
         | Compression::PXR24
