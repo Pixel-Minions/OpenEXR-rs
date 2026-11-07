@@ -16,6 +16,7 @@ mod bitstream;
 mod entropy_common;
 mod error_private;
 mod fse_decompress;
+mod huf_decompress;
 mod mem;
 
 pub use error_private::{ErrorCode, ZResult};

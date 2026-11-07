@@ -1043,7 +1043,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/decompress/huf_decompress.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/huf_decompress.rs"
+note = "the portable decoders ported; the fast C and assembly loops (same symbols) are performance work (O3); checked with the decompressor (heavy tier, ZSTD images)"
 
 [[file]]
 path = "external/zstd/lib/decompress/huf_decompress_amd64.S"
