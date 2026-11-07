@@ -190,3 +190,38 @@ fn test_half() {
     assert_eq!(uint_to_float(0), 0.0);
     assert_eq!(uint_to_float_int(0), 0);
 }
+
+/// Port of `testCPUIdent` (src/test/OpenEXRCoreTest/base_units.cpp:385-422) @ v3.5.3.
+///
+/// Upstream compares Core's check with the C++ library's `CpuId`
+/// (src/lib/OpenEXR/ImfSystemSpecific.cpp:81-140 @ v3.5.3). The reference here is that class's
+/// rule applied to the platform's own answers: under MSVC its `xgetbv` is a stub returning 0
+/// (ImfSystemSpecific.cpp:69-77), so AVX and F16C are absent; elsewhere AVX and F16C need the
+/// CPU bit plus OS support for AVX state, which Rust's `avx` detection reports.
+#[test]
+fn test_cpu_ident() {
+    let id = crate::internal_cpuid::check_for_x86_simd();
+    #[cfg(target_arch = "x86_64")]
+    {
+        let sse2 = std::arch::is_x86_feature_detected!("sse2");
+        let (avx, f16c) = if cfg!(target_env = "msvc") {
+            (false, false)
+        } else {
+            let avx = std::arch::is_x86_feature_detected!("avx");
+            (avx, avx && std::arch::is_x86_feature_detected!("f16c"))
+        };
+        assert_eq!(id.f16c, f16c as i32, "CPU Id test f16c mismatch");
+        assert_eq!(id.avx, avx as i32, "CPU Id test avx mismatch");
+        assert_eq!(id.sse2, sse2 as i32, "CPU Id test sse2 mismatch");
+        assert_eq!(
+            crate::internal_cpuid::has_native_half(),
+            (id.f16c != 0 && id.avx != 0) as i32,
+            "CPU Id test has native half mismatch"
+        );
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = id;
+        crate::internal_cpuid::has_native_half();
+    }
+}

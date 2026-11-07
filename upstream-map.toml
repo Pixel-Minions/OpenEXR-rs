@@ -1177,7 +1177,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_cpuid.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_cpuid.rs"
+note = "done on Windows; the Linux path (xgetbv through feature detection) runs in the heavy tier's Rocky Linux gate"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_decompress.h"
@@ -1536,7 +1538,7 @@ path = "src/test/OpenEXRCoreTest/base_units.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/base_units.rs"
-note = "testBase, testBaseErrors, testBaseLimits, testHalf; testBaseDebug, testCPUIdent, testTempContext follow in Phase 1"
+note = "testBase, testBaseErrors, testBaseLimits, testHalf, testCPUIdent; testBaseDebug and testTempContext follow in Phase 1"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/base_units.h"

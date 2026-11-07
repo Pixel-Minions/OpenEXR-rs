@@ -10,6 +10,7 @@ pub mod base;
 pub mod errors;
 mod imath_half;
 mod internal_coding;
+mod internal_cpuid;
 mod internal_ht_quality;
 mod internal_xdr;
 pub mod version;
