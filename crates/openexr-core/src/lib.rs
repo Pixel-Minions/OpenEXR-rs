@@ -12,6 +12,7 @@ pub mod bytes;
 #[doc(hidden)]
 pub mod cfmt;
 pub mod channel_list;
+pub mod color_metadata;
 pub mod context;
 pub mod errors;
 pub mod float_vector;
