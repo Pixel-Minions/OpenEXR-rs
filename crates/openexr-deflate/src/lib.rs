@@ -16,6 +16,7 @@ mod deflate_compress;
 mod deflate_constants;
 mod deflate_decompress;
 mod hc_matchfinder;
+mod ht_matchfinder;
 mod matchfinder_common;
 mod zlib_compress;
 mod zlib_constants;

@@ -6,10 +6,10 @@
 //! no bit-reversal instruction).
 //!
 //! So far: the Huffman code construction, the block flushing (uncompressed, static and dynamic
-//! blocks), the block splitting heuristic, and the compressors of levels 0 (uncompressed), 2 to
-//! 4 (greedy) and 5 to 9 (lazy and lazy2), on `hc_matchfinder`. The fastest (level 1) and
-//! near-optimal (10 to 12) compressors follow; [`Compressor::new`] gives none for those levels
-//! until then.
+//! blocks), the block splitting heuristic, and the compressors of levels 0 (uncompressed), 1
+//! (fastest, on `ht_matchfinder`), 2 to 4 (greedy) and 5 to 9 (lazy and lazy2, on
+//! `hc_matchfinder`). The near-optimal compressor (10 to 12) follows; [`Compressor::new`]
+//! gives none for those levels until then.
 //!
 //! Upstream overlays the precode and the full length codewords in a union (`c->o`), and the
 //! parsers' data in another (`c->p`); they are separate fields here. Upstream reads none of
@@ -20,59 +20,68 @@
 
 use crate::deflate_constants::*;
 use crate::hc_matchfinder::HcMatchfinder;
+use crate::ht_matchfinder::{HT_MATCHFINDER_REQUIRED_NBYTES, HtMatchfinder};
 
 /// Port of `MIN_BLOCK_LENGTH` (external/deflate/lib/deflate_compress.c:66 @ libdeflate v1.26):
 /// the minimum block length, in uncompressed bytes, except for the final block if needed.
 const MIN_BLOCK_LENGTH: usize = 5000;
 
-/// Port of `SOFT_MAX_BLOCK_LENGTH` (external/deflate/lib/deflate_compress.c:75 @ libdeflate
+/// Port of `SOFT_MAX_BLOCK_LENGTH` (external/deflate/lib/deflate_compress.c:81 @ libdeflate
 /// v1.26): the soft maximum block length, in uncompressed bytes, for the greedy, lazy, lazy2
 /// and near-optimal compressors.
 const SOFT_MAX_BLOCK_LENGTH: usize = 300000;
 
-/// Port of `SEQ_STORE_LENGTH` (external/deflate/lib/deflate_compress.c:82 @ libdeflate v1.26):
+/// Port of `SEQ_STORE_LENGTH` (external/deflate/lib/deflate_compress.c:93 @ libdeflate v1.26):
 /// the length of the sequence store of the greedy and lazy compressors.
 const SEQ_STORE_LENGTH: usize = 50000;
 
-/// Port of `MAX_LITLEN_CODEWORD_LEN` (external/deflate/lib/deflate_compress.c:107 @ libdeflate
+/// Port of `FAST_SOFT_MAX_BLOCK_LENGTH` (external/deflate/lib/deflate_compress.c:102 @ libdeflate
+/// v1.26): the soft maximum block length of the fastest compressor.
+const FAST_SOFT_MAX_BLOCK_LENGTH: usize = 65535;
+
+/// Port of `FAST_SEQ_STORE_LENGTH` (external/deflate/lib/deflate_compress.c:108 @ libdeflate
+/// v1.26): the length of the fastest compressor's sequence store.
+const FAST_SEQ_STORE_LENGTH: usize = 8192;
+
+/// Port of `MAX_LITLEN_CODEWORD_LEN` (external/deflate/lib/deflate_compress.c:117 @ libdeflate
 /// v1.26): the maximum codeword length used for the litlen code, below the format's 15 so
 /// that a block can be output with fewer flushes.
 const MAX_LITLEN_CODEWORD_LEN: u32 = 14;
-/// Port of `MAX_OFFSET_CODEWORD_LEN` (external/deflate/lib/deflate_compress.c:108 @ libdeflate
+/// Port of `MAX_OFFSET_CODEWORD_LEN` (external/deflate/lib/deflate_compress.c:118 @ libdeflate
 /// v1.26).
 const MAX_OFFSET_CODEWORD_LEN: u32 = DEFLATE_MAX_OFFSET_CODEWORD_LEN;
-/// Port of `MAX_PRE_CODEWORD_LEN` (external/deflate/lib/deflate_compress.c:109 @ libdeflate
+/// Port of `MAX_PRE_CODEWORD_LEN` (external/deflate/lib/deflate_compress.c:119 @ libdeflate
 /// v1.26).
 const MAX_PRE_CODEWORD_LEN: u32 = DEFLATE_MAX_PRE_CODEWORD_LEN;
 
-/// Port of `deflate_length_slot_base` (external/deflate/lib/deflate_compress.c:236-241
+/// Port of `deflate_length_slot_base` (external/deflate/lib/deflate_compress.c:237-242
 /// @ libdeflate v1.26): length slot => length slot base value.
 const DEFLATE_LENGTH_SLOT_BASE: [u32; 29] = [
     3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
     163, 195, 227, 258,
 ];
 
-/// Port of `deflate_extra_length_bits` (external/deflate/lib/deflate_compress.c:244-249
+/// Port of `deflate_extra_length_bits` (external/deflate/lib/deflate_compress.c:245-250
 /// @ libdeflate v1.26): length slot => number of extra length bits.
 const DEFLATE_EXTRA_LENGTH_BITS: [u8; 29] = [
     0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
 ];
 
-/// Port of `deflate_offset_slot_base` (external/deflate/lib/deflate_compress.c:252-257
+/// Port of `deflate_offset_slot_base` (external/deflate/lib/deflate_compress.c:253-258
 /// @ libdeflate v1.26): offset slot => offset slot base value.
 const DEFLATE_OFFSET_SLOT_BASE: [u32; 30] = [
     1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
     2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
 ];
 
-/// Port of `deflate_extra_offset_bits` (external/deflate/lib/deflate_compress.c:260-265
+/// Port of `deflate_extra_offset_bits` (external/deflate/lib/deflate_compress.c:261-266
 /// @ libdeflate v1.26): offset slot => number of extra offset bits.
 const DEFLATE_EXTRA_OFFSET_BITS: [u8; 30] = [
     0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
     13,
 ];
 
-/// Port of `deflate_length_slot` (external/deflate/lib/deflate_compress.c:268-284 @ libdeflate
+/// Port of `deflate_length_slot` (external/deflate/lib/deflate_compress.c:269-285 @ libdeflate
 /// v1.26): length => length slot.
 const DEFLATE_LENGTH_SLOT: [u8; DEFLATE_MAX_MATCH_LEN + 1] = [
     0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 12, 12, 13, 13, 13, 13,
@@ -88,7 +97,7 @@ const DEFLATE_LENGTH_SLOT: [u8; DEFLATE_MAX_MATCH_LEN + 1] = [
     27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 27, 28,
 ];
 
-/// Port of `deflate_offset_slot` (external/deflate/lib/deflate_compress.c:290-307 @ libdeflate
+/// Port of `deflate_offset_slot` (external/deflate/lib/deflate_compress.c:291-308 @ libdeflate
 /// v1.26): 'offset - 1 => offset_slot' for offset <= 256.
 const DEFLATE_OFFSET_SLOT: [u8; 256] = [
     0, 1, 2, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9,
@@ -104,13 +113,13 @@ const DEFLATE_OFFSET_SLOT: [u8; 256] = [
     15, 15, 15, 15, 15, 15, 15, 15,
 ];
 
-/// Port of `deflate_precode_lens_permutation` (external/deflate/lib/deflate_compress.c:310-312
+/// Port of `deflate_precode_lens_permutation` (external/deflate/lib/deflate_compress.c:311-313
 /// @ libdeflate v1.26): the order in which precode codeword lengths are stored.
 const DEFLATE_PRECODE_LENS_PERMUTATION: [u8; DEFLATE_NUM_PRECODE_SYMS] = [
     16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
 ];
 
-/// Port of `deflate_extra_precode_bits` (external/deflate/lib/deflate_compress.c:315-317
+/// Port of `deflate_extra_precode_bits` (external/deflate/lib/deflate_compress.c:316-318
 /// @ libdeflate v1.26): precode symbol => number of extra bits.
 const DEFLATE_EXTRA_PRECODE_BITS: [u8; DEFLATE_NUM_PRECODE_SYMS] =
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7];
@@ -119,7 +128,7 @@ const DEFLATE_EXTRA_PRECODE_BITS: [u8; DEFLATE_NUM_PRECODE_SYMS] =
 /// holds the litlen lengths and then the offset lengths, and its header code relies on it.
 const LENS_OFFSET: usize = DEFLATE_NUM_LITLEN_SYMS;
 
-/// Port of `struct deflate_codes` (external/deflate/lib/deflate_compress.c:320-341
+/// Port of `struct deflate_codes` (external/deflate/lib/deflate_compress.c:320-339
 /// @ libdeflate v1.26): the codewords and lengths (in bits) of the DEFLATE Huffman codes; a
 /// zero length means the symbol had zero frequency.
 #[derive(Clone)]
@@ -140,7 +149,7 @@ impl Codes {
     }
 }
 
-/// Port of `struct deflate_freqs` (external/deflate/lib/deflate_compress.c:344-347
+/// Port of `struct deflate_freqs` (external/deflate/lib/deflate_compress.c:342-345
 /// @ libdeflate v1.26): symbol frequency counters for the DEFLATE Huffman codes.
 #[derive(Clone)]
 struct Freqs {
@@ -148,12 +157,12 @@ struct Freqs {
     offset: [u32; DEFLATE_NUM_OFFSET_SYMS],
 }
 
-/// Port of `SEQ_LENGTH_SHIFT` (external/deflate/lib/deflate_compress.c:367 @ libdeflate v1.26).
+/// Port of `SEQ_LENGTH_SHIFT` (external/deflate/lib/deflate_compress.c:365 @ libdeflate v1.26).
 const SEQ_LENGTH_SHIFT: u32 = 23;
-/// Port of `SEQ_LITRUNLEN_MASK` (external/deflate/lib/deflate_compress.c:368 @ libdeflate v1.26).
+/// Port of `SEQ_LITRUNLEN_MASK` (external/deflate/lib/deflate_compress.c:366 @ libdeflate v1.26).
 const SEQ_LITRUNLEN_MASK: u32 = (1 << SEQ_LENGTH_SHIFT) - 1;
 
-/// Port of `struct deflate_sequence` (external/deflate/lib/deflate_compress.c:355-381
+/// Port of `struct deflate_sequence` (external/deflate/lib/deflate_compress.c:353-380
 /// @ libdeflate v1.26): a run of literals followed by a match or end-of-block. Bits 0..22 of
 /// `litrunlen_and_length` are the number of literals, bits 23..31 the length of the match
 /// which follows them, or 0 for the last run of the block.
@@ -164,7 +173,7 @@ struct Sequence {
     offset_slot: u16,
 }
 
-// Block split statistics (external/deflate/lib/deflate_compress.c:437-449 @ libdeflate v1.26).
+// Block split statistics (external/deflate/lib/deflate_compress.c:439-443 @ libdeflate v1.26).
 const NUM_LITERAL_OBSERVATION_TYPES: usize = 8;
 const NUM_MATCH_OBSERVATION_TYPES: usize = 2;
 const NUM_OBSERVATION_TYPES: usize = NUM_LITERAL_OBSERVATION_TYPES + NUM_MATCH_OBSERVATION_TYPES;
@@ -208,9 +217,10 @@ enum Strategy {
     Greedy,
     Lazy,
     Lazy2,
+    Fastest,
 }
 
-/// Port of `struct libdeflate_compressor` (external/deflate/lib/deflate_compress.c:454-697
+/// Port of `struct libdeflate_compressor` (external/deflate/lib/deflate_compress.c:454-662
 /// @ libdeflate v1.26): a DEFLATE compressor for one compression level.
 pub struct Compressor {
     strategy: Strategy,
@@ -236,8 +246,10 @@ pub struct Compressor {
     length: Box<LengthCodes>,
     /// The greedy and lazy parsers' hash chains matchfinder (`c->p.g.hc_mf`).
     hc_mf: Option<HcMatchfinder>,
-    /// The greedy and lazy parsers' matches and literals chosen for the current block
-    /// (`c->p.g.sequences`).
+    /// The fastest parser's hash table matchfinder (`c->p.f.ht_mf`).
+    ht_mf: Option<HtMatchfinder>,
+    /// The parsers' matches and literals chosen for the current block (`c->p.g.sequences`,
+    /// `c->p.f.sequences`).
     sequences: Vec<Sequence>,
 }
 
@@ -249,7 +261,7 @@ impl std::fmt::Debug for Compressor {
     }
 }
 
-/// Port of `struct deflate_output_bitstream` (external/deflate/lib/deflate_compress.c:719-740
+/// Port of `struct deflate_output_bitstream` (external/deflate/lib/deflate_compress.c:688-710
 /// @ libdeflate v1.26), with the output buffer: bits not yet written (`bitbuf`, `bitcount` of
 /// them), and where the next byte goes.
 struct OutputBitstream<'o> {
@@ -264,7 +276,7 @@ struct OutputBitstream<'o> {
 const WORDBYTES: usize = 8;
 
 impl OutputBitstream<'_> {
-    /// `ADD_BITS` (external/deflate/lib/deflate_compress.c:747-752 @ libdeflate v1.26): adds
+    /// `ADD_BITS` (external/deflate/lib/deflate_compress.c:717-722 @ libdeflate v1.26): adds
     /// `n` bits to the bit buffer.
     #[inline]
     fn add_bits(&mut self, bits: u32, n: u32) {
@@ -272,7 +284,7 @@ impl OutputBitstream<'_> {
         self.bitcount += n;
     }
 
-    /// `FLUSH_BITS` (external/deflate/lib/deflate_compress.c:764-784 @ libdeflate v1.26):
+    /// `FLUSH_BITS` (external/deflate/lib/deflate_compress.c:734-751 @ libdeflate v1.26):
     /// writes the whole bytes of the bit buffer, a word at a time when a word fits (writing
     /// zeros past the bytes it advances over, which later writes replace, as upstream does).
     #[inline]
@@ -295,7 +307,7 @@ impl OutputBitstream<'_> {
     }
 }
 
-/// `CAN_BUFFER(n)` (external/deflate/lib/deflate_compress.c:713 @ libdeflate v1.26), with
+/// `CAN_BUFFER(n)` (external/deflate/lib/deflate_compress.c:682 @ libdeflate v1.26), with
 /// `BITBUF_NBITS` 63: can `n` bits always be added to the bit buffer after a flush?
 const fn can_buffer(n: u32) -> bool {
     7 + n <= 63
@@ -334,7 +346,7 @@ fn heapify_array(a: &mut [u32], length: usize) {
     }
 }
 
-/// Port of `heap_sort` (external/deflate/lib/deflate_compress.c:798-812 @ libdeflate v1.26):
+/// Port of `heap_sort` (external/deflate/lib/deflate_compress.c:798-813 @ libdeflate v1.26):
 /// sorts `a`.
 fn heap_sort(a: &mut [u32]) {
     let mut length = a.len();
@@ -350,7 +362,7 @@ const NUM_SYMBOL_BITS: u32 = 10;
 const SYMBOL_MASK: u32 = (1 << NUM_SYMBOL_BITS) - 1;
 const FREQ_MASK: u32 = !SYMBOL_MASK;
 
-/// Port of `sort_symbols` (external/deflate/lib/deflate_compress.c:846-905 @ libdeflate
+/// Port of `sort_symbols` (external/deflate/lib/deflate_compress.c:846-906 @ libdeflate
 /// v1.26): the symbols of nonzero frequency, sorted by frequency and then by symbol, into
 /// `symout` (each the symbol in the low [`NUM_SYMBOL_BITS`] bits and its frequency above);
 /// the lengths of the others set to 0. Returns how many symbols have nonzero frequency.
@@ -442,7 +454,7 @@ fn build_tree(a: &mut [u32], sym_count: usize) {
     }
 }
 
-/// Port of `compute_length_counts` (external/deflate/lib/deflate_compress.c:1022-1093
+/// Port of `compute_length_counts` (external/deflate/lib/deflate_compress.c:1022-1091
 /// @ libdeflate v1.26): how many codewords get each length up to `max_codeword_len`, from the
 /// tree [`build_tree`] made (which this destroys, keeping the low bits).
 fn compute_length_counts(
@@ -499,7 +511,7 @@ fn reverse_codeword(codeword: u32, len: u8) -> u32 {
     u32::from((codeword as u16).reverse_bits()) >> (16 - u32::from(len))
 }
 
-/// Port of `gen_codewords` (external/deflate/lib/deflate_compress.c:1177-1210 @ libdeflate
+/// Port of `gen_codewords` (external/deflate/lib/deflate_compress.c:1177-1216 @ libdeflate
 /// v1.26): each symbol's codeword length, from the sorted symbols in `a` and the length
 /// counts, then the canonical codewords, bit-reversed, into `a`.
 fn gen_codewords(
@@ -534,7 +546,7 @@ fn gen_codewords(
     }
 }
 
-/// Port of `deflate_make_huffman_code` (external/deflate/lib/deflate_compress.c:1318-1400
+/// Port of `deflate_make_huffman_code` (external/deflate/lib/deflate_compress.c:1318-1396
 /// @ libdeflate v1.26): a length-limited canonical Huffman code for `num_syms` symbols of
 /// frequencies `freqs`: the lengths into `lens` and the codewords into `codewords` (which
 /// also serves as the work array, as upstream's does).
@@ -604,7 +616,7 @@ fn deflate_make_huffman_codes(freqs: &Freqs, codes: &mut Codes) {
     );
 }
 
-/// Port of `deflate_get_offset_slot` (external/deflate/lib/deflate_compress.c:1453-1466
+/// Port of `deflate_get_offset_slot` (external/deflate/lib/deflate_compress.c:1453-1480
 /// @ libdeflate v1.26): the offset slot of a match offset, using the small map.
 #[inline]
 fn deflate_get_offset_slot(offset: u32) -> u32 {
@@ -629,7 +641,7 @@ fn deflate_get_offset_slot(offset: u32) -> u32 {
     u32::from(DEFLATE_OFFSET_SLOT[((offset - 1) >> n) as usize]) + (n << 1)
 }
 
-/// Port of `deflate_compute_precode_items` (external/deflate/lib/deflate_compress.c:1482-1567
+/// Port of `deflate_compute_precode_items` (external/deflate/lib/deflate_compress.c:1482-1557
 /// @ libdeflate v1.26): the run-length coding of the codeword lengths `lens` with the precode
 /// symbols (each item the symbol in bits 0..4 and its extra bits above), and the symbols'
 /// frequencies. Returns the number of items.
@@ -754,7 +766,7 @@ fn choose_min_match_len(num_used_literals: u32, max_search_depth: u32) -> u32 {
     min_len
 }
 
-/// Port of `calculate_min_match_len` (external/deflate/lib/deflate_compress.c:2329-2352
+/// Port of `calculate_min_match_len` (external/deflate/lib/deflate_compress.c:2329-2353
 /// @ libdeflate v1.26): [`choose_min_match_len`] from the literals of the first 4 KiB of
 /// `data`; 3 for less than 512 bytes.
 fn calculate_min_match_len(data: &[u8], max_search_depth: u32) -> u32 {
@@ -976,7 +988,7 @@ impl Compressor {
     /// (external/deflate/lib/deflate_compress.c:3872-4028 @ libdeflate v1.26): a compressor
     /// for `compression_level`, from 0 (no compression) to 12, or -1 for the default (6);
     /// `None` for another level. The levels whose compressors are not ported yet give `None`
-    /// too, for now (1, and 10 to 12).
+    /// too, for now (10 to 12).
     pub fn new(compression_level: i32) -> Option<Compressor> {
         // Note: For similarity with zlib's API, -1 is accepted as an alias for the default
         // compression level.
@@ -1019,6 +1031,7 @@ impl Compressor {
                 lens: [0; DEFLATE_MAX_MATCH_LEN + 1],
             }),
             hc_mf: None,
+            ht_mf: None,
             sequences: Vec::new(),
         };
 
@@ -1027,6 +1040,8 @@ impl Compressor {
                 c.max_passthrough_size = usize::MAX;
                 (Strategy::None, 0, 0)
             }
+            // max_search_depth is unused.
+            1 => (Strategy::Fastest, 0, 32),
             2 => (Strategy::Greedy, 6, 10),
             3 => (Strategy::Greedy, 12, 14),
             4 => (Strategy::Greedy, 16, 30),
@@ -1046,6 +1061,10 @@ impl Compressor {
         ) {
             c.hc_mf = Some(HcMatchfinder::new());
             c.sequences = vec![Sequence::default(); SEQ_STORE_LENGTH + 1];
+        }
+        if strategy == Strategy::Fastest {
+            c.ht_mf = Some(HtMatchfinder::new());
+            c.sequences = vec![Sequence::default(); FAST_SEQ_STORE_LENGTH + 1];
         }
 
         c.deflate_init_static_codes();
@@ -1090,7 +1109,7 @@ impl Compressor {
         deflate_make_huffman_codes(&self.freqs, &mut self.static_codes);
     }
 
-    /// Port of `deflate_precompute_huffman_header` (external/deflate/lib/deflate_compress.c:1570-1636
+    /// Port of `deflate_precompute_huffman_header` (external/deflate/lib/deflate_compress.c:1570-1631
     /// @ libdeflate v1.26): the precode items and the precode, for a dynamic block.
     fn deflate_precompute_huffman_header(&mut self) {
         let p = &mut *self.precode;
@@ -1157,7 +1176,7 @@ impl Compressor {
         }
     }
 
-    /// Port of `deflate_compute_full_len_codewords` (external/deflate/lib/deflate_compress.c:1638-1659
+    /// Port of `deflate_compute_full_len_codewords` (external/deflate/lib/deflate_compress.c:1638-1658
     /// @ libdeflate v1.26): the litlen codeword of each match length with its extra bits
     /// appended, for `codes`.
     fn deflate_compute_full_len_codewords(length: &mut LengthCodes, codes: &Codes) {
@@ -1462,7 +1481,7 @@ impl Compressor {
         self.sequences[seq].litrunlen_and_length += 1;
     }
 
-    /// Port of `deflate_choose_match` (external/deflate/lib/deflate_compress.c:2243-2268
+    /// Port of `deflate_choose_match` (external/deflate/lib/deflate_compress.c:2243-2264
     /// @ libdeflate v1.26): ends the current sequence with the match, and starts the next.
     #[inline]
     fn deflate_choose_match(
@@ -1491,7 +1510,97 @@ impl Compressor {
         *seq_p = seq + 1;
     }
 
-    /// Port of `deflate_compress_greedy` (external/deflate/lib/deflate_compress.c:2528-2600
+    /// Port of `deflate_compress_fastest` (external/deflate/lib/deflate_compress.c:2451-2523
+    /// @ libdeflate v1.26): a faster variant of the greedy compressor, on `ht_matchfinder`,
+    /// with fixed-length blocks (no block splitting).
+    fn deflate_compress_fastest(&mut self, data: &[u8], os: &mut OutputBitstream<'_>) {
+        let in_end = data.len();
+        let mut in_next = 0usize;
+        let mut in_cur_base = 0usize;
+        let mut max_len = DEFLATE_MAX_MATCH_LEN as u32;
+        let mut nice_len = self.nice_match_length.min(max_len);
+        let mut next_hash = 0u32;
+        let mut mf = self.ht_mf.take().expect("the fastest parser's matchfinder");
+
+        mf.init();
+
+        loop {
+            // Starting a new DEFLATE block
+            let in_block_begin = in_next;
+            let in_max_block_end =
+                choose_max_block_end(in_next, in_end, FAST_SOFT_MAX_BLOCK_LENGTH);
+            let mut seq = 0usize;
+
+            self.deflate_begin_sequences(seq);
+
+            loop {
+                let mut offset = 0u32;
+                let remaining = in_end - in_next;
+
+                if remaining < DEFLATE_MAX_MATCH_LEN {
+                    max_len = remaining as u32;
+                    if max_len < HT_MATCHFINDER_REQUIRED_NBYTES {
+                        loop {
+                            self.deflate_choose_literal(data[in_next], false, seq);
+                            in_next += 1;
+                            max_len -= 1;
+                            if max_len == 0 {
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                    nice_len = nice_len.min(max_len);
+                }
+                let length = mf.longest_match(
+                    data,
+                    &mut in_cur_base,
+                    in_next,
+                    max_len,
+                    nice_len,
+                    &mut next_hash,
+                    &mut offset,
+                );
+                if length != 0 {
+                    // Match found
+                    self.deflate_choose_match(length, offset, false, &mut seq);
+                    mf.skip_bytes(
+                        data,
+                        &mut in_cur_base,
+                        in_next + 1,
+                        in_end,
+                        length - 1,
+                        &mut next_hash,
+                    );
+                    in_next += length as usize;
+                } else {
+                    // No match found
+                    self.deflate_choose_literal(data[in_next], false, seq);
+                    in_next += 1;
+                }
+
+                // Check if it's time to output another block.
+                if !(in_next < in_max_block_end && seq < FAST_SEQ_STORE_LENGTH) {
+                    break;
+                }
+            }
+
+            self.deflate_finish_block(
+                os,
+                data,
+                in_block_begin,
+                (in_next - in_block_begin) as u32,
+                seq,
+                in_next == in_end,
+            );
+            if in_next == in_end || os.overflow {
+                break;
+            }
+        }
+        self.ht_mf = Some(mf);
+    }
+
+    /// Port of `deflate_compress_greedy`(external/deflate/lib/deflate_compress.c:2528-2602
     /// @ libdeflate v1.26): the "greedy" DEFLATE compressor, which always chooses the longest
     /// match.
     fn deflate_compress_greedy(&mut self, data: &[u8], os: &mut OutputBitstream<'_>) {
@@ -1798,6 +1907,7 @@ impl Compressor {
             Strategy::Greedy => self.deflate_compress_greedy(input, &mut os),
             Strategy::Lazy => self.deflate_compress_lazy_generic(input, &mut os, false),
             Strategy::Lazy2 => self.deflate_compress_lazy_generic(input, &mut os, true),
+            Strategy::Fastest => self.deflate_compress_fastest(input, &mut os),
         }
 
         // Return 0 if the output buffer is too small.
@@ -1818,7 +1928,7 @@ impl Compressor {
     }
 }
 
-/// `WRITE_MATCH` (external/deflate/lib/deflate_compress.c:1662-1703 @ libdeflate v1.26): the
+/// `WRITE_MATCH` (external/deflate/lib/deflate_compress.c:1661-1694 @ libdeflate v1.26): the
 /// litlen symbol and extra length bits, the offset symbol, and the extra offset bits of a
 /// match, with the flushes a 64-bit bit buffer needs.
 #[inline]

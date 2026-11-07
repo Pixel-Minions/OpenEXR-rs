@@ -60,7 +60,7 @@ impl HcMatchfinder {
         self.tabs[NEXT_AT + (i32::from(node) & (WINDOW as i32 - 1)) as usize]
     }
 
-    /// Port of `hc_matchfinder_longest_match` (external/deflate/lib/hc_matchfinder.h:151-338
+    /// Port of `hc_matchfinder_longest_match` (external/deflate/lib/hc_matchfinder.h:182-338
     /// @ libdeflate v1.26): the longest match for the string at `in_next` of `data` that is
     /// longer than `best_len`, searching at most `max_search_depth` candidates, stopping at
     /// `nice_len`; inserts the string. `in_base_p` is the matchfinder's base (it slides a
@@ -224,7 +224,7 @@ impl HcMatchfinder {
         best_len
     }
 
-    /// Port of `hc_matchfinder_skip_bytes` (external/deflate/lib/hc_matchfinder.h:340-399
+    /// Port of `hc_matchfinder_skip_bytes` (external/deflate/lib/hc_matchfinder.h:360-399
     /// @ libdeflate v1.26): advances the matchfinder past `count` strings from `in_next` of
     /// `data` (whose end is `in_end`), inserting each without searching; nothing is done when
     /// fewer than `count + 5` bytes remain.

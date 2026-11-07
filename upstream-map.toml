@@ -592,7 +592,7 @@ path = "external/deflate/lib/deflate_compress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-deflate/src/deflate_compress.rs"
-note = "the Huffman codes, block flushing and splitting, levels 0, 2-4 and 5-9 (uncompressed, greedy, lazy, lazy2); level 4, the default, matches the wheel's ZIP and ZIPS streams byte for byte (heavy tier), the other levels round-trip (their streams need the O1 harness); the fastest (1) and near-optimal (10-12) compressors to come"
+note = "the Huffman codes, block flushing and splitting, levels 0 to 9 (uncompressed, fastest, greedy, lazy, lazy2); level 4, the default, matches the wheel's ZIP and ZIPS streams byte for byte (heavy tier), the other levels round-trip (their streams need the O1 harness); the near-optimal compressor (10-12) to come"
 
 [[file]]
 path = "external/deflate/lib/deflate_compress.h"
@@ -641,7 +641,9 @@ note = "ported whole; the greedy compressor's streams match the wheel's (heavy t
 [[file]]
 path = "external/deflate/lib/ht_matchfinder.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/ht_matchfinder.rs"
+note = "ported whole (buckets of 2); level 1 round-trips (its streams need the O1 harness); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/deflate/lib/lib_common.h"

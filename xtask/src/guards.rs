@@ -45,11 +45,16 @@ const COPYRIGHTS: &[&str] = &[
 ];
 
 /// The header of the ports of vendored libraries, by crate directory: their own license and
-/// copyright lines (CLAUDE.md, "Headers").
-const VENDORED_HEADERS: &[(&str, &str, &str)] = &[(
+/// the copyright lines their files carry (CLAUDE.md, "Headers"; libdeflate's files give the
+/// year each was written).
+const VENDORED_HEADERS: &[(&str, &str, &[&str])] = &[(
     "crates/openexr-deflate/",
     "// SPDX-License-Identifier: MIT",
-    "// Copyright 2016 Eric Biggers",
+    &[
+        "// Copyright 2016 Eric Biggers",
+        "// Copyright 2020 Eric Biggers",
+        "// Copyright 2022 Eric Biggers",
+    ],
 )];
 
 /// Where a citation's path is resolved, by the version after `@`.
@@ -153,13 +158,13 @@ fn check_header(rel: &str, text: &str, errors: &mut Vec<String>) {
     let spdx = lines.next().unwrap_or("");
     let copyright = lines.next().unwrap_or("");
     let rel_slash = rel.replace('\\', "/");
-    if let Some((_, want_spdx, want_copyright)) = VENDORED_HEADERS
+    if let Some((_, want_spdx, want_copyrights)) = VENDORED_HEADERS
         .iter()
         .find(|(dir, _, _)| rel_slash.starts_with(dir))
     {
-        if spdx != *want_spdx || copyright != *want_copyright {
+        if spdx != *want_spdx || !want_copyrights.contains(&copyright) {
             errors.push(format!(
-                "{rel}: missing the header of its vendored library ({want_spdx}, {want_copyright})"
+                "{rel}: missing the header of its vendored library ({want_spdx}, one of {want_copyrights:?})"
             ));
         }
         return;
