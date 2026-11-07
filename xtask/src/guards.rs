@@ -17,7 +17,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Files allowed to contain `unsafe` (PLAN.md D8): SIMD modules only, each added by review.
-const UNSAFE_ALLOWLIST: &[&str] = &[];
+const UNSAFE_ALLOWLIST: &[&str] = &[
+    // The C runtime reference for `printf` (CLAUDE.md rule 2); test-only.
+    "crates/openexr-testkit/src/crt.rs",
+];
 
 const SPDX: &str = "// SPDX-License-Identifier: BSD-3-Clause";
 const COPYRIGHTS: &[&str] = &[

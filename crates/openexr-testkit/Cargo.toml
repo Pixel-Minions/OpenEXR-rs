@@ -1,0 +1,11 @@
+[package]
+name = "openexr-testkit"
+description = "Test-only support for OpenEXR-rs: the platform C runtime as a reference, probes"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true

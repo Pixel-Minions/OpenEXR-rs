@@ -20,3 +20,10 @@ heavy = []
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+openexr-testkit = { workspace = true }
+
+[[test]]
+name = "heavy_cfmt_crt"
+required-features = ["heavy"]

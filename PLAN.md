@@ -175,7 +175,7 @@ Carried over from OpenColorIO-rs, adjusted to OpenEXR:
 | # | Decision | Choice | Status |
 |---|---|---|---|
 | **D1** | Strategy | A clean port from source, checked against the oracle | Carried over |
-| **D2** | API surface | A Rust API that mirrors Core's C API function for function. Its shape is an owner item when the first public types land (Phase 1) | Proposed |
+| **D2** | API surface | A Rust-shaped mirror of Core's C API: an owned `Context`; each C function keeps its name without `exr_` and returns `Result<T, Error>`, where the error carries the `EXR_ERR_*` code and exactly the message upstream's error handler receives; the optional error-handler callback is called as upstream calls it; streams are traits; out-parameters become return values | **Decided** (owner, 2026-11-07) |
 | **D3** | Target | OpenEXR 3.5.3 exactly | Decided |
 | **D4** | Equivalence | Byte-exact as in §3; waivers only with the owner's sign-off | Carried over |
 | **D7** | Toolchain | Owner item O5 (§14) | Open |

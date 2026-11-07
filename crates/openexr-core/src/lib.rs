@@ -7,6 +7,8 @@
 //! translates. `PLAN.md` is the source of truth for scope and order.
 
 pub mod base;
+#[doc(hidden)]
+pub mod cfmt;
 pub mod errors;
 mod imath_half;
 mod internal_coding;
