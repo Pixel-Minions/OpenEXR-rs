@@ -65,13 +65,14 @@ section. An entry says:
   the byte.
 - **Status:** the port's choice; listed for the owner's review.
 
-### U-2. A float array shorter than its stated length
+### U-2. An array shorter than its stated length
 
-- **Upstream:** `exr_attr_float_vector_create` and `exr_attr_float_vector_init_static` take an
-  array and a count and read (or keep a pointer to) `nent` floats from it
-  (`src/lib/OpenEXRCore/float_vector.c:61-127` @ v3.5.3); an array with fewer is read past its
-  end.
+- **Upstream:** the attribute constructors take a pointer and a count and copy (or keep) that
+  many elements: `exr_attr_float_vector_create`/`_init_static`
+  (`src/lib/OpenEXRCore/float_vector.c:61-127`), `exr_attr_bytes_create` (hint and data,
+  `bytes.c:70-101`) and `exr_attr_preview_create` (`preview.c:54-76`) @ v3.5.3. An array with
+  fewer elements is read past its end.
 - **Who notices:** callers passing a count larger than their array; C cannot tell.
-- **The port:** the array is a slice, so its length is known; a slice shorter than `nent` is
-  refused with `EXR_ERR_INVALID_ARGUMENT` and its default message.
+- **The port:** the array is a slice, so its length is known; a slice shorter than the count
+  is refused with `EXR_ERR_INVALID_ARGUMENT` and its default message.
 - **Status:** the port's choice; listed for the owner's review.

@@ -3,10 +3,12 @@
 
 //! Ports of `src/test/OpenEXRCoreTest/general_attr.cpp` @ v3.5.3.
 
+use crate::bytes::AttrBytes;
 use crate::context::Context;
 use crate::errors::ErrorCode;
 use crate::float_vector::AttrFloatVector;
 use crate::internal_xdr::*;
+use crate::preview::AttrPreview;
 use crate::string::AttrString;
 use crate::string_vector::AttrStringVector;
 
@@ -455,4 +457,128 @@ fn test_float_vector_helper() {
     f.attr_float_vector_destroy(&mut fv);
     // make sure we can re-delete something?
     f.attr_float_vector_destroy(&mut fv);
+}
+
+/// Partial port of `testPreviewHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:836-913
+/// @ v3.5.3), run by `testAttrPreview` (lines 915-924). Left out: NULL context and object
+/// calls and the malloc failures (PLAN.md O8); the `exr_attr_set_preview` calls come with the
+/// part attribute API (Phase 3).
+#[test]
+fn test_preview_helper() {
+    let f = create_dummy_file("<preview>");
+    let mut p = AttrPreview::default();
+    let data1x1: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
+    let inval = ErrorCode::InvalidArgument;
+    assert_eq!(
+        f.attr_preview_init(&mut p, u32::MAX, 64).unwrap_err().code,
+        inval
+    );
+    assert_eq!(
+        f.attr_preview_init(&mut p, 64, u32::MAX).unwrap_err().code,
+        inval
+    );
+    f.attr_preview_init(&mut p, 1, 1).unwrap();
+    assert_eq!(p.width, 1);
+    assert_eq!(p.height, 1);
+    assert_eq!(p.alloc_size, 4);
+    assert!(p.rgba.is_some());
+    f.attr_preview_destroy(&mut p);
+    assert_eq!(p.width, 0);
+    assert_eq!(p.height, 0);
+    assert_eq!(p.alloc_size, 0);
+    assert!(p.rgba.is_none());
+
+    f.attr_preview_create(&mut p, 1, 1, Some(&data1x1)).unwrap();
+    assert_eq!(p.width, 1);
+    assert_eq!(p.height, 1);
+    assert_eq!(p.alloc_size, 4);
+    let rgba = p.rgba().expect("rgba");
+    assert_eq!(rgba[0], 0xDE);
+    assert_eq!(rgba[1], 0xAD);
+    assert_eq!(rgba[2], 0xBE);
+    assert_eq!(rgba[3], 0xEF);
+    f.attr_preview_destroy(&mut p);
+    // make sure we can re-delete something?
+    f.attr_preview_destroy(&mut p);
+
+    assert_eq!(
+        f.attr_preview_create(&mut p, 1, 1, None).unwrap_err().code,
+        inval
+    );
+}
+
+/// Partial port of `testBytesHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:1022-1125
+/// @ v3.5.3), run by `testAttrBytes` (lines 1127-1135). Left out: NULL context and object calls
+/// and the malloc failure (PLAN.md O8); the `exr_attr_set_bytes` calls come with the part
+/// attribute API (Phase 3).
+#[test]
+fn test_bytes_helper() {
+    let f = create_dummy_file("<bytes>");
+    let mut b = AttrBytes::default();
+    let data4: [u8; 4] = [0x76, 0x2f, 0x31, 0x01];
+    let inval = ErrorCode::InvalidArgument;
+    assert_eq!(
+        f.attr_bytes_init(&mut b, 0, i32::MAX as usize + 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        f.attr_bytes_init(&mut b, 0, u32::MAX as usize)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        f.attr_bytes_init(&mut b, 0, usize::MAX).unwrap_err().code,
+        inval
+    );
+
+    f.attr_bytes_init(&mut b, 0, 4).unwrap();
+    assert_eq!(b.size, 4);
+    assert!(b.data.is_some());
+    assert_eq!(b.type_hint().expect("hint")[0], 0);
+    f.attr_bytes_destroy(&mut b);
+    assert_eq!(b.size, 0);
+    assert!(b.data.is_none());
+
+    f.attr_bytes_create(&mut b, 11, 4, Some(b"a cool hint"), Some(&data4))
+        .unwrap();
+    assert_eq!(b.size, 4);
+    assert_eq!(b.data(), Some(&data4[..]));
+    assert_eq!(&b.type_hint().expect("hint")[..11], b"a cool hint");
+    assert_eq!(b.type_hint().expect("hint")[11], 0);
+
+    let mut b2 = AttrBytes::default();
+    f.attr_bytes_copy(&mut b2, &b).unwrap();
+    assert_eq!(b2.size, 4);
+    assert_eq!(b2.data(), Some(&data4[..]));
+    assert_eq!(&b2.type_hint().expect("hint")[..11], b"a cool hint");
+    assert_eq!(b2.type_hint().expect("hint")[11], 0);
+    f.attr_bytes_destroy(&mut b2);
+
+    f.attr_bytes_destroy(&mut b);
+    // make sure we can re-delete something?
+    f.attr_bytes_destroy(&mut b);
+
+    f.attr_bytes_init(&mut b, 0, 0).unwrap();
+    f.attr_bytes_destroy(&mut b);
+    f.attr_bytes_create(&mut b, 0, 4, None, Some(&data4))
+        .unwrap();
+    f.attr_bytes_copy(&mut b2, &b).unwrap();
+    f.attr_bytes_destroy(&mut b2);
+    f.attr_bytes_destroy(&mut b);
+
+    assert_eq!(
+        f.attr_bytes_create(&mut b, 1, 1, None, Some(&data4))
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        f.attr_bytes_create(&mut b, 0, 4, Some(b"hint"), None)
+            .unwrap_err()
+            .code,
+        inval
+    );
 }

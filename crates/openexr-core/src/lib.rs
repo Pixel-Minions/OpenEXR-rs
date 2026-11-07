@@ -7,6 +7,7 @@
 //! translates. `PLAN.md` is the source of truth for scope and order.
 
 pub mod base;
+pub mod bytes;
 #[doc(hidden)]
 pub mod cfmt;
 pub mod context;
@@ -19,6 +20,7 @@ mod internal_cpuid;
 mod internal_ht_quality;
 mod internal_xdr;
 pub mod openexr_attr;
+pub mod preview;
 pub mod string;
 pub mod string_vector;
 pub mod version;

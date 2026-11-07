@@ -1075,7 +1075,8 @@ target = "crates/openexr-core/src/base.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/bytes.c"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/bytes.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/channel_list.c"
@@ -1153,7 +1154,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_bytes.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/bytes.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_channel_list.h"
@@ -1310,7 +1312,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_preview.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/preview.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_pxr24.c"
@@ -1513,7 +1516,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/preview.c"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/preview.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/std_attr.c"
@@ -1627,7 +1631,7 @@ path = "src/test/OpenEXRCoreTest/general_attr.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
-note = "testXDR, testAttrSizes; string, string vector and float vector helpers partial (dummy file until exr_start_write; print_context_info with debug.c)"
+note = "testXDR, testAttrSizes; string, vector, bytes and preview helpers partial (dummy file until exr_start_write; exr_attr_set_* with Phase 3; print_context_info with debug.c)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"
