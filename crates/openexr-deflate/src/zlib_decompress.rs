@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2016 Eric Biggers
 
-//! Port of `zlib_decompress.c` with `zlib_constants.h` (external/deflate/lib/zlib_decompress.c:1-104
-//! @ libdeflate v1.26): the zlib wrapper around a DEFLATE stream.
+//! Port of `zlib_decompress.c` (external/deflate/lib/zlib_decompress.c:1-104 @ libdeflate v1.26):
+//! the zlib wrapper around a DEFLATE stream.
 
 use crate::deflate_decompress::Decompressor;
 use crate::{LibdeflateResult, adler32};
 
-const ZLIB_MIN_HEADER_SIZE: usize = 2;
-const ZLIB_FOOTER_SIZE: usize = 4;
-const ZLIB_MIN_OVERHEAD: usize = ZLIB_MIN_HEADER_SIZE + ZLIB_FOOTER_SIZE;
-const ZLIB_CM_DEFLATE: u16 = 8;
-const ZLIB_CINFO_32K_WINDOW: u16 = 7;
+use crate::zlib_constants::{
+    ZLIB_CINFO_32K_WINDOW, ZLIB_CM_DEFLATE, ZLIB_FOOTER_SIZE, ZLIB_MIN_OVERHEAD,
+};
 
 impl Decompressor {
     /// Port of `libdeflate_zlib_decompress_ex` (external/deflate/lib/zlib_decompress.c:31-93

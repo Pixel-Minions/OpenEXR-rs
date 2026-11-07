@@ -590,7 +590,9 @@ note = "the decode loop, 64-bit x86 build"
 [[file]]
 path = "external/deflate/lib/deflate_compress.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/deflate_compress.rs"
+note = "libdeflate_deflate_compress_bound; the compressor with ZIP's compression side"
 
 [[file]]
 path = "external/deflate/lib/deflate_compress.h"
@@ -704,13 +706,16 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/zlib_compress.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/zlib_compress.rs"
+note = "libdeflate_zlib_compress_bound; libdeflate_zlib_compress with the compressor"
 
 [[file]]
 path = "external/deflate/lib/zlib_constants.h"
 kind = "vendored"
 status = "done"
-target = "crates/openexr-deflate/src/zlib_decompress.rs"
+target = "crates/openexr-deflate/src/zlib_constants.rs"
+note = "the compression level classes come with the compressor"
 
 [[file]]
 path = "external/deflate/lib/zlib_decompress.c"

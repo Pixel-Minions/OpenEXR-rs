@@ -4,7 +4,7 @@
 //! An exact port of libdeflate v1.26 (`external/deflate` @ v3.5.3 of OpenEXR), the deflate
 //! library OpenEXRCore uses for ZIP, ZIPS, PXR24 and DWA, so far its decompressor:
 //! `libdeflate_deflate_decompress_ex`, `libdeflate_zlib_decompress_ex` and
-//! `libdeflate_adler32`. The compressor follows with ZIP's compression side.
+//! `libdeflate_adler32`, and the compressor's output bounds. The compressor follows with ZIP's compression side.
 //!
 //! The portable code is ported. libdeflate's x86 variants (the BMI2 build of the decompressor,
 //! the vectorized Adler-32) compute the same results with other instructions; they are
@@ -12,12 +12,17 @@
 //! check are n/a (PLAN.md O8): a decompressor is an ordinary Rust value.
 
 mod adler32;
+mod deflate_compress;
 mod deflate_constants;
 mod deflate_decompress;
+mod zlib_compress;
+mod zlib_constants;
 mod zlib_decompress;
 
 pub use adler32::adler32;
+pub use deflate_compress::deflate_compress_bound;
 pub use deflate_decompress::Decompressor;
+pub use zlib_compress::zlib_compress_bound;
 
 /// Port of `enum libdeflate_result` (external/deflate/libdeflate.h:194-209 @ libdeflate v1.26).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
