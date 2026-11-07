@@ -1246,27 +1246,37 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa.rs"
+note = "the decoder is in (checked against the Windows wheel, heavy tier); the encoder comes next"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_channeldata.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_channeldata.rs"
+note = "ported whole; partial with the codec"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_classifier.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_classifier.rs"
+note = "ported whole; partial with the codec"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_compressor.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_compressor.rs"
+note = "DwaCompressor_uncompress, initializeBuffers, readChannelRules, classifyChannels, setupChannelData; the decoder is in (checked against the Windows wheel, heavy tier); the encoder comes next"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_decoder.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_decoder.rs"
+note = "ported whole; checked against the Windows wheel (heavy tier), the Linux run pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_encoder.h"
@@ -1276,12 +1286,16 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_helpers.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_helpers.rs"
+note = "ported whole; partial with the codec"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_simd.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_simd.rs"
+note = "ported whole as exact scalar emulations; the SSE2 paths checked against the Windows wheel; the AVX inverse DCT and F16C conversions (Linux) wait for the Rocky run"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_table.c"

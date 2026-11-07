@@ -461,3 +461,19 @@ section. An entry says:
   `EXR_ERR_INVALID_ARGUMENT`. Layouts inside the buffers encode as upstream does, byte for
   byte. Checked by `encoding::tests::input_one_byte_short_is_refused`.
 - **Status:** the port's choice, as U-9.
+
+### U-13. DWA reads past its AC buffer, and trusts its row layout
+
+- **Upstream:** `DwaCompressor_uncompress` checks the AC count against the AC buffer only when
+  the chunk has compressed AC data (`src/lib/OpenEXRCore/internal_dwa_compressor.h:959-967`
+  @ v3.5.3); a chunk that claims AC values without any makes the lossy decoders read the
+  buffer as far as the count says, past its end (`internal_dwa_decoder.h:138`). The decoders
+  and the RLE and UNKNOWN copies write each channel's rows where the row layout puts them,
+  without checking them against the unpacked buffer (`internal_dwa_decoder.h:590-776`,
+  `internal_dwa_compressor.h:1245-1322`).
+- **Who notices:** readers of corrupt DWAA/DWAB chunks.
+- **The port:** the decoders read the AC buffer as far as it goes and refuse a chunk whose AC
+  values run past it with `EXR_ERR_CORRUPT_CHUNK`; every read and write outside the planar,
+  RLE and unpacked buffers is refused the same way. Chunks that stay inside their buffers
+  decode as upstream decodes them, bit for bit.
+- **Status:** the port's choice, as U-9.

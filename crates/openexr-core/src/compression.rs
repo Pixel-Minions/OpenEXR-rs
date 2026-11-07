@@ -333,12 +333,16 @@ fn decompress_data(
             unpacksz,
             crate::internal_b44::internal_exr_undo_b44,
         ),
-        Compression::DWAA
-        | Compression::DWAB
-        | Compression::HTJ2K256
-        | Compression::HTJ2K32
-        | Compression::LJ2K
-        | Compression::ZSTD => Err(Error::bare(ErrorCode::FeatureNotImplemented)),
+        Compression::DWAA | Compression::DWAB => run_codec(
+            decode,
+            target,
+            packsz,
+            unpacksz,
+            crate::internal_dwa::internal_exr_undo_dwa,
+        ),
+        Compression::HTJ2K256 | Compression::HTJ2K32 | Compression::LJ2K | Compression::ZSTD => {
+            Err(Error::bare(ErrorCode::FeatureNotImplemented))
+        }
         _ => Err(ctxt.print_error(
             ErrorCode::InvalidArgument,
             "Compression technique 0x%02X invalid",
