@@ -1116,7 +1116,7 @@ path = "src/lib/OpenEXRCore/context.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/context.rs"
-note = "start_read, test_file_header, temporary context, finish, accessors; start_write, longname support, attr handlers and write_header follow"
+note = "start_read, start_write, test_file_header, temporary context, finish, accessors, longname support, attr handlers; write_header with Phase 6"
 
 [[file]]
 path = "src/lib/OpenEXRCore/debug.c"
@@ -1321,7 +1321,7 @@ path = "src/lib/OpenEXRCore/internal_posix_file_impl.h"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/file_impl.rs,crates/openexr-core/src/os_error.rs"
-note = "read side; checked on Linux in the heavy tier"
+note = "read and write streams, temp names, failed-write cleanup; rename with Phase 6; checked on Linux in the heavy tier"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_preview.h"
@@ -1381,7 +1381,7 @@ path = "src/lib/OpenEXRCore/internal_win32_file_impl.h"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/file_impl.rs,crates/openexr-core/src/os_error.rs"
-note = "read side; write, finalize_write and temp names with Phase 6"
+note = "read and write streams, temp names, failed-write cleanup; the finished-write rename (ReplaceFileW) with Phase 6"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_xdr.h"
@@ -1661,7 +1661,7 @@ path = "src/test/OpenEXRCoreTest/general_attr.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
-note = "testXDR, testAttrSizes; the string, vector, bytes, preview, chlist, opaque, list and handler tests are partial ports (dummy file until exr_start_write; exr_attr_set_* with the setters; print_context_info with debug.c)"
+note = "testXDR, testAttrSizes, testAttrLists, testAttrHandler; the string, vector, bytes, preview, chlist and opaque tests wait for exr_print_context_info (debug.c) and the exr_attr_set_* setters"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"

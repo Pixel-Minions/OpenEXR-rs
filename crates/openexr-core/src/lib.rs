@@ -44,5 +44,5 @@ mod write_header;
 mod upstream_tests;
 
 pub use base::*;
-pub use context::{Context, Error, ErrorHandler, ErrorReport, Initializer};
+pub use context::{Context, DefaultWriteMode, Error, ErrorHandler, ErrorReport, Initializer};
 pub use errors::{ErrorCode, ExrResult};

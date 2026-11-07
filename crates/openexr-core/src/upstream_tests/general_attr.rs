@@ -6,12 +6,12 @@
 use crate::attributes::{AttrValue, AttributeList};
 use crate::bytes::AttrBytes;
 use crate::channel_list::AttrChlist;
-use crate::context::{Context, ContextCore};
+use crate::context::{Context, ContextCore, DefaultWriteMode, Initializer};
 use crate::errors::ErrorCode;
 use crate::float_vector::AttrFloatVector;
 use crate::internal_xdr::*;
 use crate::opaque::AttrOpaqueData;
-use crate::openexr_attr::{AttributeType, PerceptualTreatment, PixelType};
+use crate::openexr_attr::{AttributeType, PerceptualTreatment, PixelType, Storage};
 use crate::preview::AttrPreview;
 use crate::string::AttrString;
 use crate::string_vector::AttrStringVector;
@@ -53,13 +53,21 @@ fn test_xdr() {
     assert_eq!(one_to_native_float(one_from_native_float(v32f)), v32f);
 }
 
-/// `createDummyFile` (src/test/OpenEXRCoreTest/general_attr.cpp:70-90 @ v3.5.3) opens a write
-/// context with one scanline part named "dummy". Until `exr_start_write` and `exr_add_part`
-/// are ported (Phases 3 and 6), the attribute tests run on a temporary context of the same
-/// name: the attribute functions use the context only to report errors. The tests that use
-/// it stay partial ports.
+/// Port of `createDummyFile` (src/test/OpenEXRCoreTest/general_attr.cpp:70-90 @ v3.5.3), with
+/// `dummy_write` (lines 31-41): a write context whose writes all fail, with one scanline part
+/// named "dummy". Upstream's failable allocator has no counterpart (PLAN.md O8).
 fn create_dummy_file(test: &str) -> Context {
-    Context::start_temporary_context(Some(test), None).expect("context")
+    let cinit = Initializer {
+        // we won't actually write to this and so don't need a proper stream but need a
+        // writable context to test with.
+        write_fn: Some(Box::new(|_, _, _| -1)),
+        ..Initializer::default()
+    };
+    let mut f = Context::start_write(Some(test), DefaultWriteMode::WriteFileDirectly, Some(cinit))
+        .expect("exr_start_write");
+    f.add_part(Some("dummy"), Storage::SCANLINE)
+        .expect("exr_add_part");
+    f
 }
 
 /// Partial port of `testStringHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:120-285 @
@@ -888,8 +896,8 @@ fn s(x: &str) -> Option<&[u8]> {
     Some(x.as_bytes())
 }
 
-/// Partial port of `testAttrListHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:1308-1925
-/// @ v3.5.3), run by `testAttrLists` (lines 1927-1935). Left out: NULL context, list and output
+/// Port of `testAttrLists` (src/test/OpenEXRCoreTest/general_attr.cpp:1926-1935) @ v3.5.3,
+/// with `testAttrListHelper` (lines 1308-1925). Left out: NULL context, list and output
 /// arguments, `out == NULL` after a failure (a Rust error carries no attribute) and the malloc
 /// failures (PLAN.md O8). The runs of one call per built-in type are loops over `LIST_TYPES`,
 /// in upstream's order.
@@ -1089,11 +1097,10 @@ fn test_attr_list_helper() {
 static S_UNPACK_FAIL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 static S_PACK_FAIL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
-/// Partial port of `testAttrHandler` (src/test/OpenEXRCoreTest/general_attr.cpp:1162-1306 @ v3.5.3),
+/// Port of `testAttrHandler` (src/test/OpenEXRCoreTest/general_attr.cpp:1162-1306) @ v3.5.3,
 /// with `test_unpack`, `test_pack` and `test_hdlr_destroy` (lines 1137-1160) as closures; their
 /// identity is compared with `Arc::ptr_eq`, as upstream compares function pointers. Left out:
-/// NULL context and object calls and the malloc failures (PLAN.md O8); `createDummyFile` as in
-/// the other attribute tests.
+/// NULL context and object calls and the malloc failures (PLAN.md O8).
 #[test]
 fn test_attr_handler() {
     use crate::opaque::{OpaqueDestroyFn, OpaquePackFn, OpaqueUnpackFn, Unpacked};

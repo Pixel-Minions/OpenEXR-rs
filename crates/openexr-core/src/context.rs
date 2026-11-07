@@ -240,6 +240,38 @@ pub(crate) fn dispatch_read(
     }
 }
 
+/// Port of `dispatch_write` (src/lib/OpenEXRCore/context.c:68-93 @ v3.5.3): writes `buf` at
+/// `*offsetp` through the context's write function, advancing the offset by what was written;
+/// anything short of all of it is `EXR_ERR_WRITE_IO`, unreported.
+pub(crate) fn dispatch_write(
+    core: &ContextCore,
+    write_fn: &Option<WriteFn>,
+    buf: &[u8],
+    offsetp: &mut u64,
+) -> Result<(), Error> {
+    let Some(write) = write_fn else {
+        return Err(core.standard_error(ErrorCode::NotOpenWrite));
+    };
+    let rval = write(&core.stream_errors(), buf, *offsetp);
+    if rval > 0 {
+        *offsetp += rval as u64;
+    }
+    if rval == buf.len() as i64 {
+        Ok(())
+    } else {
+        Err(Error::bare(ErrorCode::WriteIo))
+    }
+}
+
+/// Port of `exr_default_write_mode_t` (src/lib/OpenEXRCore/openexr_context.h:425-431 @ v3.5.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultWriteMode {
+    /// Overwrite filename provided directly, deleted upon error.
+    WriteFileDirectly = 0,
+    /// Create a temporary file, renaming it upon successful write, leaving original upon error
+    IntermediateTempFile = 1,
+}
+
 /// Port of `default_error_handler` (src/lib/OpenEXRCore/internal_structs.c:28-79 @ v3.5.3): one
 /// line on stderr, under a process-wide lock.
 fn default_error_handler(r: &ErrorReport<'_>) {
@@ -462,6 +494,8 @@ pub struct Context {
     /// Whether the streams are Core's default file ones (upstream compares `destroy_fn` with
     /// `&default_shutdown`).
     pub(crate) default_stream: bool,
+    /// `tmp_filename`: the temporary file written to with [`DefaultWriteMode::IntermediateTempFile`].
+    pub(crate) tmp_filename: Option<String>,
     pub(crate) is_singlepart_tiled: bool,
     pub(crate) has_nonimage_data: bool,
     pub(crate) is_multipart: bool,
@@ -598,6 +632,7 @@ impl Context {
             write_fn: inits.write_fn,
             destroy_fn: inits.destroy_fn,
             default_stream: false,
+            tmp_filename: None,
             is_singlepart_tiled: false,
             has_nonimage_data: false,
             is_multipart: false,
@@ -723,6 +758,34 @@ impl Context {
         rv
     }
 
+    /// Port of `exr_start_write` (src/lib/OpenEXRCore/context.c:299-362 @ v3.5.3): a context to
+    /// write `filename`, through the initializer's write function or Core's default file
+    /// stream (optionally to a temporary file, renamed when the write finishes).
+    pub fn start_write(
+        filename: Option<&str>,
+        default_mode: DefaultWriteMode,
+        ctxtdata: Option<Initializer>,
+    ) -> Result<Context, Error> {
+        let inits = fill_context_data(ctxtdata);
+        let Some(filename) = filename else {
+            return Err(report_without_context(
+                &Some(inits.error_handler.clone()),
+                ErrorCode::InvalidArgument,
+                b"Invalid filename passed to start_write function",
+            ));
+        };
+        let has_write_fn = inits.write_fn.is_some();
+        let mut ret = Context::alloc(inits, ContextMode::Write);
+        ret.core.filename = Some(filename.to_owned());
+        if !has_write_fn {
+            if default_mode == DefaultWriteMode::IntermediateTempFile {
+                crate::file_impl::make_temp_filename(&mut ret)?;
+            }
+            crate::file_impl::default_init_write_file(&mut ret)?;
+        }
+        Ok(ret)
+    }
+
     /// Port of `exr_start_temporary_context` (src/lib/OpenEXRCore/context.c:379-405 @ v3.5.3):
     /// a context to build a header in, named `context_name` or `"<temporary>"`.
     pub fn start_temporary_context(
@@ -748,9 +811,11 @@ impl Context {
         self.finished = true;
         let mode = self.core.mode;
         let failed = mode == ContextMode::Write || mode == ContextMode::WritingData;
-        // `finalize_write`, for the modes other than read and temporary, comes with the
-        // writer (Phase 6).
-        let rv = Ok(());
+        let rv = if mode != ContextMode::Read && mode != ContextMode::Temporary {
+            crate::file_impl::finalize_write(self, failed)
+        } else {
+            Ok(())
+        };
         if let Some(destroy) = self.destroy_fn.take() {
             destroy(failed);
         }
