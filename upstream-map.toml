@@ -1185,7 +1185,7 @@ path = "src/lib/OpenEXRCore/internal_b44.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/internal_b44.rs"
-note = "ported whole; decodes as the wheel does (heavy tier, linear channels included); encodes as the wheel does on the same pixels (testB44Compression, testB44ACompression and the linear check, their C++ halves by the wheel); the Linux run pending"
+note = "ported whole; decodes as the wheel does (heavy tier, linear channels included); encodes as the wheel does on the same pixels (testB44Compression, testB44ACompression and the linear check, their C++ halves by the wheel, and every layout of oracle/write_images.py); keeps the packed bytes for a result of their size (D-18); the Linux run pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_b44_table.c"
@@ -1399,7 +1399,7 @@ path = "src/lib/OpenEXRCore/internal_pxr24.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/internal_pxr24.rs"
-note = "ported whole; decodes as the wheel does and encodes the wheel's files byte for byte (heavy tier, and testPXR24Compression's C++ half); heavy-tier check pending gate --full"
+note = "ported whole; decodes as the wheel does and encodes the wheel's files byte for byte (heavy tier, and testPXR24Compression's C++ half); keeps the packed bytes for a stream of their size (D-18); heavy-tier check pending gate --full"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_rle.c"

@@ -369,7 +369,9 @@ fn compress_b44_impl(
         scratch += n_bytes as usize;
     }
 
-    if n_out > encode.packed_bytes {
+    // (upstream keeps a result of exactly the packed size, which then reads back as raw
+    // data: D-18 keeps the packed bytes, as the C++ library does)
+    if n_out >= encode.packed_bytes {
         out[..packed_bytes].copy_from_slice(packed);
         n_out = encode.packed_bytes;
     }

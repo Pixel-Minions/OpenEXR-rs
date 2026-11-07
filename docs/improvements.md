@@ -255,6 +255,25 @@ section. An entry says:
   platform. It would change both wheels' bytes for such pixels, so it waits for the owner.
 - **Status:** matched; listed for the owner's review.
 
+### I-23. B44 and PXR24 keep a result exactly the packed size
+
+- **Upstream:** the B44 and PXR24 compressors fall back to the packed bytes only when their
+  result is larger (`nOut > encode->packed_bytes`,
+  `src/lib/OpenEXRCore/internal_b44.c:496-504` and `internal_pxr24.c:230-238` @ v3.5.3); RLE,
+  ZIP, PIZ and DWA fall back when it is not smaller, as the C++ library does. A chunk whose
+  size is its unpacked size is read as raw data (`compression.c:676-692`), so a B44 or B44A
+  chunk without half channels (whose "compressed" data is its channels' bytes, reordered by
+  channel) is written at exactly that size and reads back scrambled, by Core and by the C++
+  library; so would a PXR24 stream of exactly the packed size.
+- **Who notices:** writers of B44, B44A or PXR24 files through Core: a part without half
+  channels written with B44 (found by the heavy check of the lossy encoders: 814 of the 851
+  values of each channel of a float-only image differ when read back).
+- **A fix:** fall back when the result is not smaller, as the other codecs and the C++
+  library do. The files written then read back, and equal the wheel's.
+- **Status:** **fixed**, deviation D-18 (owner, 2026-11-07, "anything that is a bug we can
+  fix") (`crates/openexr-core/src/internal_b44.rs`, `internal_pxr24.rs`); checked by
+  `heavy_decode::images_encode_from_their_pixels_as_the_wheel_wrote_them`.
+
 ## Messages and debug output
 
 ### I-7. A deep tile's unpacked size error prints the packed size

@@ -293,7 +293,8 @@ fn images(scratch: &Path) -> Vec<PathBuf> {
     images.extend(
         std::fs::read_dir(&written)
             .expect("written")
-            .filter_map(|e| e.ok().map(|e| e.path())),
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "exr")),
     );
     images.sort();
     images
@@ -504,9 +505,10 @@ fn headers_rewrite_as_the_wheel_wrote_them() {
 }
 
 /// The compressions the port encodes whose decoded pixels encode back to the same chunks:
-/// the lossless ones, and PXR24 (rounding a float to 24 bits twice changes nothing). B44 and
-/// B44A are lossy and not idempotent: their encoding is checked on the original pixels, by
-/// the C++ half of upstream's compression tests (`upstream_tests::compression`).
+/// the lossless ones, and PXR24 (rounding a float to 24 bits twice changes nothing). The lossy
+/// ones ([`LOSSY`]) are not idempotent: their encoding is checked on the original pixels, by
+/// [`images_encode_from_their_pixels_as_the_wheel_wrote_them`] and the C++ half of upstream's
+/// compression tests (`upstream_tests::compression`).
 const ENCODES: [Compression; 6] = [
     Compression::NONE,
     Compression::RLE,
@@ -662,6 +664,147 @@ fn images_encode_as_the_wheel_wrote_them() {
         }
         let file = as_port_writes(&src, &std::fs::read(&image).unwrap());
         let out = reencode_file(&src).unwrap_or_else(|e| panic!("{name}: {e}"));
+        if out != file {
+            let at = out
+                .iter()
+                .zip(&file)
+                .position(|(a, b)| a != b)
+                .unwrap_or(out.len().min(file.len()));
+            panic!(
+                "{name}: the file differs at byte {at} (port {} bytes, wheel {})",
+                out.len(),
+                file.len()
+            );
+        }
+        compared += 1;
+    }
+    let _ = std::fs::remove_dir_all(&scratch);
+    eprintln!("files compared: {compared}");
+    assert!(compared > 0);
+}
+
+/// The lossy compressions the port encodes: their files are compared from the pixels they
+/// were written from ([`images_encode_from_their_pixels_as_the_wheel_wrote_them`]).
+const LOSSY: [Compression; 4] = [
+    Compression::B44,
+    Compression::B44A,
+    Compression::DWAA,
+    Compression::DWAB,
+];
+
+/// The file the port writes for `src` from the pixels `oracle/write_images.py` wrote it from:
+/// the header copied ([`header_copy`]), then every chunk's samples taken from the channels'
+/// full-size input arrays (`raws`, by channel name; the wheel stores a subsampled channel as
+/// the array's first samples, in raster order) and encoded by the encode pipeline with its
+/// default stages.
+fn encode_from_pixels(
+    src: &Context,
+    raws: &std::collections::HashMap<Vec<u8>, Vec<u8>>,
+) -> Result<Vec<u8>, Error> {
+    let (mut dst, mem) = header_copy(src)?;
+    for p in 0..src.get_count() {
+        let scan = src.get_storage(p)? == Storage::SCANLINE;
+        let dw = src.get_data_window(p)?;
+        assert!(
+            dw.min.x == 0 && dw.min.y == 0,
+            "the written images start at 0, 0"
+        );
+        let full_w = dw.max.x + 1;
+        // a tile chunk's start is its tile index (level 0: the written images have one level)
+        let tile = if scan {
+            (1, 1)
+        } else {
+            let (tx, ty, ..) = src.get_tile_descriptor(p)?;
+            (tx as i32, ty as i32)
+        };
+        for (a, b, lx, ly, rinfo) in chunks_in_write_order(src, p)? {
+            let (x0, y0) = if scan {
+                (rinfo.start_x, rinfo.start_y)
+            } else {
+                (rinfo.start_x * tile.0, rinfo.start_y * tile.1)
+            };
+            let winfo = if scan {
+                dst.write_scanline_chunk_info(p, a)?
+            } else {
+                dst.write_tile_chunk_info(p, a, b, lx, ly)?
+            };
+            let mut enc = dst.encoding_initialize(p, &winfo)?;
+            let mut bufs = Vec::new();
+            for (i, c) in enc.channels.iter_mut().enumerate() {
+                let bpe = i32::from(c.bytes_per_element);
+                c.user_pixel_stride = bpe;
+                c.user_line_stride = c.width * bpe;
+                c.data = Some(BufferRef {
+                    buffer: i,
+                    offset: 0,
+                });
+                let raw = &raws[&c.channel_name];
+                let e = bpe as usize;
+                let sw = full_w / c.x_samples;
+                let mut buf = Vec::new();
+                for y in y0..y0 + rinfo.height {
+                    if y % c.y_samples != 0 {
+                        continue;
+                    }
+                    for x in x0..x0 + rinfo.width {
+                        if x % c.x_samples != 0 {
+                            continue;
+                        }
+                        let at = ((y / c.y_samples) * sw + x / c.x_samples) as usize * e;
+                        buf.extend_from_slice(&raw[at..at + e]);
+                    }
+                }
+                assert_eq!(
+                    buf.len(),
+                    (c.width * c.height * bpe) as usize,
+                    "chunk samples"
+                );
+                bufs.push(buf);
+            }
+            dst.encoding_choose_default_routines(p, &mut enc)?;
+            let ins: Vec<&[u8]> = bufs.iter().map(|b| &b[..]).collect();
+            dst.encoding_run(p, &mut enc, &ins)?;
+        }
+    }
+    let bytes = mem.lock().unwrap().clone();
+    Ok(bytes)
+}
+
+/// Heavy tier: the lossy files the wheel (the C++ library) writes come back byte for byte,
+/// but for a single-part file's `type` attribute ([`as_port_writes`]), when the port encodes
+/// the pixels they were written from: every layout `oracle/write_images.py` writes (single
+/// lossy channels, color sets, float and uint channels, subsampled, perceptually linear and
+/// decreasing-Y channels, scanlines and tiles), for each of [`LOSSY`]' compressions.
+#[test]
+fn images_encode_from_their_pixels_as_the_wheel_wrote_them() {
+    let scratch =
+        std::env::temp_dir().join(format!("openexr_rs_heavy_lossy_{}", std::process::id()));
+    let mut compared = 0;
+    for image in images(&scratch) {
+        let name = image.file_name().unwrap().to_string_lossy().into_owned();
+        let Some(dir) = image.parent().filter(|d| d.ends_with("written")) else {
+            continue;
+        };
+        let src = Context::start_read(Some(image.to_str().unwrap()), None).unwrap();
+        let lossy =
+            (0..src.get_count()).all(|p| src.get_compression(p).is_ok_and(|c| LOSSY.contains(&c)));
+        if !lossy {
+            continue;
+        }
+        let stem = name.strip_suffix(".exr").unwrap();
+        let mut raws = std::collections::HashMap::new();
+        for p in 0..src.get_count() {
+            let chlist = src.get_channels(p).unwrap();
+            for c in chlist.entries() {
+                let cname = c.name.as_bytes().to_vec();
+                let file = dir
+                    .join("raw")
+                    .join(format!("{stem}.{}.raw", String::from_utf8_lossy(&cname)));
+                raws.insert(cname, std::fs::read(&file).expect("the layout's pixels"));
+            }
+        }
+        let file = as_port_writes(&src, &std::fs::read(&image).unwrap());
+        let out = encode_from_pixels(&src, &raws).unwrap_or_else(|e| panic!("{name}: {e}"));
         if out != file {
             let at = out
                 .iter()

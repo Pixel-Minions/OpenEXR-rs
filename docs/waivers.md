@@ -22,5 +22,6 @@ names, and says which waiver.
 | W-14 | Error text | `exr_encoding_run` with an unsupported input size or type: the channel index | Deviation D-15 (I-19) | Owner in chat, 2026-11-07 |
 | W-15 | Written files | Encode pipelines without a pack stage: chunks hold the caller's packed data, not 0 bytes | Deviation D-16 (I-20) | Owner in chat, 2026-11-07 |
 | W-16 | Chunk info; written files | Tiles at the edge of mipmap and ripmap levels above 0 | Deviation D-17 (I-21) | Owner in chat, 2026-11-07 |
+| W-17 | Written files | B44 and B44A chunks without half channels, and PXR24 chunks whose stream is exactly the packed size: the packed bytes, not the codec's output | Deviation D-18 (I-23) | Owner in chat, 2026-11-07 |
 
 D-8 (I-12) has no waiver: no input reaches it, so no output differs.

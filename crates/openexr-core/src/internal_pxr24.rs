@@ -156,7 +156,9 @@ fn apply_pxr24_impl(encode: &mut EncodePipeline) -> Result<(), Error> {
     };
     let mut compbufsz =
         crate::compression::compress_buffer(-1, &out[..n_out as usize], compressed)?;
-    if compbufsz > packed_bytes {
+    // (upstream keeps a stream of exactly the packed size, which then reads back as raw
+    // data: D-18 keeps the packed bytes, as the C++ library does)
+    if compbufsz >= packed_bytes {
         compressed[..packed_bytes].copy_from_slice(packed);
         compbufsz = packed_bytes;
     }
