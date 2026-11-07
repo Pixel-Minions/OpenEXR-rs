@@ -498,7 +498,12 @@ fn headers_rewrite_as_the_wheel_wrote_them() {
 }
 
 /// The compressions the port encodes.
-const ENCODES: [Compression; 2] = [Compression::NONE, Compression::RLE];
+const ENCODES: [Compression; 4] = [
+    Compression::NONE,
+    Compression::RLE,
+    Compression::ZIPS,
+    Compression::ZIP,
+];
 
 /// Part `p`'s chunks, in the order the C++ library writes them: chunk order, from the bottom
 /// for a decreasing-Y scanline part. Each is its first line (or tile and levels) and its
@@ -605,11 +610,12 @@ fn as_port_writes(src: &Context, file: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Heavy tier: the uncompressed and RLE files the wheel (the C++ library) writes come back
-/// byte for byte when the port encodes their pixels again, but for a single-part file's `type`
-/// attribute ([`as_port_writes`]): every scanline and tiled image of [`images`] whose parts
-/// all use one of [`ENCODES`]' compressions, in every layout `oracle/write_images.py` writes
-/// (subsampled, mixed types, mipmapped tiles among them).
+/// Heavy tier: the files the wheel (the C++ library) writes come back byte for byte when the
+/// port encodes their pixels again, but for a single-part file's `type` attribute
+/// ([`as_port_writes`]): every scanline and tiled image of [`images`] whose parts all use one
+/// of [`ENCODES`]' compressions, in every layout `oracle/write_images.py` writes (subsampled,
+/// mixed types, mipmapped tiles among them). Upstream's test images are compared for NONE and
+/// RLE only: older libraries wrote them, with zlib's deflate streams.
 #[test]
 fn images_encode_as_the_wheel_wrote_them() {
     let scratch =
@@ -620,11 +626,16 @@ fn images_encode_as_the_wheel_wrote_them() {
         let Ok(src) = Context::start_read(Some(image.to_str().unwrap()), None) else {
             continue;
         };
+        // upstream's test images were written by older libraries: their deflate streams are
+        // zlib's, not libdeflate's, so only the wheel's own files can check ZIP and ZIPS
+        let by_wheel = image.parent().is_some_and(|d| d.ends_with("written"));
         let encodable = (0..src.get_count()).all(|p| {
-            src.get_compression(p).is_ok_and(|c| ENCODES.contains(&c))
-                && src
-                    .get_storage(p)
-                    .is_ok_and(|s| s == Storage::SCANLINE || s == Storage::TILED)
+            src.get_compression(p).is_ok_and(|c| {
+                ENCODES.contains(&c)
+                    && (by_wheel || c == Compression::NONE || c == Compression::RLE)
+            }) && src
+                .get_storage(p)
+                .is_ok_and(|s| s == Storage::SCANLINE || s == Storage::TILED)
         });
         if !encodable || name.contains("_with_") {
             continue;

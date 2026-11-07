@@ -10,19 +10,19 @@ without the owner's OK.
 | Rocky Linux 9 run of the gate and of the oracle checks | Heavy tier | With the heavy tier |
 | `docs/baseline.md`: confirm the Linux wheel's behaviour where it differs (DWA, the F16C half conversion) | Heavy tier | With the heavy tier |
 | The source-built harness (PLAN.md O1) for Core's error and warning text and `exr_print_*` text, which the wheel can't show | Owner decision O1 open | When O1 is decided |
-| The vendored libraries (PLAN.md O2, decided A: each ported exactly as its own crate): libdeflate's decompressor is in; its compressor, zstd and OpenJPH remain | Ported with the codecs that use them | 6 (libdeflate's compressor), 5e (zstd), 5f (OpenJPH) |
+| The vendored libraries (PLAN.md O2, decided A: each ported exactly as its own crate): libdeflate's decompressor and its compressor's levels 0, 2-4 are in; its other levels, zstd and OpenJPH remain | Ported with the codecs that use them | 6 (libdeflate's other levels), 5e (zstd), 5f (OpenJPH) |
 | Decode: drop the per-store bounds checks of the unpack routines once a benchmark shows they cost (the up-front check of U-9 already covers every store) | Needs a benchmark | Phase 8, or earlier if decoding is slow |
-| The codecs' decompressors and compressors (`decompress_data` and `exr_compress_chunk` answer `EXR_ERR_FEATURE_NOT_IMPLEMENTED` until then); RLE is in both ways, ZIP and ZIPS decompress | Phase 5, 6 | 5a-5f; ZIP's compressor with 6 |
+| The codecs' decompressors and compressors (`decompress_data` and `exr_compress_chunk` answer `EXR_ERR_FEATURE_NOT_IMPLEMENTED` until then); NONE, RLE, ZIP and ZIPS are in both ways | Phase 5 | 5b-5f |
 | The deep unpackers (`generic_unpack_deep`, `generic_unpack_deep_pointers`); `internal_exr_match_decode` has none for deep parts yet | Phase 7 | 7 |
 | Tests of D-3 (deep tile unpacked size message) and two D-6 messages | Need corrupt deep files | 7 |
 | The F16C kernel of `half_to_float_buffer` (unpack.c:25-81), which GCC builds take at run time | SIMD | 8 |
 | `exr_copy_unset_attributes`' upstream tests (write.cpp) | Phase 6 | 6 |
 | The 2 GiB string and 134M-entry string vector checks of `general_attr.cpp` | Heavy tier | With the heavy tier |
 | Compare Core's error text with the wheel's: the wheel prints Core's own messages on stderr (for example "(EXR_ERR_BAD_CHUNK_LEADER) Invalid chunk size reconstructing chunk table: found out of range 2013265920" for tiled.exr), so the heavy decode check can capture them and compare them with the port's | Found while adding ZIP (5a); a heavy-tier check | 5a's end, or with the heavy tier |
-| libdeflate's compressor (`deflate_compress.c`, `zlib_compress.c`, the matchfinders) and the ZIP, ZIPS compressor stage | Needs the encode pipeline to be tested end to end | 6 (with the encoders), or 5a's end if the owner prefers |
+| libdeflate's other compression levels: fastest (1, `ht_matchfinder.h`), lazy and lazy2 (5-9), near-optimal (10-12, `bt_matchfinder.h`); until then `Compressor::new` gives none, and `exr_compress_buffer` answers `EXR_ERR_OUT_OF_MEMORY`, for them. The wheel writes the default level, 4 (its binding has no setting for another), so the other levels' streams can be checked byte for byte only by a source-built harness (PLAN.md O1) | Ported after level 4, the default | 6 |
+| Performance: `exr_compress_buffer` allocates a compressor (about 700 KB of tables) for every chunk, as upstream does; a compressor cached in the pipeline would give the same bytes | A benchmark | 8 |
 | Performance kernels that give upstream's results by construction: ZIP's SSE2/SSE4.1 predictor and interleave, libdeflate's BMI2 decoder and vectorized Adler-32 | PLAN.md O3 (open) and a benchmark | 8 |
 | I-18 for tiled parts: a `DECREASING_Y` tiled part's tiles in the C++ library's order (level by level, rows bottom up, columns left to right; `ImfTiledOutputFile.cpp:332-360`), which is not a reversal of the chunk index | The scanline fix landed with the chunk writes; tiles need the order tracked by tile | Phase 6, before its end |
 | `write.cpp`'s upstream tests (testWrite*, testStartWrite*, testUpdateMeta and the rest) on the encode pipeline | Ported once the codecs they write are in (some need ZIPS) | 6 |
 | `exr_compress_chunk`'s deep sample count table compression (`compression.c:558-622`), which upstream runs on the freshly allocated, unfilled table and never stores (so a compressed deep chunk written by Core alone is refused for its 0-byte table); an I- entry with the deep writers | The deep writers | 7 |
-| `exr_compress_buffer` (`compression.c:121-173`) | Needs libdeflate's compressor | 6, with it |
 

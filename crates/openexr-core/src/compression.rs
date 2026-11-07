@@ -64,6 +64,34 @@ pub fn compress_max_buffer_size(in_bytes: usize) -> usize {
     r
 }
 
+/// `EXR_DEFAULT_ZLIB_COMPRESS_LEVEL` (src/lib/OpenEXRCore/compression.c:76 @ v3.5.3): "value Aras
+/// found to be better trade off of speed vs size".
+const EXR_DEFAULT_ZLIB_COMPRESS_LEVEL: i32 = 4;
+
+/// Port of `exr_compress_buffer` (src/lib/OpenEXRCore/compression.c:121-173 @ v3.5.3): the zlib
+/// stream of `input` into `out` at `level` (a negative level is the default one, else 4);
+/// returns its size. A stream that does not fit is `EXR_ERR_OUT_OF_MEMORY`, as upstream
+/// reports it; so, for now, is a level whose compressor is not ported yet (1, and 5 to 9).
+pub fn compress_buffer(level: i32, input: &[u8], out: &mut [u8]) -> Result<usize, Error> {
+    let mut level = level;
+    if level < 0 {
+        level = crate::base::get_default_zip_compression_level();
+        // truly unset anywhere
+        if level < 0 {
+            level = EXR_DEFAULT_ZLIB_COMPRESS_LEVEL;
+        }
+    }
+
+    if let Some(mut comp) = openexr_deflate::Compressor::new(level) {
+        let outsz = comp.zlib_compress(input, out);
+        if outsz != 0 {
+            return Ok(outsz);
+        }
+        return Err(Error::bare(ErrorCode::OutOfMemory));
+    }
+    Err(Error::bare(ErrorCode::OutOfMemory))
+}
+
 /// Port of `exr_compress_chunk` (src/lib/OpenEXRCore/compression.c:518-657 @ v3.5.3): the
 /// encode pipeline's compress stage, the packed bytes into the compressed buffer, with the
 /// part's compression. `ctxt` must be the pipeline's context. The deep sample count table's
@@ -113,9 +141,10 @@ pub fn compress_chunk(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(),
             b"no compression set but still trying to compress",
         )),
         Compression::RLE => crate::internal_rle::internal_exr_apply_rle(encode, ctxt),
-        Compression::ZIP
-        | Compression::ZIPS
-        | Compression::PIZ
+        Compression::ZIP | Compression::ZIPS => {
+            crate::internal_zip::internal_exr_apply_zip(encode, ctxt)
+        }
+        Compression::PIZ
         | Compression::PXR24
         | Compression::B44
         | Compression::B44A

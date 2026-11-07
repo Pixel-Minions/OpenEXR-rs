@@ -3,16 +3,19 @@
 
 //! Port of `internal_zip.c` (src/lib/OpenEXRCore/internal_zip.c:1-444 @ v3.5.3): the ZIP and
 //! ZIPS codecs, deflate (libdeflate, `openexr_deflate`) around a byte reordering and a delta
-//! predictor. `apply_zip_impl` and `internal_exr_apply_zip` need the encode pipeline and come
-//! with Phase 6.
+//! predictor.
 //!
 //! The scalar `reconstruct` and `interleave` are ported. Upstream also has SSE2, SSE4.1 and
 //! NEON versions (lines 49-143, 161-219), which MSVC builds always use on x86-64; they compute
 //! the same bytes (integer prefix sums and byte interleaving), so they are performance work
 //! (PLAN.md O3).
 
-use crate::context::Error;
-use crate::decoding::{DecodePipeline, internal_decode_alloc_buffer};
+use crate::cfmt::Arg;
+use crate::context::{Context, Error};
+use crate::decoding::{Aliased, DecodePipeline, internal_decode_alloc_buffer};
+use crate::encoding::{
+    EXR_TRANSCODE_BUFFER_SCRATCH1, EncodePipeline, internal_encode_alloc_buffer,
+};
 use crate::errors::ErrorCode;
 
 /// Port of the scalar `reconstruct` (src/lib/OpenEXRCore/internal_zip.c:145-156 @ v3.5.3): undoes
@@ -59,8 +62,6 @@ pub(crate) fn internal_zip_reconstruct_bytes(out: &mut [u8], source: &mut [u8]) 
 
 /// Port of `internal_zip_deconstruct_bytes` (src/lib/OpenEXRCore/internal_zip.c:257-286
 /// @ v3.5.3): the inverse of [`internal_zip_reconstruct_bytes`], `source` into `scratch`.
-// used by apply_zip_impl, which comes with the encode pipeline (Phase 6)
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn internal_zip_deconstruct_bytes(scratch: &mut [u8], source: &[u8]) {
     let count = source.len();
     let (mut t1, mut t2) = (0usize, count.div_ceil(2));
@@ -138,6 +139,78 @@ pub(crate) fn internal_exr_undo_zip(
     let rv = undo_zip_impl(decode, compressed, uncompressed, &mut scratch);
     decode.scratch_buffer_1 = Some(scratch);
     rv
+}
+
+/// Port of `apply_zip_impl` (src/lib/OpenEXRCore/internal_zip.c:366-417 @ v3.5.3): deflates the
+/// reordered and predicted packed bytes into the compressed buffer at the part's ZIP level;
+/// data deflate would not shrink is stored as it is.
+fn apply_zip_impl(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(), Error> {
+    let level = ctxt.get_zip_compression_level(encode.part_index)?;
+
+    let n = encode.packed_bytes as usize;
+    // a packed or compressed buffer too small for the chunk would be read or written past
+    // upstream (docs/improvements.md, U-12)
+    let bad = || Error::bare(ErrorCode::InvalidArgument);
+    let packed = encode
+        .packed_buffer
+        .as_deref()
+        .and_then(|b| b.get(..n))
+        .ok_or_else(bad)?;
+    let scratch = encode
+        .scratch_buffer_1
+        .as_deref_mut()
+        .and_then(|b| b.get_mut(..n))
+        .ok_or_else(bad)?;
+    let Aliased::Own(compressed) = &mut encode.compressed_buffer else {
+        return Err(bad());
+    };
+
+    internal_zip_deconstruct_bytes(scratch, packed);
+
+    match crate::compression::compress_buffer(level, scratch, compressed) {
+        Ok(mut compbufsz) => {
+            if compbufsz >= n {
+                compressed
+                    .get_mut(..n)
+                    .ok_or_else(bad)?
+                    .copy_from_slice(packed);
+                compbufsz = n;
+            }
+            encode.compressed_bytes = compbufsz;
+            Ok(())
+        }
+        Err(e) => Err(ctxt.print_error(
+            e.code,
+            "Unable to compress buffer %llu -> %llu @ level %d",
+            &[
+                Arg::U64(encode.packed_bytes),
+                Arg::U64(compressed.len() as u64),
+                level.into(),
+            ],
+        )),
+    }
+}
+
+/// Port of `internal_exr_apply_zip` (src/lib/OpenEXRCore/internal_zip.c:419-444 @ v3.5.3): the
+/// ZIP and ZIPS compressor of the encode pipeline.
+pub(crate) fn internal_exr_apply_zip(
+    encode: &mut EncodePipeline,
+    ctxt: &Context,
+) -> Result<(), Error> {
+    if let Err(e) = internal_encode_alloc_buffer(
+        ctxt,
+        encode.part_index,
+        EXR_TRANSCODE_BUFFER_SCRATCH1,
+        &mut encode.scratch_buffer_1,
+        encode.packed_bytes as usize,
+    ) {
+        return Err(ctxt.print_error(
+            e.code,
+            "Unable to allocate scratch buffer for deflate of %llu bytes",
+            &[Arg::U64(encode.packed_bytes)],
+        ));
+    }
+    apply_zip_impl(encode, ctxt)
 }
 
 #[cfg(test)]
