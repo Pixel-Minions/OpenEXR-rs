@@ -12,7 +12,6 @@ use crate::internal_xdr::{
 
 /// Port of `delta_encode_row_u16_scalar` (src/lib/OpenEXRCore/internal_zstd_delta.c:16-26
 /// @ v3.5.3).
-#[allow(dead_code)] // the encoder's (with zstd's compressor)
 pub(crate) fn delta_encode_row_u16(p: &mut [u8], n: u64) {
     if n <= 1 {
         return;
@@ -36,7 +35,6 @@ pub(crate) fn delta_decode_row_u16(p: &mut [u8], n: u64) {
 
 /// Port of `delta_encode_row_u32_scalar` (src/lib/OpenEXRCore/internal_zstd_delta.c:39-49
 /// @ v3.5.3).
-#[allow(dead_code)] // the encoder's (with zstd's compressor)
 pub(crate) fn delta_encode_row_u32(p: &mut [u8], n: u64) {
     if n <= 1 {
         return;

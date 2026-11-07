@@ -39,6 +39,8 @@ pub(crate) const EXR_TRANSCODE_BUFFER_PACKED: i32 = 0;
 pub(crate) const EXR_TRANSCODE_BUFFER_COMPRESSED: i32 = 2;
 /// `EXR_TRANSCODE_BUFFER_SCRATCH1` (src/lib/OpenEXRCore/openexr_coding.h:27 @ v3.5.3).
 pub(crate) const EXR_TRANSCODE_BUFFER_SCRATCH1: i32 = 3;
+/// `EXR_TRANSCODE_BUFFER_SCRATCH2` (src/lib/OpenEXRCore/openexr_coding.h:28 @ v3.5.3).
+pub(crate) const EXR_TRANSCODE_BUFFER_SCRATCH2: i32 = 4;
 
 /// Port of `exr_encode_pipeline_t` (src/lib/OpenEXRCore/openexr_encode.h:56-283 @ v3.5.3).
 #[derive(Default)]

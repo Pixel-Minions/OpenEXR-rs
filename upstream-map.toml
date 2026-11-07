@@ -1187,7 +1187,7 @@ path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/compression.rs"
-note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_uncompress_buffer and the cached deflate context, exr_rle_*_buffer; exr_compress_max_buffer_size, exr_compress_buffer, the compression dispatch (exr_compress_chunk); PIZ, PXR24, B44 and B44A both ways; the other codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the deep sample table's compression with Phase 7"
+note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_uncompress_buffer and the cached deflate context, exr_rle_*_buffer; exr_compress_max_buffer_size, exr_compress_buffer, the compression dispatch (exr_compress_chunk); NONE to DWAB and ZSTD both ways; HTJ2K with Phase 5f (FEATURE_NOT_IMPLEMENTED until then), the deep sample table's compression with Phase 7"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
@@ -1519,21 +1519,21 @@ path = "src/lib/OpenEXRCore/internal_zstd.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/internal_zstd.rs"
-note = "the decoder is in (flat parts decode as the wheel does, heavy tier; the deep scenarios wait for Phase 7); the encoder comes with zstd's compressor"
+note = "both ways: flat parts decode as the wheel does, and the wheel's flat ZSTD files (chunks up to 1 MiB) encode as it wrote them (heavy tier); upstream's testZstdCompression passes with its C++ half; the deep scenarios are ported and wait for deep data (Phase 7)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd_delta.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_zstd_delta.rs"
-note = "the scalar deltas ported (GCC's AVX2 decode computes the same sums, O3); the encode side checked with the encoder"
+note = "the scalar deltas ported (GCC's AVX2 decode computes the same sums, O3); both ways checked with Core's ZSTD codec (heavy tier)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd_shuffle.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_zstd_shuffle.rs"
-note = "the scalar shuffles ported (GCC's AVX2 unshuffle moves the same bytes, O3); the encode side checked with the encoder"
+note = "the scalar shuffles ported (GCC's AVX2 unshuffle moves the same bytes, O3); both ways checked with Core's ZSTD codec (heavy tier)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/memory.c"

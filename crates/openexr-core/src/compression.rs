@@ -151,9 +151,10 @@ pub fn compress_chunk(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(),
         Compression::B44A => crate::internal_b44::internal_exr_apply_b44a(encode, ctxt),
         Compression::DWAA => crate::internal_dwa::internal_exr_apply_dwaa(encode, ctxt),
         Compression::DWAB => crate::internal_dwa::internal_exr_apply_dwab(encode, ctxt),
-        Compression::HTJ2K32 | Compression::HTJ2K256 | Compression::LJ2K | Compression::ZSTD => {
+        Compression::HTJ2K32 | Compression::HTJ2K256 | Compression::LJ2K => {
             Err(Error::bare(ErrorCode::FeatureNotImplemented))
         }
+        Compression::ZSTD => crate::internal_zstd::internal_exr_apply_zstd(encode, ctxt),
         _ => Err(ctxt.print_error(
             ErrorCode::InvalidArgument,
             "Compression technique 0x%02X invalid",

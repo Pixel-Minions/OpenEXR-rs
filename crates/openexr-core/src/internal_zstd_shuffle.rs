@@ -8,7 +8,6 @@
 
 /// Port of `shuffle_encode_4_scalar` (src/lib/OpenEXRCore/internal_zstd_shuffle.c:11-26
 /// @ v3.5.3): byte `j` of each 4-byte element into plane `j`.
-#[allow(dead_code)] // the encoder's (with zstd's compressor)
 pub(crate) fn shuffle_encode_4(input: &[u8], out: &mut [u8]) {
     let elements = input.len() / 4;
     for i in 0..elements {
@@ -20,7 +19,6 @@ pub(crate) fn shuffle_encode_4(input: &[u8], out: &mut [u8]) {
 
 /// Port of `shuffle_encode_2_scalar` (src/lib/OpenEXRCore/internal_zstd_shuffle.c:28-39
 /// @ v3.5.3).
-#[allow(dead_code)] // the encoder's (with zstd's compressor)
 pub(crate) fn shuffle_encode_2(input: &[u8], out: &mut [u8]) {
     let elements = input.len() / 2;
     for i in 0..elements {

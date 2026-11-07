@@ -11,15 +11,23 @@
 
 use std::cell::RefCell;
 
-use openexr_zstd::{CONTENTSIZE_ERROR, CONTENTSIZE_UNKNOWN, DCtx, get_frame_content_size};
+use openexr_zstd::{
+    CCtx, CONTENTSIZE_ERROR, CONTENTSIZE_UNKNOWN, DCtx, compress_bound, get_frame_content_size,
+};
 
 use crate::coding::CodingChannelInfo;
-use crate::context::Error;
+use crate::context::{Context, Error};
 use crate::decoding::{Aliased, DecodePipeline, internal_decode_alloc_buffer};
+use crate::encoding::{
+    EXR_TRANSCODE_BUFFER_SCRATCH1, EXR_TRANSCODE_BUFFER_SCRATCH2, EncodePipeline,
+    internal_encode_alloc_buffer,
+};
 use crate::errors::ErrorCode;
 use crate::internal_xdr::one_to_native32;
-use crate::internal_zstd_delta::{delta_decode_row_u16, delta_decode_row_u32};
-use crate::internal_zstd_shuffle::shuffle_decode_bytes;
+use crate::internal_zstd_delta::{
+    delta_decode_row_u16, delta_decode_row_u32, delta_encode_row_u16, delta_encode_row_u32,
+};
+use crate::internal_zstd_shuffle::{shuffle_decode_bytes, shuffle_encode_2, shuffle_encode_4};
 use crate::openexr_attr::Storage;
 
 /// `MAGIC_NUMBER` (src/lib/OpenEXRCore/internal_zstd.c:496 @ v3.5.3): "zstd-exr".
@@ -39,6 +47,8 @@ fn corrupt() -> Error {
 /// thread's ZSTD decompression context and its output buffer (`shuffle_buf`).
 struct TlsState {
     dctx: DCtx,
+    /// Created by the first encode.
+    cctx: Option<CCtx>,
     shuffle_buf: Vec<u8>,
 }
 
@@ -387,6 +397,7 @@ fn undo_zstd_v1(
         let mut slot = cell.borrow_mut();
         let tls = slot.get_or_insert_with(|| TlsState {
             dctx: DCtx::new(),
+            cctx: None,
             shuffle_buf: Vec::new(),
         });
         if !ensure_tls_resources(tls, dst_cap) {
@@ -583,4 +594,382 @@ fn undo_zstd(
         return Err(corrupt());
     }
     undo_zstd_v1(decode, compressed, uncompressed, is_sample_count_chunk)
+}
+
+/// `EXR_ZSTD_SORTED_WIRE_VERSION` (src/lib/OpenEXRCore/internal_zstd.c:507-509 @ v3.5.3): the
+/// wire version of chunks that are not flat, v1 by default.
+const EXR_ZSTD_SORTED_WIRE_VERSION: u32 = 1;
+
+/// Port of `exr_zstd_pack_pipeline` (src/lib/OpenEXRCore/internal_zstd.c:513-518 @ v3.5.3),
+/// built by `exr_zstd_build_encode_pipeline_sorted` (lines 532-545): flat chunks are wire v2,
+/// with the delta; the others the default version.
+fn build_encode_pipeline_sorted(scenario: GridScenario) -> (u32, u32, bool) {
+    // Delta along the sample axis helps flat scanline/tiled data but tends to hurt deep data
+    // (e.g. uncorrelated float Z, where it scrambles the exponent byte plane), so flat chunks
+    // use v2 (delta); everything else uses the default wire version.
+    let hdr_format = if scenario == GridScenario::FlatScanOrTile {
+        ZSTD_EXR_FORMAT_V2
+    } else {
+        EXR_ZSTD_SORTED_WIRE_VERSION
+    };
+    let apply_delta = hdr_format == ZSTD_EXR_FORMAT_V2;
+    let hdr_flags = if apply_delta {
+        ZSTD_EXR_FLAG_DELTA_AFTER_SORT
+    } else {
+        0
+    };
+    (hdr_format, hdr_flags, apply_delta)
+}
+
+/// Port of `delta_encode_sorted_layout` (src/lib/OpenEXRCore/internal_zstd.c:312-346 @ v3.5.3):
+/// the delta along each row of the sorted layout.
+fn delta_encode_sorted_layout(
+    buf: &mut [u8],
+    split_point: u64,
+    total_bytes: usize,
+    num_samples_grid: &[u64],
+    height: i32,
+    channels: &[PackChannel],
+) -> Result<(), ()> {
+    let n = channels.len();
+    let mut off: u64 = 0;
+    for (width_bytes, end) in [(2i8, split_point), (4, total_bytes as u64)] {
+        for h in 0..height.max(0) as usize {
+            for (i, c) in channels.iter().enumerate() {
+                if c.bytes_per_element != width_bytes {
+                    continue;
+                }
+                let cnt = num_samples_grid[h * n + i];
+                if cnt > 0 {
+                    let row = buf
+                        .get_mut(off as usize..off as usize + cnt as usize * width_bytes as usize)
+                        .ok_or(())?;
+                    if width_bytes == 2 {
+                        delta_encode_row_u16(row, cnt);
+                    } else {
+                        delta_encode_row_u32(row, cnt);
+                    }
+                }
+                off += cnt * width_bytes as u64;
+            }
+        }
+        if off != end {
+            return Err(());
+        }
+    }
+    Ok(())
+}
+
+/// Port of `sort2_4ByteChannels_tiled` (src/lib/OpenEXRCore/internal_zstd.c:455-494 @ v3.5.3),
+/// forward: the packed rows of `input` sorted into `out`, all 16-bit rows first; returns the
+/// size of the 16-bit rows. Rows past either buffer are refused, where upstream would copy
+/// past them (docs/improvements.md, U-12).
+fn sort_2_4_byte_channels(
+    input: &[u8],
+    num_samples_grid: &[u64],
+    channels: &[PackChannel],
+    height: i32,
+    out: &mut [u8],
+    sorting_lookup: &mut [u64],
+) -> Result<u64, Error> {
+    let bad = || Error::bare(ErrorCode::InvalidArgument);
+    let split_point = compute_sorting_lookup(num_samples_grid, height, channels, sorting_lookup);
+    let n = channels.len();
+    let mut line_start_read: u64 = 0;
+    for h in 0..height.max(0) as usize {
+        let mut row_byte_off: u64 = 0;
+        for (i, c) in channels.iter().enumerate() {
+            let n_hi = num_samples_grid[h * n + i];
+            let write_index = sorting_lookup[h * n + i] as usize;
+            let read_index = (line_start_read + row_byte_off) as usize;
+            let bit_size = n_hi as usize * c.bytes_per_element as usize;
+            if bit_size > 0 {
+                let src = input
+                    .get(read_index..read_index + bit_size)
+                    .ok_or_else(bad)?;
+                out.get_mut(write_index..write_index + bit_size)
+                    .ok_or_else(bad)?
+                    .copy_from_slice(src);
+            }
+            row_byte_off += bit_size as u64;
+        }
+        line_start_read += row_byte_off;
+    }
+    Ok(split_point)
+}
+
+/// Port of `zstd_inner_append_shuffled_segment` (src/lib/OpenEXRCore/internal_zstd.c:638-665
+/// @ v3.5.3): one segment of the inner stream, its u64 length then its planes.
+fn inner_append_shuffled_segment(
+    inner: &mut [u8],
+    pos: &mut usize,
+    src: &[u8],
+    type_size: u64,
+) -> Result<(), ()> {
+    let inner_cap = inner.len();
+    let src_len = src.len();
+    if *pos + 8 > inner_cap {
+        return Err(());
+    }
+    if src_len > i32::MAX as usize {
+        return Err(());
+    }
+    inner[*pos..*pos + 8].copy_from_slice(&(src_len as u64).to_le_bytes());
+    *pos += 8;
+    if *pos + src_len > inner_cap {
+        return Err(());
+    }
+    if src_len == 0 {
+        return Ok(());
+    }
+    if type_size == 4 {
+        shuffle_encode_4(src, &mut inner[*pos..*pos + src_len]);
+    } else {
+        shuffle_encode_2(src, &mut inner[*pos..*pos + src_len]);
+    }
+    *pos += src_len;
+    Ok(())
+}
+
+/// Port of `zstd_write_exr_v1` (src/lib/OpenEXRCore/internal_zstd.c:746-781 @ v3.5.3), with
+/// `exr_zstd_write_exr_frame_prefix` (lines 711-724): the 24-byte prefix and the ZSTD frame
+/// of `inner` into `out`, with the thread's context; returns the bytes written.
+fn zstd_write_exr_v1(
+    cctx: &mut CCtx,
+    out: &mut [u8],
+    inner: &[u8],
+    level: i32,
+    hdr_format: u32,
+    hdr_flags: u32,
+) -> Result<u64, ()> {
+    let out_cap = out.len();
+    let header = ZSTD_EXR_V1_HEADER as usize;
+    if out_cap < header {
+        return Err(());
+    }
+    let cbound = compress_bound(inner.len()).map_err(|_| ())?;
+    if cbound > out_cap - header {
+        return Err(());
+    }
+    // Reuse the context to avoid malloc/free contention across many threads.
+    // (ZSTD_CCtx_reset with ZSTD_reset_session_only changes nothing ZSTD_compressCCtx reads.)
+    let c_size = cctx
+        .compress_cctx(&mut out[header..], inner, level)
+        .map_err(|_| ())?;
+    out[..8].copy_from_slice(&MAGIC_NUMBER.to_le_bytes());
+    out[8..12].copy_from_slice(&hdr_format.to_le_bytes());
+    out[12..16].copy_from_slice(&hdr_flags.to_le_bytes());
+    out[16..24].copy_from_slice(&(c_size as u64).to_le_bytes());
+    Ok(ZSTD_EXR_V1_HEADER + c_size as u64)
+}
+
+/// Port of `get_row_sample_count_encode` (src/lib/OpenEXRCore/internal_zstd.c:783-803
+/// @ v3.5.3): each row's sample total, the last cumulative count of the file-order table.
+fn get_row_sample_count_encode(encode: &EncodePipeline, row_sample_counts: &mut [u64]) -> bool {
+    match encode.sample_count_table.as_deref() {
+        Some(tbl) if !tbl.is_empty() => {
+            let w = encode.chunk.width as usize;
+            for h in 0..encode.chunk.height.max(0) as usize {
+                let at = ((h + 1) * w - 1) * 4;
+                row_sample_counts[h] =
+                    u64::from(u32::from_le_bytes(tbl[at..at + 4].try_into().expect("4")));
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Port of `internal_exr_apply_zstd` (src/lib/OpenEXRCore/internal_zstd.c:1041-1205
+/// @ v3.5.3), with `exr_zstd_encode_one_wire_version` (lines 976-1039) and
+/// `exr_zstd_encode_store_raw_chunk` (lines 914-919): the chunk sorted, delta-coded (flat
+/// chunks), shuffled and ZSTD-compressed behind the EXR-ZSTD prefix, or stored raw when that
+/// is not smaller.
+pub(crate) fn internal_exr_apply_zstd(
+    encode: &mut EncodePipeline,
+    ctxt: &Context,
+) -> Result<(), Error> {
+    let level = ctxt.get_zstd_compression_level(encode.part_index)?;
+    let sample_table_bytes = encode.chunk.width as u64 * encode.chunk.height as u64 * 4;
+    let packed = encode.packed_bytes as usize;
+    let inner_cap = packed
+        .checked_add(16)
+        .ok_or_else(|| Error::bare(ErrorCode::ArgumentOutOfRange))?;
+    let compressed_alloc_size = match &encode.compressed_buffer {
+        Aliased::Own(b) => b.len(),
+        _ => 0,
+    };
+    if compressed_alloc_size < ZSTD_EXR_V1_HEADER as usize {
+        return Err(Error::bare(ErrorCode::ArgumentOutOfRange));
+    }
+
+    // (the pipeline compresses the sample count table with it aliased as the packed buffer)
+    let compressing_sample_counts_only =
+        matches!(encode.packed_sample_count_table, Aliased::Packed)
+            && packed as u64 == sample_table_bytes;
+    let storage = Storage(i32::from(encode.chunk.type_));
+    // Deep sample table without packed_sample_count_table linkage (the C++ deep tiled
+    // compressTile, and Core's deep encode compressing the table directly): same layout as
+    // compressing_sample_counts_only when packed == chunk w*h*UINT32.
+    let deep_sample_table_standalone = (storage == Storage::DEEP_SCANLINE
+        || storage == Storage::DEEP_TILED)
+        && encode.sample_count_table.is_none()
+        && packed as u64 == sample_table_bytes;
+    let use_sample_count_pack_layout =
+        compressing_sample_counts_only || deep_sample_table_standalone;
+    let is_flat = storage == Storage::SCANLINE || storage == Storage::TILED;
+    let has_sample_counts = encode
+        .sample_count_table
+        .as_deref()
+        .is_some_and(|t| !t.is_empty());
+
+    let grid_scenario = if use_sample_count_pack_layout {
+        GridScenario::DeepSampleCountTable
+    } else if has_sample_counts {
+        GridScenario::DeepPixels
+    } else if is_flat {
+        GridScenario::FlatScanOrTile
+    } else {
+        return Err(Error::bare(ErrorCode::InvalidArgument));
+    };
+
+    // Port of `exr_zstd_select_scenario_channels` (src/lib/OpenEXRCore/internal_zstd.c:584-604
+    // @ v3.5.3): the deep sample count table is one synthetic UINT32 channel.
+    let pack_channels: Vec<PackChannel> = if grid_scenario == GridScenario::DeepSampleCountTable {
+        vec![PackChannel {
+            height: 0,
+            width: 0,
+            y_samples: 0,
+            bytes_per_element: 4,
+        }]
+    } else {
+        encode.channels[..encode.channel_count.max(0) as usize]
+            .iter()
+            .map(PackChannel::of)
+            .collect()
+    };
+
+    let chunk_line_count = encode.chunk.height;
+    let channel_count = pack_channels.len() as i32;
+    if chunk_line_count <= 0 || channel_count <= 0 {
+        return Err(Error::bare(ErrorCode::InvalidArgument));
+    }
+    let meta_scratch_bytes = meta_scratch_byte_size(chunk_line_count, channel_count)?;
+    internal_encode_alloc_buffer(
+        ctxt,
+        encode.part_index,
+        EXR_TRANSCODE_BUFFER_SCRATCH2,
+        &mut encode.scratch_buffer_2,
+        meta_scratch_bytes,
+    )?;
+    let meta_count = chunk_line_count as usize * channel_count as usize;
+    let mut channel_sample_count_grid = vec![0u64; meta_count];
+    let mut sorting_lookup = vec![0u64; meta_count];
+    let sample_count_valid = get_row_sample_count_encode(encode, &mut sorting_lookup);
+    if sample_count_valid && encode.packed_bytes == 0 {
+        encode.compressed_bytes = 0;
+        return Ok(());
+    }
+
+    fill_channel_sample_count_grid(
+        grid_scenario,
+        chunk_line_count,
+        encode.chunk.start_y,
+        encode.chunk.width,
+        &pack_channels,
+        &mut channel_sample_count_grid,
+        &sorting_lookup,
+    );
+    let pipeline_height = encode.chunk.height;
+    let (hdr_format, hdr_flags, apply_delta) = build_encode_pipeline_sorted(grid_scenario);
+
+    internal_encode_alloc_buffer(
+        ctxt,
+        encode.part_index,
+        EXR_TRANSCODE_BUFFER_SCRATCH1,
+        &mut encode.scratch_buffer_1,
+        packed,
+    )?;
+    let bad = || Error::bare(ErrorCode::InvalidArgument);
+    let packed_buf = encode
+        .packed_buffer
+        .as_deref()
+        .and_then(|b| b.get(..packed))
+        .ok_or_else(bad)?;
+    let sorted = encode
+        .scratch_buffer_1
+        .as_deref_mut()
+        .and_then(|b| b.get_mut(..packed))
+        .ok_or_else(bad)?;
+
+    // Sort always runs before shuffle/ZSTD.
+    let split_pos = sort_2_4_byte_channels(
+        packed_buf,
+        &channel_sample_count_grid,
+        &pack_channels,
+        pipeline_height,
+        sorted,
+        &mut sorting_lookup,
+    )?;
+
+    let Aliased::Own(compressed) = &mut encode.compressed_buffer else {
+        return Err(bad());
+    };
+    let failed = || Error::bare(ErrorCode::CompressionFailed);
+    let total_w = TLS.with(|cell| -> Result<u64, Error> {
+        let mut slot = cell.borrow_mut();
+        let tls = slot.get_or_insert_with(|| TlsState {
+            dctx: DCtx::new(),
+            cctx: None,
+            shuffle_buf: Vec::new(),
+        });
+        if !ensure_tls_resources(tls, inner_cap) {
+            return Err(failed());
+        }
+        let cctx = tls.cctx.get_or_insert_with(CCtx::new);
+        let inner = &mut tls.shuffle_buf[..inner_cap];
+
+        // exr_zstd_encode_one_wire_version
+        if apply_delta
+            && delta_encode_sorted_layout(
+                sorted,
+                split_pos,
+                packed,
+                &channel_sample_count_grid,
+                pipeline_height,
+                &pack_channels,
+            )
+            .is_err()
+        {
+            return Err(failed());
+        }
+        let mut inner_pos = 0;
+        let mut seg_off: u64 = 0;
+        for (seg_len, seg_el) in segment_layout(split_pos, packed as u64) {
+            if seg_len > 0 {
+                let seg = &sorted[seg_off as usize..(seg_off + seg_len) as usize];
+                inner_append_shuffled_segment(inner, &mut inner_pos, seg, seg_el)
+                    .map_err(|_| failed())?;
+            }
+            seg_off += seg_len;
+        }
+        zstd_write_exr_v1(
+            cctx,
+            compressed,
+            &inner[..inner_pos],
+            level,
+            hdr_format,
+            hdr_flags,
+        )
+        .map_err(|_| failed())
+    })?;
+
+    if total_w < packed as u64 {
+        encode.compressed_bytes = total_w as usize;
+        return Ok(());
+    }
+    // exr_zstd_encode_store_raw_chunk
+    compressed[..packed].copy_from_slice(packed_buf);
+    encode.compressed_bytes = packed;
+    Ok(())
 }

@@ -510,13 +510,14 @@ fn headers_rewrite_as_the_wheel_wrote_them() {
 /// ones ([`LOSSY`]) are not idempotent: their encoding is checked on the original pixels, by
 /// [`images_encode_from_their_pixels_as_the_wheel_wrote_them`] and the C++ half of upstream's
 /// compression tests (`upstream_tests::compression`).
-const ENCODES: [Compression; 6] = [
+const ENCODES: [Compression; 7] = [
     Compression::NONE,
     Compression::RLE,
     Compression::ZIPS,
     Compression::ZIP,
     Compression::PIZ,
     Compression::PXR24,
+    Compression::ZSTD,
 ];
 
 /// A chunk of a file: its first line (or tile x, tile y and levels) and its information.

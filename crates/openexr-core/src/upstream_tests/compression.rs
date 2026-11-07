@@ -830,6 +830,7 @@ fn cpp_half(
         Compression::B44A => "B44A_COMPRESSION",
         Compression::DWAA => "DWAA_COMPRESSION",
         Compression::DWAB => "DWAB_COMPRESSION",
+        Compression::ZSTD => "ZSTD_COMPRESSION",
         _ => panic!("no wheel name for this test's compression"),
     };
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -1050,6 +1051,12 @@ fn test_dwaa_compression() {
 #[test]
 fn test_dwab_compression() {
     test_comp(Compression::DWAB);
+}
+
+/// Port of `testZstdCompression` (src/test/OpenEXRCoreTest/compression.cpp:1832-1836) @ v3.5.3.
+#[test]
+fn test_zstd_compression() {
+    test_comp(Compression::ZSTD);
 }
 
 /// B44 and B44A on perceptually linear half channels, which go through B44's exp and log
