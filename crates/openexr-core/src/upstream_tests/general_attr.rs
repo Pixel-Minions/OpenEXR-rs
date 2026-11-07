@@ -70,13 +70,11 @@ fn create_dummy_file(test: &str) -> Context {
     f
 }
 
-/// Partial port of `testStringHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:120-285 @
-/// v3.5.3), run by `testAttrStrings` (lines 287-296). Left out: the calls with a NULL context
-/// or string object and the malloc failure (PLAN.md O8); the 2 GiB strings run in
-/// `test_string_helper_long` (heavy tier). `testAttrStrings`' `exr_print_context_info` calls
-/// come with `debug.c` (Phase 8).
+/// Port of `testAttrStrings` (src/test/OpenEXRCoreTest/general_attr.cpp:286-296) @ v3.5.3, with
+/// `testStringHelper` (lines 120-285). Left out: the calls with a NULL context or string object and the malloc failure (PLAN.md O8); the 2 GiB
+/// strings run in `test_string_helper_long` (heavy tier).
 #[test]
-fn test_string_helper() {
+fn test_attr_string() {
     let f = create_dummy_file("<string>");
     let mut s = AttrString::default();
     let mut nil = AttrString::default();
@@ -187,6 +185,8 @@ fn test_string_helper() {
     f.attr_string_destroy(&mut s);
     // make sure we can re-delete something?
     f.attr_string_destroy(&mut s);
+    f.print_context_info(false).unwrap();
+    f.print_context_info(true).unwrap();
 }
 
 /// The 2 GiB part of `testStringHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:263-284 @
@@ -240,12 +240,11 @@ fn test_attr_sizes() {
     assert_eq!(size_of::<V3d>(), 3 * 8);
 }
 
-/// Partial port of `testStringVectorHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:298-450
-/// @ v3.5.3), run by `testAttrStringVectors` (lines 452-461). Left out: NULL context and object
-/// calls and the malloc failures (PLAN.md O8); the 134M-entry vector runs in
-/// `test_string_vector_helper_huge` (heavy tier).
+/// Port of `testAttrStringVectors` (src/test/OpenEXRCoreTest/general_attr.cpp:451-461) @ v3.5.3, with
+/// `testStringVectorHelper` (lines 298-450). Left out: NULL context and object calls and the malloc failures (PLAN.md O8); the 134M-entry vector runs
+/// in `test_string_vector_helper_huge` (heavy tier).
 #[test]
-fn test_string_vector_helper() {
+fn test_attr_string_vector() {
     let f = create_dummy_file("<stringvector>");
     let mut sv = AttrStringVector::default();
     let mut nil = AttrStringVector::default();
@@ -373,6 +372,8 @@ fn test_string_vector_helper() {
     assert!(sv.is_null());
     // make sure we can re-delete something?
     f.attr_string_vector_destroy(&mut sv);
+    f.print_context_info(false).unwrap();
+    f.print_context_info(true).unwrap();
 }
 
 /// The last part of `testStringVectorHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:437-449
@@ -395,12 +396,11 @@ fn test_string_vector_helper_huge() {
     f.attr_string_vector_destroy(&mut sv);
 }
 
-/// Partial port of `testFloatVectorHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:463-535
-/// @ v3.5.3), run by `testAttrFloatVectors` (lines 537-546). Left out: NULL context and object
-/// calls and the malloc failure (PLAN.md O8). `fv.arr == fdata` becomes a comparison of the
-/// values: a static vector holds a copy here.
+/// Port of `testAttrFloatVectors` (src/test/OpenEXRCoreTest/general_attr.cpp:536-546) @ v3.5.3, with
+/// `testFloatVectorHelper` (lines 463-535). Left out: NULL context and object calls and the malloc failure (PLAN.md O8). `fv.arr == fdata` becomes a
+/// comparison of the values: a static vector holds a copy here.
 #[test]
-fn test_float_vector_helper() {
+fn test_attr_float_vector() {
     let f = create_dummy_file("<floatvector>");
     let mut fv = AttrFloatVector::default();
     let mut nil = AttrFloatVector::default();
@@ -469,13 +469,14 @@ fn test_float_vector_helper() {
     f.attr_float_vector_destroy(&mut fv);
     // make sure we can re-delete something?
     f.attr_float_vector_destroy(&mut fv);
+    f.print_context_info(false).unwrap();
+    f.print_context_info(true).unwrap();
 }
 
-/// Partial port of `testPreviewHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:836-913
-/// @ v3.5.3), run by `testAttrPreview` (lines 915-924). Left out: NULL context and object
-/// calls and the malloc failures (PLAN.md O8).
+/// Port of `testAttrPreview` (src/test/OpenEXRCoreTest/general_attr.cpp:914-924) @ v3.5.3, with
+/// `testPreviewHelper` (lines 836-913). Left out: NULL context and object calls and the malloc failures (PLAN.md O8).
 #[test]
-fn test_preview_helper() {
+fn test_attr_preview() {
     let mut f = create_dummy_file("<preview>");
     let mut p = AttrPreview::default();
     let data1x1: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
@@ -550,13 +551,14 @@ fn test_preview_helper() {
             inval
         );
     }
+    f.print_context_info(false).unwrap();
+    f.print_context_info(true).unwrap();
 }
 
-/// Partial port of `testBytesHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:1022-1125
-/// @ v3.5.3), run by `testAttrBytes` (lines 1127-1135). Left out: NULL context and object calls
-/// and the malloc failure (PLAN.md O8).
+/// Port of `testAttrBytes` (src/test/OpenEXRCoreTest/general_attr.cpp:1126-1134) @ v3.5.3, with
+/// `testBytesHelper` (lines 1022-1125). Left out: NULL context and object calls and the malloc failure (PLAN.md O8).
 #[test]
-fn test_bytes_helper() {
+fn test_attr_bytes() {
     let mut f = create_dummy_file("<bytes>");
     let mut b = AttrBytes::default();
     let data4: [u8; 4] = [0x76, 0x2f, 0x31, 0x01];
@@ -659,13 +661,14 @@ fn test_bytes_helper() {
             inval
         );
     }
+    f.print_context_info(false).unwrap();
+    f.print_context_info(true).unwrap();
 }
 
-/// Partial port of `testChlistHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:548-822
-/// @ v3.5.3), run by `testAttrChlists` (lines 824-833). Left out: NULL context and object calls
-/// and the malloc failures (PLAN.md O8).
+/// Port of `testAttrChlists` (src/test/OpenEXRCoreTest/general_attr.cpp:824-834) @ v3.5.3, with
+/// `testChlistHelper` (lines 548-822). Left out: NULL context and object calls and the malloc failures (PLAN.md O8).
 #[test]
-fn test_chlist_helper() {
+fn test_attr_chlist() {
     let mut f = create_dummy_file("<chlist>");
     let mut cl = AttrChlist::default();
     let inval = ErrorCode::InvalidArgument;
@@ -862,13 +865,14 @@ fn test_chlist_helper() {
         assert_eq!(e.y_sampling, 2);
     }
     f.attr_chlist_destroy(&mut cl);
+    f.print_context_info(false).unwrap();
+    f.print_context_info(true).unwrap();
 }
 
-/// Partial port of `testOpaqueHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:926-1008
-/// @ v3.5.3), run by `testAttrOpaque` (lines 1011-1020). Left out: NULL context and object
-/// calls and the malloc failure (PLAN.md O8).
+/// Port of `testAttrOpaque` (src/test/OpenEXRCoreTest/general_attr.cpp:1010-1020) @ v3.5.3, with
+/// `testOpaqueHelper` (lines 926-1008). Left out: NULL context and object calls and the malloc failure (PLAN.md O8).
 #[test]
-fn test_opaque_helper() {
+fn test_attr_opaque() {
     let f = create_dummy_file("<opaque>");
     let mut o = AttrOpaqueData::default();
     let data4: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
@@ -936,6 +940,8 @@ fn test_opaque_helper() {
     f.attr_opaquedata_copy(&mut o2, &o).unwrap();
     f.attr_opaquedata_destroy(&mut o2);
     f.attr_opaquedata_destroy(&mut o);
+    f.print_context_info(false).unwrap();
+    f.print_context_info(true).unwrap();
 }
 
 /// The 28 built-in types after box2i, in the order `testAttrListHelper` adds them, with the

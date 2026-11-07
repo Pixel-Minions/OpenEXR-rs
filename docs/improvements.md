@@ -92,6 +92,15 @@ section. An entry says:
 - **Status:** matched on both platforms (`crates/openexr-core/src/part_attr.rs`,
   `part_attr_set.rs`); the Linux side is checked in the heavy tier.
 
+### I-6. The debug dump computes a box's size in int
+
+- **Upstream:** `print_attr` prints a `box2i` as `max.x - min.x + 1` by `max.y - min.y + 1` in
+  `int` (`src/lib/OpenEXRCore/debug.c:27-36` @ v3.5.3), which overflows (undefined) for boxes
+  wider than `INT_MAX`; a data window set through `exr_set_data_window` is not checked first.
+  The wheels' code wraps.
+- **Who notices:** callers printing a context whose window spans more than 2^31 pixels.
+- **A fix:** compute in 64 bits.
+- **Status:** matched (wrapping arithmetic, `crates/openexr-core/src/debug.rs`).
 
 ## Undefined behaviour the port does not copy
 

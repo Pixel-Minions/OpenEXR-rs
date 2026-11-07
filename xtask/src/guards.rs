@@ -26,10 +26,16 @@ const UNSAFE_ALLOWLIST: &[&str] = &[
 ];
 
 /// Upstream tests that are not applicable to a Rust port, with the owner's decision (PLAN.md O8).
-const NA_TESTS: &[(&str, &str)] = &[(
-    "testInitializerCompat",
-    "C initializer structs versioned by size (PLAN.md O8)",
-)];
+const NA_TESTS: &[(&str, &str)] = &[
+    (
+        "testInitializerCompat",
+        "C initializer structs versioned by size (PLAN.md O8)",
+    ),
+    (
+        "testBaseDebug",
+        "only calls exr_print_context_info with a NULL context (PLAN.md O8)",
+    ),
+];
 
 const SPDX: &str = "// SPDX-License-Identifier: BSD-3-Clause";
 const COPYRIGHTS: &[&str] = &[

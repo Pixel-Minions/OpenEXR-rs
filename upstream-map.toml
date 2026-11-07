@@ -1109,7 +1109,7 @@ path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/compression.rs"
-note = "lines_per_chunk, is_valid_for_deep; the codec dispatch with Phase 4"
+note = "lines_per_chunk, is_valid_for_deep, exr_compression_name; the codec dispatch with Phase 4"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
@@ -1121,7 +1121,9 @@ note = "start_read, start_write, test_file_header, temporary context, finish, ac
 [[file]]
 path = "src/lib/OpenEXRCore/debug.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/debug.rs"
+note = "exr_print_context_info, ported whole; its text is compared with C's only with the source-built harness (PLAN.md O1), and the opaque handlers' %p addresses cannot match"
 
 [[file]]
 path = "src/lib/OpenEXRCore/decoding.c"
@@ -1477,7 +1479,9 @@ note = "initializer, flags, callbacks; the remaining functions as context.c"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_debug.h"
 kind = "api"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/debug.rs"
+note = "with debug.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_decode.h"
@@ -1588,9 +1592,9 @@ note = "build system"
 [[file]]
 path = "src/test/OpenEXRCoreTest/base_units.cpp"
 kind = "test"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/upstream_tests/base_units.rs"
-note = "testBase, testBaseErrors, testBaseLimits, testHalf, testCPUIdent, testTempContext; testBaseDebug with debug.c"
+note = "testBaseDebug n/a: it only passes a NULL context (PLAN.md O8)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/base_units.h"
@@ -1661,7 +1665,7 @@ path = "src/test/OpenEXRCoreTest/general_attr.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
-note = "testXDR, testAttrSizes, testAttrLists, testAttrHandler; the string, vector, bytes, preview, chlist and opaque tests wait for exr_print_context_info (debug.c) and the exr_attr_set_* setters"
+note = "all 11 tests ported; the 2 GiB string and 134M-entry vector checks are heavy-tier, done after gate --full"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"

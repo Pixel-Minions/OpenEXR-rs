@@ -31,3 +31,16 @@ pub fn compression_is_valid_for_deep(comptype: Compression) -> bool {
         Compression::NONE | Compression::RLE | Compression::ZIPS | Compression::ZSTD
     )
 }
+
+/// Port of `exr_compression_name` (src/lib/OpenEXRCore/compression.c:352-374 @ v3.5.3).
+pub fn compression_name(comptype: Compression) -> &'static str {
+    const COMPRESSIONNAMES: [&str; 14] = [
+        "none", "rle", "zips", "zip", "piz", "pxr24", "b44", "b44a", "dwaa", "dwab", "htj2k256",
+        "htj2k32", "lj2k", "zstd",
+    ];
+    let idx = comptype.0;
+    if idx >= 0 && idx < Compression::LAST_TYPE.0 {
+        return COMPRESSIONNAMES[idx as usize];
+    }
+    "<UNKNOWN>"
+}

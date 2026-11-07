@@ -16,6 +16,7 @@ pub mod chunk;
 pub mod color_metadata;
 pub mod compression;
 pub mod context;
+pub mod debug;
 pub mod errors;
 mod file_impl;
 pub mod float_vector;
