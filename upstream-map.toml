@@ -1100,7 +1100,7 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/color_metadata.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/color_metadata.rs"
 note = "all but exr_check_color_metadata, which needs the part attribute API (Phase 3)"
 
@@ -1453,7 +1453,7 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_color_metadata.h"
 kind = "api"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/color_metadata.rs"
 note = "as color_metadata.c"
 

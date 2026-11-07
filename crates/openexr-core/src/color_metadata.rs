@@ -5,9 +5,9 @@
 //! `openexr_color_metadata.h` (src/lib/OpenEXRCore/openexr_color_metadata.h:1-224 @ v3.5.3):
 //! the Color Interop IDs and their chromaticities, and the checks of a part's color metadata.
 //!
-//! So far everything but `exr_check_color_metadata`, which reads a part's attributes through
-//! the part attribute API (Phase 3).
 
+use crate::attributes::AttrValue;
+use crate::context::{Context, Error};
 use crate::errors::{ErrorCode, ExrResult};
 use crate::openexr_attr::Chromaticities;
 
@@ -276,5 +276,57 @@ pub fn get_color_metadata_warning_as_string(warning: u32) -> &'static str {
             "acesImageContainerFlag is present but the chromaticities are not those of 'lin_ap0_scene'"
         }
         _ => "Unknown color metadata warning",
+    }
+}
+
+/// Port of `get_color_interop_id` (src/lib/OpenEXRCore/color_metadata.c:278-290 @ v3.5.3): the
+/// part's colorInteropID, or `None` when it has none or it is not a string.
+fn get_color_interop_id(ctxt: &Context, part_index: i32) -> Option<&[u8]> {
+    match ctxt.get_attribute_by_name(part_index, Some("colorInteropID")) {
+        Ok(a) => match &a.value {
+            AttrValue::String(s) => Some(s.c_str()),
+            _ => None,
+        },
+        Err(_) => None,
+    }
+}
+
+/// Port of `has_attribute` (src/lib/OpenEXRCore/color_metadata.c:292-299 @ v3.5.3).
+fn has_attribute(ctxt: &Context, part_index: i32, name: &str) -> bool {
+    ctxt.get_attribute_by_name(part_index, Some(name)).is_ok()
+}
+
+impl Context {
+    /// Port of `exr_check_color_metadata` (src/lib/OpenEXRCore/color_metadata.c:301-354
+    /// @ v3.5.3): the warnings for part `part_index`'s color metadata.
+    pub fn check_color_metadata(&self, part_index: i32) -> Result<u32, Error> {
+        let num_parts = self.get_count();
+        if part_index < 0 || part_index >= num_parts {
+            return Err(Error::bare(ErrorCode::IncorrectPart));
+        }
+        let chromaticities = self
+            .attr_get_chromaticities(part_index, Some("chromaticities"))
+            .ok();
+        let mut values = ColorMetadata {
+            color_interop_id: get_color_interop_id(self, part_index),
+            chromaticities: chromaticities.as_ref(),
+            has_white_luminance: i32::from(has_attribute(self, part_index, "whiteLuminance")),
+            has_adopted_neutral: i32::from(has_attribute(self, part_index, "adoptedNeutral")),
+            ..Default::default()
+        };
+        if let Ok(attr) = self.get_attribute_by_name(part_index, Some("acesImageContainerFlag")) {
+            values.has_aces_image_container_flag = 1;
+            // A present attribute of the wrong type is reported the same way as a wrong value,
+            // so any non-conforming value will do here.
+            values.aces_image_container_flag = match &attr.value {
+                AttrValue::Int(i) => *i,
+                _ => 0,
+            };
+        }
+        if part_index > 0 {
+            values.compare_to_first_part = 1;
+            values.first_part_color_interop_id = get_color_interop_id(self, 0);
+        }
+        Ok(check_color_metadata_values(&values))
     }
 }
