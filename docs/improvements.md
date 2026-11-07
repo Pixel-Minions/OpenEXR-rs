@@ -50,6 +50,19 @@ section. An entry says:
   function on its own; Core's unpackers inline it, so the heavy tier checks it again at their
   call sites when unpacking lands (Phase 4).
 
+## Attributes
+
+### I-3. The computed size of an attribute list is not its size in a file
+
+- **Upstream:** `exr_attr_list_compute_size` counts a `bytes` attribute as
+  `sizeof (exr_attr_bytes_t)` (32 on x86-64) plus its data, where a file holds a 4-byte hint
+  length, the hint and the data; it counts no terminating NUL for a channel list and no width
+  and height for a preview (`src/lib/OpenEXRCore/attributes.c:317-425` @ v3.5.3). Nothing in
+  the library calls it (the header writer measures as it writes).
+- **Who notices:** callers of the function itself (it is internal; upstream's tests call it).
+- **A fix:** count what `write_header.c` writes.
+- **Status:** matched (`crates/openexr-core/src/attributes.rs`).
+
 ## Undefined behaviour the port does not copy
 
 ### U-1. A string created from no data has an unset terminator
@@ -75,4 +88,14 @@ section. An entry says:
 - **Who notices:** callers passing a count larger than their array; C cannot tell.
 - **The port:** the array is a slice, so its length is known; a slice shorter than the count
   is refused with `EXR_ERR_INVALID_ARGUMENT` and its default message.
+- **Status:** the port's choice; listed for the owner's review.
+
+### U-3. A new m44d attribute is half zeroed
+
+- **Upstream:** `attr_init` zeroes an `EXR_ATTR_M44D` value as an `exr_attr_m44f_t`, 64 of its
+  128 bytes; the last eight doubles are what `alloc_fn` returned
+  (`src/lib/OpenEXRCore/attributes.c:126-130` @ v3.5.3).
+- **Who notices:** a caller that reads an m44d attribute it added before setting it; parsed
+  attributes are filled from the file.
+- **The port:** zeroes all sixteen doubles.
 - **Status:** the port's choice; listed for the owner's review.

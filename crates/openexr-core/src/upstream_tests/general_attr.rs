@@ -3,6 +3,7 @@
 
 //! Ports of `src/test/OpenEXRCoreTest/general_attr.cpp` @ v3.5.3.
 
+use crate::attributes::{AttrValue, AttributeList};
 use crate::bytes::AttrBytes;
 use crate::channel_list::AttrChlist;
 use crate::context::Context;
@@ -10,7 +11,7 @@ use crate::errors::ErrorCode;
 use crate::float_vector::AttrFloatVector;
 use crate::internal_xdr::*;
 use crate::opaque::AttrOpaqueData;
-use crate::openexr_attr::{PerceptualTreatment, PixelType};
+use crate::openexr_attr::{AttributeType, PerceptualTreatment, PixelType};
 use crate::preview::AttrPreview;
 use crate::string::AttrString;
 use crate::string_vector::AttrStringVector;
@@ -848,4 +849,237 @@ fn test_opaque_helper() {
     f.attr_opaquedata_copy(&mut o2, &o).unwrap();
     f.attr_opaquedata_destroy(&mut o2);
     f.attr_opaquedata_destroy(&mut o);
+}
+
+/// The 28 built-in types after box2i, in the order `testAttrListHelper` adds them, with the
+/// attribute names it gives them (src/test/OpenEXRCoreTest/general_attr.cpp:1527-1666 @ v3.5.3).
+const LIST_TYPES: &[(&str, &str, AttributeType)] = &[
+    ("c", "box2f", AttributeType::BOX2F),
+    ("by", "bytes", AttributeType::BYTES),
+    ("d", "chlist", AttributeType::CHLIST),
+    ("e", "chromaticities", AttributeType::CHROMATICITIES),
+    ("f", "compression", AttributeType::COMPRESSION),
+    ("g", "double", AttributeType::DOUBLE),
+    ("h", "envmap", AttributeType::ENVMAP),
+    ("i", "float", AttributeType::FLOAT),
+    ("j", "floatvector", AttributeType::FLOAT_VECTOR),
+    ("k", "int", AttributeType::INT),
+    ("l", "keycode", AttributeType::KEYCODE),
+    ("m", "lineOrder", AttributeType::LINEORDER),
+    ("n", "m33f", AttributeType::M33F),
+    ("o", "m33d", AttributeType::M33D),
+    ("p", "m44f", AttributeType::M44F),
+    ("q", "m44d", AttributeType::M44D),
+    ("r", "preview", AttributeType::PREVIEW),
+    ("s", "rational", AttributeType::RATIONAL),
+    ("t", "string", AttributeType::STRING),
+    ("u", "stringvector", AttributeType::STRING_VECTOR),
+    ("v", "tiledesc", AttributeType::TILEDESC),
+    ("w", "timecode", AttributeType::TIMECODE),
+    ("x", "v2i", AttributeType::V2I),
+    ("y", "v2f", AttributeType::V2F),
+    ("z", "v2d", AttributeType::V2D),
+    ("0", "v3i", AttributeType::V3I),
+    ("1", "v3f", AttributeType::V3F),
+    ("2", "v3d", AttributeType::V3D),
+];
+
+fn s(x: &str) -> Option<&[u8]> {
+    Some(x.as_bytes())
+}
+
+/// Partial port of `testAttrListHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:1308-1925
+/// @ v3.5.3), run by `testAttrLists` (lines 1927-1935). Left out: NULL context, list and output
+/// arguments, `out == NULL` after a failure (a Rust error carries no attribute) and the malloc
+/// failures (PLAN.md O8). The runs of one call per built-in type are loops over `LIST_TYPES`,
+/// in upstream's order.
+#[test]
+fn test_attr_list_helper() {
+    let f = create_dummy_file("<attr_lists>");
+    let h = AttributeList::default();
+    let mut al = AttributeList::default();
+    let inval = ErrorCode::InvalidArgument;
+    let too_long = ErrorCode::NameTooLong;
+    let long = s("reallongreallongreallonglongname");
+    let ty = |al: &AttributeList, id| al.get(id).expect("attribute").attr_type();
+
+    f.attr_list_destroy(&mut al);
+    let e = f.attr_list_find_by_name(&al, s("exr")).unwrap_err();
+    assert_eq!(e.code, ErrorCode::NoAttrByName);
+    assert_eq!(f.attr_list_find_by_name(&al, None).unwrap_err().code, inval);
+    assert_eq!(
+        f.attr_list_find_by_name(&al, s("")).unwrap_err().code,
+        inval
+    );
+    assert_eq!(f.attr_list_compute_size(&mut al).unwrap(), 0);
+
+    let bad_by_type = [
+        (None, s("mytype"), 0, false, inval),
+        (s(""), s("mytype"), 0, false, inval),
+        (s("myattr"), None, 0, false, inval),
+        (s("myattr"), s(""), 0, false, inval),
+        (s("myattr"), s("mytype"), -1, false, inval),
+        (s("myattr"), s("mytype"), 1, false, inval),
+        (s("myattr"), s("mytype"), -1, false, inval),
+        (s("myattr"), s("mytype"), 1, false, inval),
+        (long, s("box2i"), 0, false, too_long),
+        (s("x"), long, 0, false, too_long),
+    ];
+    for (n, t, len, dp, code) in bad_by_type {
+        let e = f
+            .attr_list_add_by_type(&h, &mut al, n, t, len, dp)
+            .unwrap_err();
+        assert_eq!(e.code, code);
+    }
+
+    let bad_builtin = [
+        (None, AttributeType::STRING, 0),
+        (s(""), AttributeType::STRING, 0),
+        (s("myattr"), AttributeType::LAST_KNOWN_TYPE, 0),
+        (s("myattr"), AttributeType::UNKNOWN, 0),
+        (s("myattr"), AttributeType(-1), 0),
+        (s("myattr"), AttributeType::STRING, -1),
+        (s("myattr"), AttributeType::STRING, 1),
+    ];
+    for (n, t, len) in bad_builtin {
+        let e = f.attr_list_add(&h, &mut al, n, t, len, false).unwrap_err();
+        assert_eq!(e.code, inval);
+    }
+    for (n, t, len) in bad_builtin {
+        let e = f
+            .attr_list_add_static_name(&h, &mut al, n, t, len, false)
+            .unwrap_err();
+        assert_eq!(e.code, inval);
+    }
+    let string = AttributeType::STRING;
+    f.attr_list_add_static_name(&h, &mut al, s("myattr"), string, 0, false)
+        .unwrap();
+    let (out2, _) = f
+        .attr_list_add_static_name(&h, &mut al, s("xxx"), string, 0, false)
+        .unwrap();
+    f.attr_list_add_static_name(&h, &mut al, s("yyy"), string, 0, false)
+        .unwrap();
+    assert_eq!(f.attr_list_remove(&mut al, None).unwrap_err().code, inval);
+    f.attr_list_remove(&mut al, Some(out2)).unwrap();
+    assert_eq!(
+        f.attr_list_remove(&mut al, Some(out2)).unwrap_err().code,
+        inval
+    );
+    assert_eq!(al.num_attributes, 2);
+    assert!(
+        f.attr_list_add_by_type(&h, &mut al, s("tnst42"), s("string"), 42, true)
+            .unwrap()
+            .1
+    );
+    assert!(
+        !f.attr_list_add_by_type(&h, &mut al, s("tnst0"), s("string"), 0, true)
+            .unwrap()
+            .1
+    );
+    assert!(
+        f.attr_list_add(&h, &mut al, s("nst42"), string, 42, true)
+            .unwrap()
+            .1
+    );
+    assert!(
+        !f.attr_list_add(&h, &mut al, s("nst0"), string, 0, true)
+            .unwrap()
+            .1
+    );
+    assert!(
+        f.attr_list_add_static_name(&h, &mut al, s("t42"), string, 42, true)
+            .unwrap()
+            .1
+    );
+    assert!(
+        !f.attr_list_add_static_name(&h, &mut al, s("t0"), string, 0, true)
+            .unwrap()
+            .1
+    );
+    f.attr_list_destroy(&mut al);
+
+    let (out, _) = f
+        .attr_list_add_by_type(&h, &mut al, s("a"), s("mytype"), 0, false)
+        .unwrap();
+    assert_eq!(ty(&al, out), AttributeType::OPAQUE);
+    let e = f
+        .attr_list_add_by_type(&h, &mut al, s("a"), s("box2i"), 0, false)
+        .unwrap_err();
+    assert_eq!(e.code, inval);
+    let (out, _) = f
+        .attr_list_add_by_type(&h, &mut al, s("b"), s("box2i"), 0, false)
+        .unwrap();
+    assert_eq!(ty(&al, out), AttributeType::BOX2I);
+    let (out, _) = f
+        .attr_list_add_by_type(&h, &mut al, s("b"), s("box2i"), 0, false)
+        .unwrap();
+    assert_eq!(al.num_attributes, 2);
+    assert_eq!(ty(&al, out), AttributeType::BOX2I);
+    let e = f
+        .attr_list_add_by_type(&h, &mut al, s("b"), s("box2i"), 3, true)
+        .unwrap_err();
+    assert_eq!(e.code, inval);
+    assert_eq!(al.num_attributes, 2);
+    assert_eq!(al.num_alloced, 2);
+    for &(name, tname, t) in LIST_TYPES {
+        let (out, _) = f
+            .attr_list_add_by_type(&h, &mut al, s(name), s(tname), 0, false)
+            .unwrap();
+        assert_eq!(ty(&al, out), t);
+        match al.get_mut(out).expect("attribute").value_mut() {
+            AttrValue::Chlist(cl) => {
+                for c in ["R", "G", "B"] {
+                    let log = PerceptualTreatment::LOGARITHMIC;
+                    f.attr_chlist_add(cl, s(c), PixelType::HALF, log, 1, 1)
+                        .unwrap();
+                }
+            }
+            AttrValue::FloatVector(fv) => f.attr_float_vector_init(fv, 4).unwrap(),
+            AttrValue::StringVector(sv) => {
+                f.attr_string_vector_add_entry(sv, s("openexr")).unwrap()
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(al.num_attributes, 30);
+    f.attr_list_compute_size(&mut al).unwrap();
+    let out = f.attr_list_find_by_name(&al, s("x")).unwrap();
+    assert_eq!(ty(&al, out), AttributeType::V2I);
+    let out = f.attr_list_find_by_name(&al, s("a")).unwrap();
+    assert_eq!(ty(&al, out), AttributeType::OPAQUE);
+    f.attr_list_destroy(&mut al);
+    // double check double delete
+    f.attr_list_destroy(&mut al);
+
+    // The exr_attr_list_add run, then the exr_attr_list_add_static_name run.
+    for static_name in [false, true] {
+        let add = |al: &mut AttributeList, n: Option<&[u8]>, t: AttributeType| {
+            if static_name {
+                f.attr_list_add_static_name(&h, al, n, t, 0, false)
+            } else {
+                f.attr_list_add(&h, al, n, t, 0, false)
+            }
+        };
+        let (out, _) = add(&mut al, s("b"), AttributeType::BOX2I).unwrap();
+        assert_eq!(ty(&al, out), AttributeType::BOX2I);
+        let e = add(&mut al, s("b"), AttributeType::BOX2F).unwrap_err();
+        assert_eq!(e.code, inval);
+        let (out, _) = add(&mut al, s("b"), AttributeType::BOX2I).unwrap();
+        assert_eq!(ty(&al, out), AttributeType::BOX2I);
+        assert_eq!(al.num_attributes, 1);
+        let e = add(&mut al, long, AttributeType::BOX2I).unwrap_err();
+        assert_eq!(e.code, too_long);
+        assert_eq!(al.num_attributes, 1);
+        // upstream names it "yyy" in the first run and "c" in the second
+        let opaque_name = if static_name { s("c") } else { s("yyy") };
+        let e = add(&mut al, opaque_name, AttributeType::OPAQUE).unwrap_err();
+        assert_eq!(e.code, inval);
+        assert_eq!(al.num_attributes, 1);
+        for &(name, _, t) in LIST_TYPES {
+            let (out, _) = add(&mut al, s(name), t).unwrap();
+            assert_eq!(ty(&al, out), t);
+        }
+        assert_eq!(al.num_attributes, 29);
+        f.attr_list_destroy(&mut al);
+    }
 }

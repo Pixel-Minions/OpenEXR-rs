@@ -6,6 +6,7 @@
 //! Each module mirrors one upstream file and each function cites the upstream lines it
 //! translates. `PLAN.md` is the source of truth for scope and order.
 
+pub mod attributes;
 pub mod base;
 pub mod bytes;
 #[doc(hidden)]

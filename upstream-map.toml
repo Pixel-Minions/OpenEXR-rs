@@ -1059,7 +1059,8 @@ note = "build system"
 [[file]]
 path = "src/lib/OpenEXRCore/attributes.c"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/attributes.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/backward_compatibility.h"
@@ -1135,7 +1136,8 @@ target = "crates/openexr-core/src/float_vector.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_attr.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/attributes.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_b44.c"
@@ -1415,9 +1417,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_attr.h"
 kind = "api"
-status = "partial"
-target = "crates/openexr-core/src/openexr_attr.rs,crates/openexr-core/src/string.rs"
-note = "enums and fixed-size structs, exr_attr_string_t; the allocating types and exr_attribute_t follow in Phase 2"
+status = "done"
+target = "crates/openexr-core/src/openexr_attr.rs,crates/openexr-core/src/attributes.rs,crates/openexr-core/src/string.rs"
+note = "the allocating types live with their functions (string.rs, string_vector.rs, ...)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_base.h"
@@ -1635,7 +1637,7 @@ path = "src/test/OpenEXRCoreTest/general_attr.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
-note = "testXDR, testAttrSizes; string, vector, bytes, preview, chlist and opaque helpers partial (dummy file until exr_start_write; exr_attr_set_* with Phase 3; print_context_info with debug.c)"
+note = "testXDR, testAttrSizes; string, vector, bytes, preview, chlist, opaque and list helpers partial (dummy file until exr_start_write; exr_attr_set_* with Phase 3; print_context_info with debug.c; testAttrHandler with exr_register_attr_type_handler)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"
