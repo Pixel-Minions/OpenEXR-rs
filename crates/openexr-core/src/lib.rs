@@ -31,6 +31,7 @@ mod internal_b44_table;
 mod internal_coding;
 mod internal_constants;
 mod internal_cpuid;
+mod internal_dwa_table;
 mod internal_file;
 mod internal_ht_quality;
 mod internal_huf;

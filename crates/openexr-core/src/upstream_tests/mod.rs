@@ -10,6 +10,7 @@ mod base_units;
 mod buffer;
 mod color_metadata;
 mod compression;
+mod compression_tables;
 pub(crate) mod general_attr;
 pub(crate) mod read;
 mod write;

@@ -1192,7 +1192,7 @@ path = "src/lib/OpenEXRCore/internal_b44_table.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/internal_b44_table.rs"
-note = "ported whole; the tables use the platform's expf and logf: checked on Windows, the Linux run pending"
+note = "ported whole; the tables use the platform's expf and logf: checked on Windows by testB44Table, the Linux run pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_b44_table_init.c"
@@ -1286,12 +1286,16 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_table.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_table.rs"
+note = "ported whole; the tables use the platform's powf and logf: checked on Windows by testDWATable, the Linux run pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_table_init.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_table.rs"
+note = "ported whole, with internal_dwa_table.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_file.h"
@@ -1703,7 +1707,9 @@ status = "todo"
 [[file]]
 path = "src/test/OpenEXRCoreTest/compressionTables.cpp"
 kind = "test"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/upstream_tests/compression_tables.rs"
+note = "testB44Table, testDWATable (testLutHeader, an exhaustive search, in the heavy tier), testDWAQuantize; partial until gate --full and the Linux run"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/deep.cpp"
