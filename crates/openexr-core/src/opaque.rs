@@ -19,7 +19,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::cfmt::Arg;
-use crate::context::{Context, Error};
+use crate::context::{ContextCore, Error};
 use crate::errors::{ErrorCode, ExrResult};
 
 /// An unpacked opaque value: upstream's `void* unpacked_data`.
@@ -97,7 +97,7 @@ fn destroy_unpacked(u: &AttrOpaqueData) {
     }
 }
 
-impl Context {
+impl ContextCore {
     /// Port of `exr_attr_opaquedata_init` (src/lib/OpenEXRCore/opaque.c:15-48 @ v3.5.3).
     pub(crate) fn attr_opaquedata_init(
         &self,
@@ -105,7 +105,7 @@ impl Context {
         b: usize,
     ) -> Result<(), Error> {
         if b > i32::MAX as usize {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid size for opaque data (%llu bytes, must be <= INT32_MAX)",
                 &[Arg::U64(b as u64)],
@@ -132,7 +132,7 @@ impl Context {
         if let (Some(d), Some(out)) = (d, u.packed_data.as_mut()) {
             if d.len() < b {
                 *u = AttrOpaqueData::default();
-                return Err(self.core.standard_error(ErrorCode::InvalidArgument));
+                return Err(self.standard_error(ErrorCode::InvalidArgument));
             }
             out.copy_from_slice(&d[..b]);
         }
@@ -170,7 +170,7 @@ impl Context {
             return Ok((u.unpacked_size, u.unpacked_data.clone()));
         }
         let Some(unpack) = u.unpack_func_ptr.clone() else {
-            return Err(self.core.report_error(
+            return Err(self.report_error(
                 ErrorCode::InvalidArgument,
                 b"No unpack provider specified for opaque data",
             ));
@@ -197,7 +197,7 @@ impl Context {
             return Ok((u.size, u.packed_data.as_deref()));
         }
         let Some(pack) = u.pack_func_ptr.clone() else {
-            return Err(self.core.report_error(
+            return Err(self.report_error(
                 ErrorCode::InvalidArgument,
                 b"No pack provider specified for opaque data",
             ));
@@ -205,7 +205,7 @@ impl Context {
         let mut nsize: i32 = 0;
         let rv = pack(u.unpacked_data.as_ref(), u.unpacked_size, &mut nsize, None);
         if rv != ErrorCode::Success {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 rv,
                 "Pack function failed finding pack buffer size, unpacked size %d",
                 &[u.unpacked_size.into()],
@@ -223,7 +223,7 @@ impl Context {
             if rv != ErrorCode::Success {
                 nsize = u.packed_alloc_size;
                 u.packed_alloc_size = 0;
-                return Err(self.core.print_error(
+                return Err(self.print_error(
                     rv,
                     "Pack function failed to pack data, unpacked size %d, packed buffer size %d",
                     &[u.unpacked_size.into(), nsize.into()],
@@ -248,7 +248,7 @@ impl Context {
         sz: i32,
     ) -> Result<(), Error> {
         if sz < 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Opaque data given invalid negative size (%d)",
                 &[sz.into()],
@@ -274,14 +274,14 @@ impl Context {
         sz: i32,
     ) -> Result<(), Error> {
         if sz < 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Opaque data given invalid negative size (%d)",
                 &[sz.into()],
             ));
         }
         if packed.is_some_and(|p| p.len() < sz as usize) {
-            return Err(self.core.standard_error(ErrorCode::InvalidArgument));
+            return Err(self.standard_error(ErrorCode::InvalidArgument));
         }
         // `alloc_fn (0)` returns a valid pointer on both platforms (HeapAlloc, glibc malloc),
         // so a zero-size packed buffer is not NULL.

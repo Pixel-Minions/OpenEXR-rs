@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 use crate::cfmt::Arg;
-use crate::context::{Context, Error};
+use crate::context::{ContextCore, Error};
 use crate::errors::ErrorCode;
 
 /// Port of `exr_attr_preview_t` (src/lib/OpenEXRCore/openexr_attr.h:332-340 @ v3.5.3).
@@ -54,7 +54,7 @@ impl AttrPreview {
     }
 }
 
-impl Context {
+impl ContextCore {
     /// Port of `exr_attr_preview_init` (src/lib/OpenEXRCore/preview.c:14-50 @ v3.5.3).
     pub(crate) fn attr_preview_init(
         &self,
@@ -64,7 +64,7 @@ impl Context {
     ) -> Result<(), Error> {
         let bytes: u64 = u64::from(w) * u64::from(h) * 4;
         if bytes > i32::MAX as u64 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid very large size for preview image (%u x %u - %llu bytes)",
                 &[w.into(), h.into(), Arg::U64(bytes)],
@@ -91,7 +91,7 @@ impl Context {
     ) -> Result<(), Error> {
         let copybytes = (w as usize) * (h as usize) * 4;
         if copybytes > 0 && d.is_none() {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid NULL preview rgba data for %u x %u preview",
                 &[w.into(), h.into()],
@@ -103,7 +103,7 @@ impl Context {
         {
             if d.len() < copybytes {
                 self.attr_preview_destroy(p);
-                return Err(self.core.standard_error(ErrorCode::InvalidArgument));
+                return Err(self.standard_error(ErrorCode::InvalidArgument));
             }
             p.rgba
                 .as_mut()

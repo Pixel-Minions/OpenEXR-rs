@@ -10,7 +10,7 @@
 // Ported ahead of its callers (attributes, header parsing: Phases 2-3).
 #![allow(dead_code)]
 
-use crate::context::{Context, Error};
+use crate::context::{ContextCore, Error};
 use crate::errors::ErrorCode;
 use crate::string::AttrString;
 
@@ -48,7 +48,7 @@ impl AttrStringVector {
     }
 }
 
-impl Context {
+impl ContextCore {
     /// Port of `exr_attr_string_vector_init` (src/lib/OpenEXRCore/string_vector.c:14-56
     /// @ v3.5.3).
     pub(crate) fn attr_string_vector_init(
@@ -58,14 +58,14 @@ impl Context {
     ) -> Result<(), Error> {
         let bytes = (nent as i64 as usize).wrapping_mul(SIZEOF_EXR_ATTR_STRING_T);
         if nent < 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Received request to allocate negative sized string vector (%d entries)",
                 &[nent.into()],
             ));
         }
         if bytes > i32::MAX as usize {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid too large size for string vector (%d entries)",
                 &[nent.into()],
@@ -116,7 +116,7 @@ impl Context {
         len: i32,
     ) -> Result<(), Error> {
         if idx < 0 || idx >= sv.n_strings {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid index (%d of %d) initializing string vector",
                 &[idx.into(), sv.n_strings.into()],
@@ -139,7 +139,7 @@ impl Context {
                 Some(s) => &s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())],
                 None => b"<nil>",
             };
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid index (%d of %d) assigning string vector ('%s', len %d)",
                 &[idx.into(), sv.n_strings.into(), shown.into(), len.into()],
@@ -175,7 +175,7 @@ impl Context {
         if nent > sv.alloc_size {
             let mut allsz = sv.alloc_size.wrapping_mul(2);
             if sv.alloc_size >= i32::MAX / SIZEOF_EXR_ATTR_STRING_T as i32 {
-                return Err(self.core.standard_error(ErrorCode::OutOfMemory));
+                return Err(self.standard_error(ErrorCode::OutOfMemory));
             }
             if nent > allsz {
                 allsz = nent + 1;

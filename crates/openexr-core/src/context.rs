@@ -251,11 +251,15 @@ pub(crate) fn report_without_context(
     }
 }
 
-/// The part of the context that error reporting and streams need: kept apart from the part
-/// list so a stream callback can report while the parts are borrowed.
-pub(crate) struct ContextCore {
+/// The part of the context that error reporting, streams and the attribute functions need:
+/// kept apart from the part list so they can run while a part's attributes are borrowed
+/// mutably. [`Context`] dereferences to it.
+#[doc(hidden)]
+pub struct ContextCore {
     pub(crate) mode: ContextMode,
     pub(crate) filename: Option<String>,
+    /// `max_name_length`: 31, or 255 with long names.
+    pub(crate) max_name_length: u8,
     error_handler: ErrorHandler,
 }
 
@@ -337,7 +341,6 @@ const EXR_STORAGE_LAST_TYPE: i32 = 4;
 pub struct Context {
     pub(crate) core: ContextCore,
     pub(crate) version: u8,
-    pub(crate) max_name_length: u8,
     pub(crate) strict_header: bool,
     pub(crate) silent_header: bool,
     pub(crate) disable_chunk_reconstruct: bool,
@@ -461,10 +464,10 @@ impl Context {
             core: ContextCore {
                 mode,
                 filename: None,
+                max_name_length: EXR_SHORTNAME_MAXLEN,
                 error_handler: inits.error_handler,
             },
             version: 0,
-            max_name_length: EXR_SHORTNAME_MAXLEN,
             strict_header: inits.flags & EXR_CONTEXT_FLAG_STRICT_HEADER != 0,
             silent_header: inits.flags & EXR_CONTEXT_FLAG_SILENT_HEADER_PARSE != 0,
             disable_chunk_reconstruct: inits.flags & EXR_CONTEXT_FLAG_DISABLE_CHUNK_RECONSTRUCTION
@@ -563,6 +566,13 @@ impl Context {
     /// parts.
     pub fn get_count(&self) -> i32 {
         self.parts.len() as i32
+    }
+}
+
+impl std::ops::Deref for Context {
+    type Target = ContextCore;
+    fn deref(&self) -> &ContextCore {
+        &self.core
     }
 }
 

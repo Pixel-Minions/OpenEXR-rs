@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 use crate::cfmt::Arg;
-use crate::context::{Context, Error};
+use crate::context::{ContextCore, Error};
 use crate::errors::ErrorCode;
 
 /// Port of `exr_attr_bytes_t` (src/lib/OpenEXRCore/openexr_attr.h:343-351 @ v3.5.3).
@@ -44,7 +44,7 @@ impl AttrBytes {
     }
 }
 
-impl Context {
+impl ContextCore {
     /// Port of `exr_attr_bytes_init` (src/lib/OpenEXRCore/bytes.c:15-66 @ v3.5.3).
     pub(crate) fn attr_bytes_init(
         &self,
@@ -55,14 +55,14 @@ impl Context {
         // Note the design choice to disallow lengths > INT32_MAX is borrowed from other files
         // and not rooted in any deep analysis.
         if hint_length as usize > i32::MAX as usize {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid size for type hint (%llu chars, must be <= INT32_MAX)",
                 &[Arg::U64(u64::from(hint_length))],
             ));
         }
         if bytes_length > i32::MAX as usize {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid size for bytes data (%llu bytes, must be <= INT32_MAX)",
                 &[Arg::U64(bytes_length as u64)],
@@ -91,14 +91,14 @@ impl Context {
         d: Option<&[u8]>,
     ) -> Result<(), Error> {
         if h > 0 && t.is_none() {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid NULL type hint for bytes attribute with hint length %u",
                 &[h.into()],
             ));
         }
         if b > 0 && d.is_none() {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid NULL bytes data for bytes attribute with size %zu",
                 &[b.into()],
@@ -107,7 +107,7 @@ impl Context {
         if (h > 0 && t.is_some_and(|t| t.len() < h as usize))
             || (b > 0 && d.is_some_and(|d| d.len() < b))
         {
-            return Err(self.core.standard_error(ErrorCode::InvalidArgument));
+            return Err(self.standard_error(ErrorCode::InvalidArgument));
         }
         self.attr_bytes_init(u, h, b)?;
         if b > 0

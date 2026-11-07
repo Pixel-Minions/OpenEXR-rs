@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use crate::cfmt::Arg;
-use crate::context::{Context, Error};
+use crate::context::{ContextCore, Error};
 use crate::errors::ErrorCode;
 use crate::openexr_attr::{PerceptualTreatment, PixelType};
 use crate::string::AttrString;
@@ -56,7 +56,7 @@ fn c_str(name: &[u8]) -> &[u8] {
     &name[..name.iter().position(|&c| c == 0).unwrap_or(name.len())]
 }
 
-impl Context {
+impl ContextCore {
     /// Port of `exr_attr_chlist_init` (src/lib/OpenEXRCore/channel_list.c:15-50 @ v3.5.3).
     pub(crate) fn attr_chlist_init(
         &self,
@@ -64,7 +64,7 @@ impl Context {
         nchans: i32,
     ) -> Result<(), Error> {
         if nchans < 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Negative number of channels requested (%d)",
                 &[nchans.into()],
@@ -106,35 +106,35 @@ impl Context {
         let maxlen = i32::from(self.max_name_length);
         let cname: &[u8] = name.map(c_str).unwrap_or(b"<NULL>");
         if name.is_none() || cname.is_empty() || namelen == 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Channel name must not be empty, received '%s'",
                 &[Arg::Str(cname)],
             ));
         }
         if namelen > maxlen {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::NameTooLong,
                 "Channel name must shorter than length allowed by file (%d), received '%s' (%d)",
                 &[maxlen.into(), Arg::Str(cname), namelen.into()],
             ));
         }
         if ptype != PixelType::UINT && ptype != PixelType::HALF && ptype != PixelType::FLOAT {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid pixel type specified (%d) adding channel '%s' to list",
                 &[ptype.0.into(), Arg::Str(cname)],
             ));
         }
         if islinear != PerceptualTreatment::LOGARITHMIC && islinear != PerceptualTreatment::LINEAR {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid perceptual linear flag value (%d) adding channel '%s' to list",
                 &[islinear.0.into(), Arg::Str(cname)],
             ));
         }
         if xsamp <= 0 || ysamp <= 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid pixel sampling (x %d y %d) adding channel '%s' to list",
                 &[xsamp.into(), ysamp.into(), Arg::Str(cname)],
@@ -149,7 +149,7 @@ impl Context {
                     break;
                 }
                 std::cmp::Ordering::Equal => {
-                    return Err(self.core.print_error(
+                    return Err(self.print_error(
                         ErrorCode::InvalidArgument,
                         "Attempt to add duplicate channel '%s' to channel list",
                         &[Arg::Str(cname)],
@@ -170,7 +170,7 @@ impl Context {
         if newcount > clist.num_alloced {
             // perhaps an arbitrary limit, but that is a LOT of channels
             if clist.num_alloced >= i32::MAX / 2 {
-                return Err(self.core.standard_error(ErrorCode::OutOfMemory));
+                return Err(self.standard_error(ErrorCode::OutOfMemory));
             }
             let mut nsz = clist.num_alloced * 2;
             if newcount > nsz {
@@ -195,7 +195,7 @@ impl Context {
     ) -> Result<(), Error> {
         let numchans = srcchl.num_channels;
         if numchans > 0 && srcchl.entries.is_empty() {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid NULL channel list entries with %d channels",
                 &[numchans.into()],

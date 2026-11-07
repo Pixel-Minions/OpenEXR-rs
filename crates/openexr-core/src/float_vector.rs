@@ -9,7 +9,7 @@
 // Ported ahead of its callers (attributes, header parsing: Phases 2-3).
 #![allow(dead_code)]
 
-use crate::context::{Context, Error};
+use crate::context::{ContextCore, Error};
 use crate::errors::ErrorCode;
 
 /// Port of `exr_attr_float_vector_t` (src/lib/OpenEXRCore/openexr_attr.h:288-295 @ v3.5.3).
@@ -43,7 +43,7 @@ impl AttrFloatVector {
     }
 }
 
-impl Context {
+impl ContextCore {
     /// Port of `exr_attr_float_vector_init` (src/lib/OpenEXRCore/float_vector.c:14-57 @ v3.5.3):
     /// allocates, but does not fill (the port's memory is zeroed).
     pub(crate) fn attr_float_vector_init(
@@ -54,14 +54,14 @@ impl Context {
         let bytes = (nent as i64 as usize).wrapping_mul(std::mem::size_of::<f32>());
         *fv = AttrFloatVector::default();
         if nent < 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Received request to allocate negative sized float vector (%d entries)",
                 &[nent.into()],
             ));
         }
         if bytes > i32::MAX as usize {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid too large size for float vector (%d entries)",
                 &[nent.into()],
@@ -84,20 +84,20 @@ impl Context {
         nent: i32,
     ) -> Result<(), Error> {
         if nent < 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Received request to allocate negative sized float vector (%d entries)",
                 &[nent.into()],
             ));
         }
         let Some(arr) = arr else {
-            return Err(self.core.report_error(
+            return Err(self.report_error(
                 ErrorCode::InvalidArgument,
                 b"Invalid reference to float array object to initialize",
             ));
         };
         if arr.len() < nent as usize {
-            return Err(self.core.standard_error(ErrorCode::InvalidArgument));
+            return Err(self.standard_error(ErrorCode::InvalidArgument));
         }
         *fv = AttrFloatVector {
             arr: Some(arr[..nent as usize].to_vec()),
@@ -116,7 +116,7 @@ impl Context {
         nent: i32,
     ) -> Result<(), Error> {
         let Some(arr) = arr else {
-            return Err(self.core.report_error(
+            return Err(self.report_error(
                 ErrorCode::InvalidArgument,
                 b"Invalid (NULL) arguments to float vector create",
             ));
@@ -127,7 +127,7 @@ impl Context {
             if bytes <= i32::MAX as usize {
                 if arr.len() < nent as usize {
                     self.attr_float_vector_destroy(fv);
-                    return Err(self.core.standard_error(ErrorCode::InvalidArgument));
+                    return Err(self.standard_error(ErrorCode::InvalidArgument));
                 }
                 let outp = fv.arr.as_mut().expect("initialised");
                 outp.copy_from_slice(&arr[..nent as usize]);

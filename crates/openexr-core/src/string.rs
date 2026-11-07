@@ -13,7 +13,7 @@
 // Ported ahead of its callers (attributes, header parsing: Phases 2-3).
 #![allow(dead_code)]
 
-use crate::context::{Context, Error};
+use crate::context::{ContextCore, Error};
 use crate::errors::ErrorCode;
 
 /// Port of `exr_attr_string_t` (src/lib/OpenEXRCore/openexr_attr.h:268-275 @ v3.5.3).
@@ -77,11 +77,11 @@ fn strlen(d: &[u8]) -> usize {
     d.iter().position(|&c| c == 0).unwrap_or(d.len())
 }
 
-impl Context {
+impl ContextCore {
     /// Port of `exr_attr_string_init` (src/lib/OpenEXRCore/string.c:15-40 @ v3.5.3).
     pub(crate) fn attr_string_init(&self, s: &mut AttrString, len: i32) -> Result<(), Error> {
         if len < 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Received request to allocate negative sized string (%d)",
                 &[len.into()],
@@ -103,14 +103,14 @@ impl Context {
         len: i32,
     ) -> Result<(), Error> {
         if len < 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Received request to allocate negative sized string (%d)",
                 &[len.into()],
             ));
         }
         let Some(v) = v else {
-            return Err(self.core.report_error(
+            return Err(self.report_error(
                 ErrorCode::InvalidArgument,
                 b"Invalid static string argument to initialize",
             ));
@@ -134,7 +134,7 @@ impl Context {
         if let Some(v) = v {
             let fulllen = strlen(v);
             if fulllen >= i32::MAX as usize {
-                return Err(self.core.report_error(
+                return Err(self.report_error(
                     ErrorCode::InvalidArgument,
                     b"Invalid string too long for attribute",
                 ));
@@ -182,7 +182,7 @@ impl Context {
         if let Some(d) = d {
             let fulllen = strlen(d);
             if fulllen >= i32::MAX as usize {
-                return Err(self.core.report_error(
+                return Err(self.report_error(
                     ErrorCode::InvalidArgument,
                     b"Invalid string too long for attribute",
                 ));
@@ -201,7 +201,7 @@ impl Context {
         len: i32,
     ) -> Result<(), Error> {
         if len < 0 {
-            return Err(self.core.print_error(
+            return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Received request to assign a negative sized string (%d)",
                 &[len.into()],
@@ -238,7 +238,7 @@ impl Context {
         if let Some(d) = d {
             let fulllen = strlen(d);
             if fulllen >= i32::MAX as usize {
-                return Err(self.core.report_error(
+                return Err(self.report_error(
                     ErrorCode::InvalidArgument,
                     b"Invalid string too long for attribute",
                 ));
