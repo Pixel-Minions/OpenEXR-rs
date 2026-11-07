@@ -8,7 +8,8 @@ the heavy-tier decode checks.
 <compression> is a name of the wheel's (NO_COMPRESSION, RLE_COMPRESSION, ...). For each one
 and each layout below it writes <out-dir>/<layout>_<compression>.exr: scanline layouts with 1
 to 5 half channels, 3 and 4 float or uint channels, mixed types, x and y subsampling (on a
-38 x 24 window, a whole number of samples); tiled layouts with 3 and 4 channels. Pixel bits
+38 x 24 window, a whole number of samples); tiled layouts with 3 and 4 channels; and a
+header holding an attribute of every type the binding writes. Pixel bits
 come from a fixed seed. The images' pixels are what the wheel reads back
 (oracle/dump_pixels.py), not what was written.
 
@@ -46,7 +47,32 @@ LAYOUTS = {
     "sampled": ("scanline", [("Y", "half", 1, 1), ("BY", "half", 2, 2), ("RY", "half", 2, 2)]),
     "tiled3": ("tiled", [("B", "half", 1, 1), ("G", "half", 1, 1), ("R", "half", 1, 1)]),
     "tiled4": ("tiled", [(c, "float", 1, 1) for c in "ABGR"]),
+    # a header with an attribute of every type the binding writes (EXTRA_ATTRS)
+    "attrs": ("scanline", [("B", "half", 1, 1), ("G", "half", 1, 1), ("R", "half", 1, 1)]),
 }
+
+
+def extra_attrs():
+    """The attributes of the "attrs" layout: every type the binding writes but rational."""
+    return {
+        "comments": "a comment",
+        "blob": OpenEXR.Bytes(b"", "hint"),
+        "emptyBlob": OpenEXR.Bytes(b"", ""),
+        "noHint": OpenEXR.Bytes(b"", ""),
+        "keyCode": OpenEXR.KeyCode(1, 2, 3, 4, 5, 4, 64),
+        "floatList": [1.0, 2.5],
+        "multiView": ["left", "right"],
+        "v2iAttr": (1, 2),
+        "v3fAttr": (1.0, 2.0, 3.0),
+        "m44dAttr": np.eye(4),
+        "m33fAttr": np.eye(3, dtype="float32"),
+        "chromaticities": (0.64, 0.33, 0.3, 0.6, 0.15, 0.06, 0.3127, 0.329),
+        "intAttr": 7,
+        "floatAttr": 0.5,
+        "preview": OpenEXR.PreviewImage(2, 2),
+        "envmap": OpenEXR.ENVMAP_CUBE,
+        "timeCode": OpenEXR.TimeCode(),
+    }
 
 
 def main():
@@ -66,6 +92,8 @@ def main():
                 header["tiles"] = tiles
             else:
                 header["type"] = OpenEXR.scanlineimage
+            if name == "attrs":
+                header.update(extra_attrs())
             sampled = any(xs > 1 or ys > 1 for _, _, xs, ys in chans)
             w, h = (SAMPLED_W, SAMPLED_H) if sampled else (W, H)
             channels = {}
