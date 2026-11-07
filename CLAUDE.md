@@ -10,6 +10,8 @@ translated from C++ to C; where this file is silent, that one applies.
 Everything runs locally: no CI, no profiling, and never push (remote:
 github.com/Pixel-Minions/OpenEXR-rs) unless the owner asks. The owner's open decisions are in
 `PLAN.md` §14; don't decide them yourself.
+Work left for later is in `docs/deferred.md`: read it when a stage starts, strike what it
+finishes, and add whatever it leaves.
 
 **Test tiers (owner, 2026-11-07, `PLAN.md` §8).** Every chunk passes the fast tier,
 `cargo xtask gate`. Heavy checks (the Rocky Linux run, oracle fixtures and corpus, exhaustive
