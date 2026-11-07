@@ -22,12 +22,13 @@ use openexr_core::context::{Context, Error};
 use openexr_core::openexr_attr::{Compression, Storage};
 
 /// The compressions the port decodes, with the wheel's names for them.
-const DECODES: [(Compression, &str); 5] = [
+const DECODES: [(Compression, &str); 6] = [
     (Compression::NONE, "NO_COMPRESSION"),
     (Compression::RLE, "RLE_COMPRESSION"),
     (Compression::ZIPS, "ZIPS_COMPRESSION"),
     (Compression::ZIP, "ZIP_COMPRESSION"),
     (Compression::PIZ, "PIZ_COMPRESSION"),
+    (Compression::PXR24, "PXR24_COMPRESSION"),
 ];
 
 fn root() -> PathBuf {
@@ -499,12 +500,13 @@ fn headers_rewrite_as_the_wheel_wrote_them() {
 }
 
 /// The compressions the port encodes.
-const ENCODES: [Compression; 5] = [
+const ENCODES: [Compression; 6] = [
     Compression::NONE,
     Compression::RLE,
     Compression::ZIPS,
     Compression::ZIP,
     Compression::PIZ,
+    Compression::PXR24,
 ];
 
 /// A chunk of a file: its first line (or tile x, tile y and levels) and its information.

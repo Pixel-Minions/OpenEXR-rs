@@ -33,6 +33,7 @@ mod internal_file;
 mod internal_ht_quality;
 mod internal_huf;
 mod internal_piz;
+mod internal_pxr24;
 mod internal_rle;
 mod internal_util;
 mod internal_xdr;

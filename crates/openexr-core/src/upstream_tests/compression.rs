@@ -163,13 +163,12 @@ impl Pixels {
     }
 
     /// `compareClose` (src/test/OpenEXRCoreTest/compression.cpp:564-694 @ v3.5.3), for the
-    /// codecs ported so far (PIZ): the uint and float channels exactly, then, for a codec that is
-    /// not B44, DWA or PXR24, the half channels exactly. (The bounds of B44, DWA and PXR24 come
-    /// with those codecs.)
+    /// codecs ported so far (PIZ, PXR24): the uint channel exactly, the float channel exactly
+    /// or, for PXR24, within one unit of its 24-bit value; then the half channels exactly. (The
+    /// bounds of B44 and DWA come with those codecs.)
     fn compare_close(&self, o: &Pixels, comp: Compression, otag: &str, selftag: &str) {
-        assert_eq!(
-            comp,
-            Compression::PIZ,
+        assert!(
+            comp == Compression::PIZ || comp == Compression::PXR24,
             "the bounds of this codec come with it"
         );
         for y in 0..self.h {
@@ -177,10 +176,17 @@ impl Pixels {
                 let idx = (y * self.stride_x + x) as usize;
                 let at = |chan: &str| format!("{chan} at {x}, {y}: {otag} vs {selftag}");
                 assert_eq!(o.i[idx], self.i[idx], "{}", at("I"));
-                // b44 & dwa don't change floats
-                let (af, bf) = (o.f[idx], self.f[idx]);
-                if !(af.is_nan() && bf.is_nan()) {
-                    assert_eq!(af.to_bits(), bf.to_bits(), "{}", at("F"));
+                if comp == Compression::PXR24 {
+                    let a = o.f[idx].to_bits();
+                    let b = self.f[idx].to_bits();
+                    let delta = (a >> 8) as i32 - (b >> 8) as i32;
+                    assert!(delta < 2 && delta > -2, "{}", at("F"));
+                } else {
+                    // b44 & dwa don't change floats
+                    let (af, bf) = (o.f[idx], self.f[idx]);
+                    if !(af.is_nan() && bf.is_nan()) {
+                        assert_eq!(af.to_bits(), bf.to_bits(), "{}", at("F"));
+                    }
                 }
             }
         }
@@ -549,7 +555,9 @@ fn do_write_read(
         | Compression::ZIP
         | Compression::ZIPS
         | Compression::ZSTD => restore.compare_exact(p, "orig", "C loaded C"),
-        Compression::PIZ => restore.compare_close(p, comp, "orig", "C loaded C"),
+        Compression::PIZ | Compression::PXR24 => {
+            restore.compare_close(p, comp, "orig", "C loaded C")
+        }
         _ => panic!("Unknown compression type {}", comp.0),
     }
 
@@ -591,6 +599,7 @@ fn cpp_half(
         Compression::ZIPS => "ZIPS_COMPRESSION",
         Compression::ZIP => "ZIP_COMPRESSION",
         Compression::PIZ => "PIZ_COMPRESSION",
+        Compression::PXR24 => "PXR24_COMPRESSION",
         _ => panic!("no wheel name for this test's compression"),
     };
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -760,4 +769,10 @@ fn test_huf() {
 #[test]
 fn test_piz_compression() {
     test_comp(Compression::PIZ);
+}
+
+/// Port of `testPXR24Compression` (src/test/OpenEXRCoreTest/compression.cpp:1677-1681) @ v3.5.3.
+#[test]
+fn test_pxr24_compression() {
+    test_comp(Compression::PXR24);
 }
