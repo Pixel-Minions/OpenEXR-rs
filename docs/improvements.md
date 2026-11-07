@@ -126,7 +126,8 @@ section. An entry says:
   setters that copy into an attribute of the same size: `exr_attr_set_bytes`,
   `exr_attr_set_float_vector`, `exr_attr_set_preview` and `exr_attr_set_string_vector`
   (`part_attr.c:1294-1405`, `1612-1702`, `1882-1976`, `2156-2279`). An array with fewer
-  elements is read past its end.
+  elements is read past its end. Likewise `exr_read_chunk` and `exr_read_deep_chunk`
+  (`chunk.c:1516-1672`) write past the end of a buffer smaller than the chunk.
 - **Who notices:** callers passing a count larger than their array; C cannot tell.
 - **The port:** the array is a slice, so its length is known; a slice shorter than the count
   is refused with `EXR_ERR_INVALID_ARGUMENT` and its default message.

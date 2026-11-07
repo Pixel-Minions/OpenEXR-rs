@@ -1111,3 +1111,191 @@ impl Context {
         Ok(cinfo)
     }
 }
+
+impl Context {
+    /// The checks `exr_read_chunk` and `exr_read_deep_chunk` share
+    /// (src/lib/OpenEXRCore/chunk.c:1533-1549 @ v3.5.3).
+    fn check_chunk_block_info(&self, part: &Part, cinfo: &ChunkInfo) -> Result<(), Error> {
+        if cinfo.idx < 0 || cinfo.idx >= part.chunk_count {
+            return Err(self.print_error(
+                ErrorCode::InvalidArgument,
+                "invalid chunk index (%d) vs part chunk count %d",
+                &[cinfo.idx.into(), part.chunk_count.into()],
+            ));
+        }
+        if cinfo.type_ != part.storage_mode.0 as u8 {
+            return Err(self.report_error(
+                ErrorCode::InvalidArgument,
+                b"mismatched storage type for chunk block info",
+            ));
+        }
+        if cinfo.compression != part.comp_type.0 as u8 {
+            return Err(self.report_error(
+                ErrorCode::InvalidArgument,
+                b"mismatched compression type for chunk block info",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Port of `exr_read_chunk` (src/lib/OpenEXRCore/chunk.c:1516-1585 @ v3.5.3): reads the
+    /// chunk's packed bytes into the start of `packed_data`. Uncompressed chunks may be short
+    /// in the file; the rest is zeroed. A buffer shorter than `packed_size` is refused
+    /// (docs/improvements.md, U-2).
+    pub fn read_chunk(
+        &self,
+        part_index: i32,
+        cinfo: &ChunkInfo,
+        packed_data: Option<&mut [u8]>,
+    ) -> Result<(), Error> {
+        let part = self.part_read_only(part_index)?;
+        let toread = cinfo.packed_size;
+        let packed_data = match packed_data {
+            None if toread > 0 => return Err(self.standard_error(ErrorCode::InvalidArgument)),
+            Some(b) if (b.len() as u64) < toread => {
+                return Err(self.standard_error(ErrorCode::InvalidArgument));
+            }
+            p => p,
+        };
+        self.check_chunk_block_info(part, cinfo)?;
+
+        let mut dataoffset = cinfo.data_offset;
+        if self.file_size > 0 && dataoffset > self.file_size as u64 {
+            return Err(self.print_error(
+                ErrorCode::InvalidArgument,
+                "chunk block info data offset (%llu) past end of file (%lld)",
+                &[Arg::U64(dataoffset), Arg::I64(self.file_size)],
+            ));
+        }
+
+        // allow a short read if uncompressed
+        let rmode = if part.comp_type == Compression::NONE {
+            ReadMode::AllowShortRead
+        } else {
+            ReadMode::MustReadAll
+        };
+
+        if toread > 0 {
+            let buf = &mut packed_data.expect("checked")[..toread as usize];
+            let mut nread: i64 = 0;
+            let rv = dispatch_read(
+                &self.core,
+                &self.read_fn,
+                buf,
+                &mut dataoffset,
+                &mut nread,
+                rmode,
+            );
+            if rmode == ReadMode::AllowShortRead && nread >= 0 && nread < toread as i64 {
+                buf[nread as usize..].fill(0);
+            }
+            rv
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Port of `exr_read_deep_chunk` (src/lib/OpenEXRCore/chunk.c:1589-1672 @ v3.5.3): reads
+    /// the sample count table into `sample_data` and the packed data into `packed_data`, each
+    /// when given, both exactly as stored in the file. A buffer shorter than what it is to
+    /// receive is refused (docs/improvements.md, U-2).
+    pub fn read_deep_chunk(
+        &self,
+        part_index: i32,
+        cinfo: &ChunkInfo,
+        packed_data: Option<&mut [u8]>,
+        sample_data: Option<&mut [u8]>,
+    ) -> Result<(), Error> {
+        let part = self.part_read_only(part_index)?;
+        self.check_chunk_block_info(part, cinfo)?;
+
+        if self.file_size > 0 && cinfo.sample_count_data_offset > self.file_size as u64 {
+            return Err(self.print_error(
+                ErrorCode::InvalidArgument,
+                "chunk block info sample count offset (%llu) past end of file (%lld)",
+                &[
+                    Arg::U64(cinfo.sample_count_data_offset),
+                    Arg::I64(self.file_size),
+                ],
+            ));
+        }
+        if self.file_size > 0 && cinfo.data_offset > self.file_size as u64 {
+            return Err(self.print_error(
+                ErrorCode::InvalidArgument,
+                "chunk block info data offset (%llu) past end of file (%lld)",
+                &[Arg::U64(cinfo.data_offset), Arg::I64(self.file_size)],
+            ));
+        }
+
+        let short = |b: &Option<&mut [u8]>, n: u64| {
+            b.as_ref().is_some_and(|b| n > 0 && (b.len() as u64) < n)
+        };
+        if short(&sample_data, cinfo.sample_count_table_size)
+            || short(&packed_data, cinfo.packed_size)
+        {
+            return Err(self.standard_error(ErrorCode::InvalidArgument));
+        }
+
+        let rmode = ReadMode::MustReadAll;
+        if let Some(sample_data) = sample_data
+            && cinfo.sample_count_table_size > 0
+        {
+            let mut dataoffset = cinfo.sample_count_data_offset;
+            let mut nread: i64 = 0;
+            let buf = &mut sample_data[..cinfo.sample_count_table_size as usize];
+            dispatch_read(
+                &self.core,
+                &self.read_fn,
+                buf,
+                &mut dataoffset,
+                &mut nread,
+                rmode,
+            )?;
+        }
+
+        // Both buffers are returned exactly as stored in the file, like exr_read_chunk: the
+        // sample count table may be compressed, and when it isn't, its counts are
+        // little-endian. The decode pipeline (unpack_sample_table) does the conversion to
+        // native order, and the raw chunk readers in the C++ API copy these bytes verbatim.
+
+        if let Some(packed_data) = packed_data
+            && cinfo.packed_size > 0
+        {
+            let mut dataoffset = cinfo.data_offset;
+            let mut nread: i64 = 0;
+            let buf = &mut packed_data[..cinfo.packed_size as usize];
+            dispatch_read(
+                &self.core,
+                &self.read_fn,
+                buf,
+                &mut dataoffset,
+                &mut nread,
+                rmode,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::Context;
+    use crate::upstream_tests::read::test_image_dir;
+
+    /// `exr_read_chunk` hands back the file's bytes at the chunk's data offset, as read here
+    /// with `std::fs`.
+    #[test]
+    fn read_chunk_returns_the_file_bytes() {
+        let path = test_image_dir() + "v1.7.test.interleaved.exr";
+        let file = std::fs::read(&path).expect("test image");
+        let f = Context::start_read(Some(&path), None).expect("exr_start_read");
+        let dw = f.get_data_window(0).unwrap();
+        for y in [dw.min.y, dw.max.y] {
+            let cinfo = f.read_scanline_chunk_info(0, y).unwrap();
+            let mut buf = vec![0xAAu8; cinfo.packed_size as usize];
+            f.read_chunk(0, &cinfo, Some(&mut buf)).unwrap();
+            let at = cinfo.data_offset as usize;
+            assert_eq!(buf, file[at..at + cinfo.packed_size as usize]);
+        }
+    }
+}

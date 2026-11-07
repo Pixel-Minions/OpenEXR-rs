@@ -1090,7 +1090,7 @@ path = "src/lib/OpenEXRCore/chunk.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/chunk.rs"
-note = "chunk table (read, validate, reconstruct), exr_read_scanline_chunk_info, exr_read_tile_chunk_info, exr_get_chunk_table_offset; exr_read_chunk and exr_read_deep_chunk next; default_initialize with Phase 5; the writes with Phase 6"
+note = "the read side: chunk table (read, validate, reconstruct), the scanline and tile chunk info, exr_read_chunk, exr_read_deep_chunk, exr_get_chunk_table_offset; exr_chunk_default_initialize with Phase 5; the writes with Phase 6"
 
 [[file]]
 path = "src/lib/OpenEXRCore/coding.c"
