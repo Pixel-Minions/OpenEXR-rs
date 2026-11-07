@@ -321,7 +321,9 @@ note = "infile_base, mem_infile and outfile_base; mem_outfile with the encoder; 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_mem.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/mem.rs"
+note = "line_buf ported, each line its own vector; the allocators and coded_lists follow with the codestream"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_message.h"
@@ -355,7 +357,9 @@ note = "mem_infile ported; mem_outfile with the encoder; the files on disk are n
 [[file]]
 path = "external/OpenJPH/src/core/others/ojph_mem.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/mem.rs"
+note = "line_buf::wrap ported; mem_fixed_allocator and mem_elastic_allocator follow with the codestream"
 
 [[file]]
 path = "external/OpenJPH/src/core/others/ojph_mem_c.c"
@@ -378,12 +382,16 @@ note = "not an x86-64 or ARM path"
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/colour.rs"
+note = "the generic functions ported; the float conversions and the ICT the wheel runs on x86-64 are the SSE2/AVX2 kernels, which follow; the init function's selection follows with the codestream"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/colour.rs"
+note = "the function pointers follow with the codestream's kernel selection"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_avx.cpp"
@@ -398,7 +406,9 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_local.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/colour.rs"
+note = "the generic declarations and CT_CNST ported; the SIMD ones follow with their kernels"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_sse.cpp"
@@ -425,12 +435,16 @@ note = "not an x86-64 or ARM path"
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/transform.rs"
+note = "the generic lifting ported (the reversible kernels match the SIMD ones; the irreversible float kernels the wheel runs on x86-64 follow); the init function's selection follows with the codestream"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/transform.rs"
+note = "the function pointers follow with the codestream's kernel selection"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx.cpp"
@@ -450,7 +464,9 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_local.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/transform.rs"
+note = "the generic declarations ported; the SIMD ones follow with their kernels"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_sse.cpp"

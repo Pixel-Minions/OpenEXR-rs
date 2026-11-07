@@ -15,11 +15,17 @@ mod block_decoder32;
 #[allow(dead_code)] // used as the port grows
 mod block_decoder64;
 #[allow(dead_code)] // used as the port grows
+mod colour;
+#[allow(dead_code)] // used as the port grows
 mod file;
+#[allow(dead_code)] // used as the port grows
+mod mem;
 #[allow(dead_code)] // used as the port grows
 mod message;
 #[allow(dead_code)] // used as the port grows
 mod params;
+#[allow(dead_code)] // used as the port grows
+mod transform;
 
 pub use base::{Point, Rect, Size};
 pub use file::{Infile, MemInfile, Outfile, Seek};
