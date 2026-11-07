@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/openexr-core", "crates/openexr-testkit", "xtask"]
+members = ["crates/openexr-core", "crates/openexr-deflate", "crates/openexr-testkit", "xtask"]
 
 [workspace.package]
 # Our own semver, with the matched OpenEXR release as build metadata (PLAN.md §2).
@@ -17,6 +17,7 @@ publish = false
 
 [workspace.dependencies]
 openexr-core = { path = "crates/openexr-core", package = "openexr-rs-core" }
+openexr-deflate = { path = "crates/openexr-deflate", package = "openexr-rs-deflate" }
 openexr-testkit = { path = "crates/openexr-testkit" }
 # Third-party dependencies are pinned to exact versions (`=x.y.z`), each with a reason and the
 # owner's OK (CLAUDE.md). None yet.
@@ -44,6 +45,8 @@ neg_cmp_op_on_partial_ord = "allow"
 manual_div_ceil = "allow"
 # C index loops (`for (int i = 0; i < n; ++i) a[i] ...`) stay as written.
 needless_range_loop = "allow"
+# `x % n != 0` stays as C writes it.
+manual_is_multiple_of = "allow"
 too_many_arguments = "allow"
 dbg_macro = "deny"
 todo = "deny"

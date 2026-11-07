@@ -10,6 +10,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "openexr-rs-deflate"
+version = "0.0.0+openexr.3.5.3"
+
+[[package]]
 name = "openexr-testkit"
 version = "0.0.0"
 

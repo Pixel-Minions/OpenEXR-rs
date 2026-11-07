@@ -423,7 +423,7 @@ Each has a recommendation. Status on 2026-11-07:
 | Item | Status |
 |---|---|
 | O1 Oracle | Open; needed for the heavy tier (§8) |
-| O2 Vendored libraries | Open; needed for Phase 5 |
+| O2 Vendored libraries | **Decided** (owner, 2026-11-07): A, port libdeflate, zstd and OpenJPH exactly, each as its own crate, in the stage that needs it |
 | O3 SIMD | Open; needed for Phase 5 |
 | O4 Layout and naming | Recommendation in use since the owner started the port (2026-11-07); open to change until anything is published |
 | O5 Rust version | Recommendation in use since the owner started the port (2026-11-07); open to change |

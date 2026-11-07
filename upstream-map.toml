@@ -482,7 +482,8 @@ status = "todo"
 [[file]]
 path = "external/deflate/COPYING"
 kind = "license"
-status = "todo"
+status = "done"
+target = "THIRD-PARTY-NOTICES.md"
 note = "carried into THIRD-PARTY-NOTICES.md with the port"
 
 [[file]]
@@ -505,7 +506,9 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/adler32.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/adler32.rs"
+note = "adler32_generic; the x86 vector versions give the same sums (performance, PLAN.md O3)"
 
 [[file]]
 path = "external/deflate/lib/arm/adler32_impl.h"
@@ -580,7 +583,9 @@ note = "not compiled into OpenEXRCore (compression.c:43-53)"
 [[file]]
 path = "external/deflate/lib/decompress_template.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/deflate_decompress.rs"
+note = "the decode loop, 64-bit x86 build"
 
 [[file]]
 path = "external/deflate/lib/deflate_compress.c"
@@ -595,12 +600,16 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/deflate_constants.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-deflate/src/deflate_constants.rs"
+note = "the constants the decompressor uses; the rest with the compressor"
 
 [[file]]
 path = "external/deflate/lib/deflate_decompress.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/deflate_decompress.rs"
+note = "ported whole (portable path); checked against the platform zlib's streams (heavy tier) and, with ZIP, against the wheel"
 
 [[file]]
 path = "external/deflate/lib/gzip_compress.c"
@@ -684,7 +693,8 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/x86/decompress_impl.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "the BMI2 build of the same decode loop; same results (performance, PLAN.md O3)"
 
 [[file]]
 path = "external/deflate/lib/x86/matchfinder_impl.h"
@@ -699,17 +709,22 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/zlib_constants.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-deflate/src/zlib_decompress.rs"
 
 [[file]]
 path = "external/deflate/lib/zlib_decompress.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/zlib_decompress.rs"
+note = "ported whole; heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/deflate/libdeflate.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/lib.rs"
+note = "the decompression API; the compression API with ZIP's compressor"
 
 [[file]]
 path = "external/patchup_deflate_lib.sed"

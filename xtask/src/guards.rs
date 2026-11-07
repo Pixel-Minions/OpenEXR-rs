@@ -44,10 +44,21 @@ const COPYRIGHTS: &[&str] = &[
     "// Copyright (c) DreamWorks Animation LLC and Contributors of the OpenEXR Project.",
 ];
 
+/// The header of the ports of vendored libraries, by crate directory: their own license and
+/// copyright lines (CLAUDE.md, "Headers").
+const VENDORED_HEADERS: &[(&str, &str, &str)] = &[(
+    "crates/openexr-deflate/",
+    "// SPDX-License-Identifier: MIT",
+    "// Copyright 2016 Eric Biggers",
+)];
+
 /// Where a citation's path is resolved, by the version after `@`.
 fn citation_root(root: &Path, tag: &str) -> PathBuf {
     if tag.starts_with("Imath") {
         root.join("upstream/imath")
+    } else if tag.starts_with("libdeflate") {
+        // libdeflate as OpenEXR bundles it; its citations start at `external/deflate/`
+        root.join("upstream/openexr")
     } else {
         root.join("upstream/openexr")
     }
@@ -141,6 +152,18 @@ fn check_header(rel: &str, text: &str, errors: &mut Vec<String>) {
     let mut lines = text.lines();
     let spdx = lines.next().unwrap_or("");
     let copyright = lines.next().unwrap_or("");
+    let rel_slash = rel.replace('\\', "/");
+    if let Some((_, want_spdx, want_copyright)) = VENDORED_HEADERS
+        .iter()
+        .find(|(dir, _, _)| rel_slash.starts_with(dir))
+    {
+        if spdx != *want_spdx || copyright != *want_copyright {
+            errors.push(format!(
+                "{rel}: missing the header of its vendored library ({want_spdx}, {want_copyright})"
+            ));
+        }
+        return;
+    }
     if spdx != SPDX || !COPYRIGHTS.contains(&copyright) {
         errors.push(format!(
             "{rel}: missing the SPDX and copyright header (CLAUDE.md)"

@@ -40,7 +40,7 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
                 "--workspace",
                 "--all-targets",
                 "--features",
-                "openexr-rs-core/heavy",
+                "openexr-rs-core/heavy,openexr-rs-deflate/heavy",
                 "--",
                 "-D",
                 "warnings",
@@ -54,7 +54,7 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
                 "--release",
                 "--quiet",
                 "--features",
-                "openexr-rs-core/heavy",
+                "openexr-rs-core/heavy,openexr-rs-deflate/heavy",
             ],
         )?;
         println!(

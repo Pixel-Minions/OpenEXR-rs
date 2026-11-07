@@ -1,0 +1,24 @@
+[package]
+name = "openexr-rs-deflate"
+description = "An exact Rust port of libdeflate 1.26, as OpenEXR 3.5.3 bundles it"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+name = "openexr_deflate"
+
+[features]
+# The heavy test tier (PLAN.md §8): tests/heavy_*.rs, run by `cargo xtask gate --full`.
+heavy = []
+
+[lints]
+workspace = true
+
+[[test]]
+name = "heavy_zlib_streams"
+required-features = ["heavy"]
