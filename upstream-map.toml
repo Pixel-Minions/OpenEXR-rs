@@ -1299,7 +1299,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_opaque.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/opaque.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_piz.c"
@@ -1403,7 +1404,8 @@ note = "Rust owns allocation; allocator hooks not provided (owner, 2026-11-07, P
 [[file]]
 path = "src/lib/OpenEXRCore/opaque.c"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/opaque.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr.h"
@@ -1633,7 +1635,7 @@ path = "src/test/OpenEXRCoreTest/general_attr.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
-note = "testXDR, testAttrSizes; string, vector, bytes, preview and chlist helpers partial (dummy file until exr_start_write; exr_attr_set_* with Phase 3; print_context_info with debug.c)"
+note = "testXDR, testAttrSizes; string, vector, bytes, preview, chlist and opaque helpers partial (dummy file until exr_start_write; exr_attr_set_* with Phase 3; print_context_info with debug.c)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"

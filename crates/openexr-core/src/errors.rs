@@ -60,6 +60,18 @@ impl ErrorCode {
     }
 }
 
+impl PartialEq<ErrorCode> for ExrResult {
+    fn eq(&self, other: &ErrorCode) -> bool {
+        *self == other.code()
+    }
+}
+
+impl PartialEq<ExrResult> for ErrorCode {
+    fn eq(&self, other: &ExrResult) -> bool {
+        self.code() == *other
+    }
+}
+
 impl From<ErrorCode> for ExrResult {
     fn from(code: ErrorCode) -> Self {
         code.code()

@@ -30,22 +30,24 @@ use crate::base::{
     get_error_code_as_string,
 };
 use crate::cfmt::{self, Arg, Crt};
-use crate::errors::{ErrorCode, ExrResult};
+use crate::errors::ExrResult;
 use crate::internal_constants::EXR_SHORTNAME_MAXLEN;
 
 /// An error from Core: the code, and the message the error handler received with it (`None`
-/// where upstream returns the code without reporting it).
+/// where upstream returns the code without reporting it). The code is the `exr_result_t`
+/// itself: a user callback (a stream, an opaque attribute's pack function) can return any
+/// value, which upstream passes on unchanged. It compares equal to an [`ErrorCode`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
-    pub code: ErrorCode,
+    pub code: ExrResult,
     pub message: Option<Vec<u8>>,
 }
 
 impl Error {
     /// An error returned without a report, as upstream's bare `return EXR_ERR_...`.
-    pub fn bare(code: ErrorCode) -> Error {
+    pub fn bare(code: impl Into<ExrResult>) -> Error {
         Error {
-            code,
+            code: code.into(),
             message: None,
         }
     }
@@ -55,9 +57,9 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let msg = match &self.message {
             Some(m) => String::from_utf8_lossy(m).into_owned(),
-            None => get_default_error_message(self.code.code()).to_owned(),
+            None => get_default_error_message(self.code).to_owned(),
         };
-        write!(f, "({}) {msg}", get_error_code_as_string(self.code.code()))
+        write!(f, "({}) {msg}", get_error_code_as_string(self.code))
     }
 }
 
@@ -89,7 +91,7 @@ pub struct StreamErrors<'a> {
 
 impl StreamErrors<'_> {
     /// Reports `fmt` formatted with `args` and returns the error to propagate.
-    pub fn print_error(&self, code: ErrorCode, fmt: &str, args: &[Arg<'_>]) -> Error {
+    pub fn print_error(&self, code: impl Into<ExrResult>, fmt: &str, args: &[Arg<'_>]) -> Error {
         self.ctxt.print_error(code, fmt, args)
     }
 }
@@ -228,14 +230,15 @@ fn default_error_handler(r: &ErrorReport<'_>) {
 /// `error_handler_fn (NULL, code, msg)` calls).
 pub(crate) fn report_without_context(
     handler: &Option<ErrorHandler>,
-    code: ErrorCode,
+    code: impl Into<ExrResult>,
     msg: &[u8],
 ) -> Error {
+    let code = code.into();
     let report = ErrorReport {
         has_context: false,
         file_name: None,
         context_address: 0,
-        code: code.code(),
+        code,
         message: msg,
     };
     match handler {
@@ -268,12 +271,13 @@ impl fmt::Debug for ContextCore {
 impl ContextCore {
     /// Port of `dispatch_error` (src/lib/OpenEXRCore/internal_structs.c:81-92 @ v3.5.3):
     /// `ctxt->report_error`.
-    pub(crate) fn report_error(&self, code: ErrorCode, msg: &[u8]) -> Error {
+    pub(crate) fn report_error(&self, code: impl Into<ExrResult>, msg: &[u8]) -> Error {
+        let code = code.into();
         (self.error_handler)(&ErrorReport {
             has_context: true,
             file_name: self.filename.as_deref(),
             context_address: self as *const ContextCore as usize,
-            code: code.code(),
+            code,
             message: msg,
         });
         Error {
@@ -284,14 +288,20 @@ impl ContextCore {
 
     /// Port of `dispatch_standard_error` (src/lib/OpenEXRCore/internal_structs.c:96-100
     /// @ v3.5.3): `ctxt->standard_error`.
-    pub(crate) fn standard_error(&self, code: ErrorCode) -> Error {
-        self.report_error(code, get_default_error_message(code.code()).as_bytes())
+    pub(crate) fn standard_error(&self, code: impl Into<ExrResult>) -> Error {
+        let code = code.into();
+        self.report_error(code, get_default_error_message(code).as_bytes())
     }
 
     /// Port of `dispatch_print_error` (src/lib/OpenEXRCore/internal_structs.c:104-142
     /// @ v3.5.3): `ctxt->print_error`, formatting as the platform's `vsnprintf` does. Its
     /// 256-byte stack buffer and heap fallback give the same text for every length.
-    pub(crate) fn print_error(&self, code: ErrorCode, fmt: &str, args: &[Arg<'_>]) -> Error {
+    pub(crate) fn print_error(
+        &self,
+        code: impl Into<ExrResult>,
+        fmt: &str,
+        args: &[Arg<'_>],
+    ) -> Error {
         let msg = cfmt::sprintf(Crt::NATIVE, fmt, args);
         self.report_error(code, &msg)
     }

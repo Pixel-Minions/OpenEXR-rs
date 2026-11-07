@@ -20,6 +20,7 @@ mod internal_constants;
 mod internal_cpuid;
 mod internal_ht_quality;
 mod internal_xdr;
+pub mod opaque;
 pub mod openexr_attr;
 pub mod preview;
 pub mod string;

@@ -9,6 +9,7 @@ use crate::context::Context;
 use crate::errors::ErrorCode;
 use crate::float_vector::AttrFloatVector;
 use crate::internal_xdr::*;
+use crate::opaque::AttrOpaqueData;
 use crate::openexr_attr::{PerceptualTreatment, PixelType};
 use crate::preview::AttrPreview;
 use crate::string::AttrString;
@@ -773,4 +774,78 @@ fn test_chlist_helper() {
         assert_eq!(e.y_sampling, 2);
     }
     f.attr_chlist_destroy(&mut cl);
+}
+
+/// Partial port of `testOpaqueHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:926-1008
+/// @ v3.5.3), run by `testAttrOpaque` (lines 1011-1020). Left out: NULL context and object
+/// calls and the malloc failure (PLAN.md O8).
+#[test]
+fn test_opaque_helper() {
+    let f = create_dummy_file("<opaque>");
+    let mut o = AttrOpaqueData::default();
+    let data4: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
+    let inval = ErrorCode::InvalidArgument;
+    assert_eq!(
+        f.attr_opaquedata_init(&mut o, i32::MAX as usize + 1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        f.attr_opaquedata_init(&mut o, u32::MAX as usize)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    assert_eq!(
+        f.attr_opaquedata_init(&mut o, usize::MAX).unwrap_err().code,
+        inval
+    );
+
+    f.attr_opaquedata_init(&mut o, 4).unwrap();
+    assert_eq!(o.size, 4);
+    assert_eq!(o.packed_alloc_size, 4);
+    assert!(o.packed_data.is_some());
+    f.attr_opaquedata_destroy(&mut o);
+    assert_eq!(o.size, 0);
+    assert_eq!(o.packed_alloc_size, 0);
+    assert!(o.packed_data.is_none());
+
+    f.attr_opaquedata_create(&mut o, 4, Some(&data4)).unwrap();
+    assert_eq!(o.size, 4);
+    assert_eq!(o.packed_alloc_size, 4);
+    assert_eq!(o.packed_data(), Some(&data4[..]));
+
+    let mut o2 = AttrOpaqueData::default();
+    f.attr_opaquedata_copy(&mut o2, &o).unwrap();
+    assert_eq!(o2.size, 4);
+    assert_eq!(o2.packed_alloc_size, 4);
+    assert_eq!(o2.packed_data(), Some(&data4[..]));
+    f.attr_opaquedata_destroy(&mut o2);
+
+    f.attr_opaquedata_destroy(&mut o);
+    // make sure we can re-delete something?
+    f.attr_opaquedata_destroy(&mut o);
+
+    let unpacked = || -> Option<crate::opaque::Unpacked> { Some(std::sync::Arc::new(data4)) };
+    f.attr_opaquedata_init(&mut o, 0).unwrap();
+    assert_eq!(
+        f.attr_opaquedata_set_unpacked(&mut o, unpacked(), -1)
+            .unwrap_err()
+            .code,
+        inval
+    );
+    f.attr_opaquedata_set_unpacked(&mut o, unpacked(), 4)
+        .unwrap();
+    f.attr_opaquedata_destroy(&mut o);
+    f.attr_opaquedata_init(&mut o, 0).unwrap();
+    f.attr_opaquedata_set_unpacked(&mut o, unpacked(), 4)
+        .unwrap();
+    f.attr_opaquedata_set_unpacked(&mut o, None, 0).unwrap();
+    f.attr_opaquedata_create(&mut o, 4, Some(&data4)).unwrap();
+    f.attr_opaquedata_set_unpacked(&mut o, unpacked(), 4)
+        .unwrap();
+    f.attr_opaquedata_copy(&mut o2, &o).unwrap();
+    f.attr_opaquedata_destroy(&mut o2);
+    f.attr_opaquedata_destroy(&mut o);
 }
