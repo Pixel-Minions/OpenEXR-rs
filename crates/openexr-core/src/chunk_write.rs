@@ -15,7 +15,7 @@ use crate::cfmt::Arg;
 use crate::chunk_info::{ChunkInfo, compute_chunk_unpack_size, part_channels};
 use crate::context::{ChunkTable, Context, ContextMode, Error, Part, dispatch_write};
 use crate::errors::ErrorCode;
-use crate::openexr_attr::{Box2i, LineOrder, PixelType, Storage};
+use crate::openexr_attr::{Box2i, LineOrder, PixelType, Storage, TileLevelMode};
 
 /// Whether scanline chunk `cidx` may follow chunk `last` (-1 before the part's first). Upstream
 /// asks for increasing chunk indices whatever the line order, so a `DECREASING_Y` file stores
@@ -33,6 +33,82 @@ fn next_scan_chunk(part: &Part, last: i32, cidx: i32) -> bool {
     } else {
         last == cidx - 1
     }
+}
+
+/// The tile levels of `part` in chunk order: each level's first chunk index and its tile
+/// counts. `None` without a tile description (which the chunk index computation refuses
+/// first).
+fn tile_levels_in_chunk_order(part: &Part) -> Option<Vec<(i64, i32, i32)>> {
+    let Some(AttrValue::TileDesc(td)) = part.attr(part.tiles).map(|a| a.value()) else {
+        return None;
+    };
+    let (cx, cy) = (&part.tile_level_tile_count_x, &part.tile_level_tile_count_y);
+    let (nlx, nly) = (
+        part.num_tile_levels_x.max(0) as usize,
+        part.num_tile_levels_y.max(0) as usize,
+    );
+    let levels: Vec<(usize, usize)> = if td.level_mode() == TileLevelMode::RIPMAP_LEVELS {
+        (0..nly)
+            .flat_map(|ly| (0..nlx).map(move |lx| (lx, ly)))
+            .collect()
+    } else {
+        (0..nlx).map(|l| (l, l)).collect()
+    };
+    let mut base = 0i64;
+    let mut out = Vec::with_capacity(levels.len());
+    for (lx, ly) in levels {
+        let (nx, ny) = (*cx.get(lx)?, *cy.get(ly)?);
+        out.push((base, nx, ny));
+        base += i64::from(nx) * i64::from(ny);
+    }
+    Some(out)
+}
+
+/// Whether tile chunk `cidx` may follow chunk `last` (-1 before the part's first). Upstream
+/// asks for increasing chunk indices whatever the line order; for a `DECREASING_Y` part the
+/// port asks for the C++ library's order instead (`TiledOutputFile::Data::nextTileCoord`,
+/// src/lib/OpenEXR/ImfTiledOutputFile.cpp:281-386 @ v3.5.3): the levels in chunk order, each
+/// from its top row of tiles down, each row left to right, starting at row `numYTiles - 1` of
+/// level 0 (ImfTiledOutputFile.cpp:995-997), a deviation (docs/improvements.md, I-18).
+fn next_tile_chunk(part: &Part, last: i32, cidx: i32) -> bool {
+    if part.lineorder == LineOrder::RANDOM_Y {
+        return true;
+    }
+    if part.lineorder != LineOrder::DECREASING_Y {
+        return last == cidx - 1;
+    }
+    let Some(levels) = tile_levels_in_chunk_order(part) else {
+        return false;
+    };
+    let next = if last < 0 {
+        levels
+            .first()
+            .map(|&(base, _, ny)| base + i64::from(ny - 1) * i64::from(levels[0].1))
+    } else {
+        let last = i64::from(last);
+        levels
+            .iter()
+            .position(|&(base, nx, ny)| last >= base && last < base + i64::from(nx) * i64::from(ny))
+            .and_then(|li| {
+                let (base, nx, _) = levels[li];
+                let (mut ty, mut tx) =
+                    ((last - base) / i64::from(nx), (last - base) % i64::from(nx));
+                let mut li = li;
+                tx += 1;
+                if tx >= i64::from(nx) {
+                    tx = 0;
+                    ty -= 1;
+                    if ty < 0 {
+                        // the next tile is in the next level
+                        li += 1;
+                        ty = i64::from(levels.get(li)?.2) - 1;
+                    }
+                }
+                let (base, nx, _) = levels[li];
+                Some(base + ty * i64::from(nx) + tx)
+            })
+    };
+    next == Some(i64::from(cidx))
 }
 
 /// `%p` of a slice argument: NULL for `None`.
@@ -261,7 +337,9 @@ impl Context {
         Ok(cinfo)
     }
 
-    /// Port of `exr_write_tile_chunk_info` (src/lib/OpenEXRCore/chunk.c:1960-2064 @ v3.5.3).
+    /// Port of `exr_write_tile_chunk_info` (src/lib/OpenEXRCore/chunk.c:1960-2064 @ v3.5.3): a
+    /// tile of a level above 0 is clipped to the level, as the read side does
+    /// (docs/improvements.md, I-21).
     pub fn write_tile_chunk_info(
         &self,
         part_index: i32,
@@ -281,27 +359,28 @@ impl Context {
             unreachable!("checked by validate_and_compute_tile_chunk_off")
         };
 
-        let mut tilew = part.tile_level_tile_size_x[levelx as usize];
-        if tiledesc.x_size < tilew as u32 {
-            tilew = tiledesc.x_size as i32;
-        }
-        let mut tileh = part.tile_level_tile_size_y[levely as usize];
-        if tiledesc.y_size < tileh as u32 {
-            tileh = tiledesc.y_size as i32;
+        // Upstream clips the last tiles of a level against the data window, the size of level 0,
+        // so a tile of a smaller level keeps the whole tile size; the port clips against the
+        // level's size, as exr_read_tile_chunk_info does (chunk.c:1177-1193 @ v3.5.3), a
+        // deviation (docs/improvements.md, I-21). Level 0 gives the same sizes both ways.
+        let mut tilew = tiledesc.x_size as i32;
+        let dend = i64::from(part.tile_level_tile_size_x[levelx as usize]);
+        let mut tend = i64::from(tilew) * i64::from(tilex + 1);
+        if tend > dend {
+            tend -= dend;
+            if tend < i64::from(tilew) {
+                tilew -= tend as i32;
+            }
         }
 
-        let dw = part.data_window;
-        if i64::from(tilex) * i64::from(tilew) + i64::from(tilew) + i64::from(dw.min.x) - 1
-            > i64::from(dw.max.x)
-        {
-            let sz = i64::from(dw.max.x) - i64::from(dw.min.x) + 1;
-            tilew = (sz - i64::from(tilex) * i64::from(tilew)) as i32;
-        }
-        if i64::from(tiley) * i64::from(tileh) + i64::from(tileh) + i64::from(dw.min.y) - 1
-            > i64::from(dw.max.y)
-        {
-            let sz = i64::from(dw.max.y) - i64::from(dw.min.y) + 1;
-            tileh = (sz - i64::from(tiley) * i64::from(tileh)) as i32;
+        let mut tileh = tiledesc.y_size as i32;
+        let dend = i64::from(part.tile_level_tile_size_y[levely as usize]);
+        let mut tend = i64::from(tileh) * i64::from(tiley + 1);
+        if tend > dend {
+            tend -= dend;
+            if tend < i64::from(tileh) {
+                tileh -= tend as i32;
+            }
         }
 
         let mut cinfo = ChunkInfo {
@@ -575,7 +654,7 @@ impl Context {
                 ],
             ));
         }
-        if part.lineorder != LineOrder::RANDOM_Y && self.last_output_chunk != cidx - 1 {
+        if !next_tile_chunk(part, self.last_output_chunk, cidx) {
             return Err(self.print_error(
                 ErrorCode::IncorrectChunk,
                 "Chunk index %d is not the next chunk to be written (last %d)",
@@ -689,7 +768,7 @@ impl Context {
             ));
         }
         let next = if tiled {
-            part.lineorder == LineOrder::RANDOM_Y || self.last_output_chunk == cidx - 1
+            next_tile_chunk(part, self.last_output_chunk, cidx)
         } else {
             next_scan_chunk(part, self.last_output_chunk, cidx)
         };
@@ -708,6 +787,7 @@ impl Context {
 pub(crate) mod tests {
     use crate::chunk_info::ChunkInfo;
     use crate::context::{Context, Error};
+    use crate::errors::ErrorCode;
     use crate::openexr_attr::{Storage, TileLevelMode};
     use crate::upstream_tests::read::test_image_dir;
     use crate::write_header::tests::copy_header;
@@ -715,8 +795,9 @@ pub(crate) mod tests {
     /// A chunk of a file: its first line (or tile x, tile y and levels) and its information.
     pub(crate) type FileChunk = (i32, i32, i32, i32, ChunkInfo);
 
-    /// Part `p`'s chunks of `src`, in the order the C++ library writes them: chunk order,
-    /// from the bottom for a decreasing-Y scanline part.
+    /// Part `p`'s chunks of `src`, in the order the C++ library writes them: chunk order; for a
+    /// decreasing-Y part, from the bottom (scanlines), or each level from its top row of tiles
+    /// down (tiles).
     pub(crate) fn chunks_in_write_order(src: &Context, p: i32) -> Result<Vec<FileChunk>, Error> {
         let mut chunks = Vec::new();
         if src.get_storage(p)? == Storage::SCANLINE {
@@ -751,6 +832,14 @@ pub(crate) mod tests {
             && src.get_lineorder(p)? == crate::openexr_attr::LineOrder::DECREASING_Y
         {
             chunks.reverse();
+        } else if src.get_lineorder(p)? == crate::openexr_attr::LineOrder::DECREASING_Y {
+            // tiles: each level from its top row down, each row left to right
+            let mut first = std::collections::HashMap::new();
+            for c in &chunks {
+                let e = first.entry((c.2, c.3)).or_insert(c.4.idx);
+                *e = (*e).min(c.4.idx);
+            }
+            chunks.sort_by_key(|c| (first[&(c.2, c.3)], std::cmp::Reverse(c.1), c.0));
         }
         Ok(chunks)
     }
@@ -811,5 +900,84 @@ pub(crate) mod tests {
             same += 1;
         }
         assert!(same > 0);
+    }
+
+    /// A mipmapped `DECREASING_Y` tiled part takes its tiles in the C++ library's order (each
+    /// level from its top row down, each row left to right) and refuses chunk order; every
+    /// tile reads back from where it was written (docs/improvements.md, I-18). The wheel
+    /// writes only level 0 of such a part, so the order across levels rests on the C++
+    /// library's source (ImfTiledOutputFile.cpp:281-386 @ v3.5.3).
+    #[test]
+    fn decreasing_mipmapped_tiles_go_in_the_cpp_librarys_order() {
+        use crate::context::DefaultWriteMode;
+        use crate::openexr_attr::TileRoundMode;
+        use crate::openexr_attr::{Compression, LineOrder, PerceptualTreatment, PixelType};
+
+        let path = crate::upstream_tests::read::make_temp_dir() + "decreasing_mip.exr";
+        let mut f =
+            Context::start_write(Some(&path), DefaultWriteMode::WriteFileDirectly, None).unwrap();
+        let p = f.add_part(Some("mip"), Storage::TILED).unwrap();
+        f.initialize_required_attr_simple(p, 37, 23, Compression::NONE)
+            .unwrap();
+        f.add_channel(
+            p,
+            Some("Y"),
+            PixelType::FLOAT,
+            PerceptualTreatment::LINEAR,
+            1,
+            1,
+        )
+        .unwrap();
+        f.set_tile_descriptor(
+            p,
+            16,
+            8,
+            TileLevelMode::MIPMAP_LEVELS,
+            TileRoundMode::ROUND_DOWN,
+        )
+        .unwrap();
+        f.set_lineorder(p, LineOrder::DECREASING_Y).unwrap();
+        f.write_header().unwrap();
+
+        let (nlx, _) = f.get_tile_levels(p).unwrap();
+        assert!(nlx > 1, "a mipmapped part");
+        let mut order = Vec::new();
+        for l in 0..nlx {
+            let (cx, cy) = f.get_tile_counts(p, l, l).unwrap();
+            for ty in (0..cy).rev() {
+                for tx in 0..cx {
+                    order.push((tx, ty, l));
+                }
+            }
+        }
+        // the chunk order is refused: the first tile is the top-left one of level 0's last row
+        let (_, cy0) = f.get_tile_counts(p, 0, 0).unwrap();
+        assert!(cy0 > 1);
+        let first = f.write_tile_chunk_info(p, 0, 0, 0, 0).unwrap();
+        let data = vec![0u8; first.unpacked_size as usize];
+        assert_eq!(
+            f.write_tile_chunk(p, 0, 0, 0, 0, Some(&data))
+                .unwrap_err()
+                .code,
+            ErrorCode::IncorrectChunk
+        );
+
+        // each tile's bytes: its position in the order, repeated
+        let bytes = |i: usize, n: usize| vec![i as u8; n];
+        for (i, &(tx, ty, l)) in order.iter().enumerate() {
+            let c = f.write_tile_chunk_info(p, tx, ty, l, l).unwrap();
+            let data = bytes(i, c.unpacked_size as usize);
+            f.write_tile_chunk(p, tx, ty, l, l, Some(&data)).unwrap();
+        }
+        f.finish().unwrap();
+
+        let r = Context::start_read(Some(&path), None).unwrap();
+        for (i, &(tx, ty, l)) in order.iter().enumerate() {
+            let c = r.read_tile_chunk_info(p, tx, ty, l, l).unwrap();
+            let mut got = vec![0u8; c.packed_size as usize];
+            r.read_chunk(p, &c, Some(&mut got)).unwrap();
+            assert!(got == bytes(i, got.len()), "tile {tx}, {ty} of level {l}");
+        }
+        let _ = std::fs::remove_file(&path);
     }
 }

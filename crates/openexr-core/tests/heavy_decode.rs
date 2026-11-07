@@ -505,9 +505,9 @@ const ENCODES: [Compression; 4] = [
     Compression::ZIP,
 ];
 
-/// Part `p`'s chunks, in the order the C++ library writes them: chunk order, from the bottom
-/// for a decreasing-Y scanline part. Each is its first line (or tile and levels) and its
-/// information.
+/// Part `p`'s chunks, in the order the C++ library writes them: chunk order; for a
+/// decreasing-Y part, from the bottom (scanlines), or each level from its top row of tiles
+/// down (tiles). Each is its first line (or tile and levels) and its information.
 fn chunks_in_write_order(
     src: &Context,
     p: i32,
@@ -545,6 +545,14 @@ fn chunks_in_write_order(
     if src.get_storage(p)? == Storage::SCANLINE && src.get_lineorder(p)? == LineOrder::DECREASING_Y
     {
         chunks.reverse();
+    } else if src.get_lineorder(p)? == LineOrder::DECREASING_Y {
+        // tiles: each level from its top row down, each row left to right
+        let mut first = std::collections::HashMap::new();
+        for c in &chunks {
+            let e = first.entry((c.2, c.3)).or_insert(c.4.idx);
+            *e = (*e).min(c.4.idx);
+        }
+        chunks.sort_by_key(|c| (first[&(c.2, c.3)], std::cmp::Reverse(c.1), c.0));
     }
     Ok(chunks)
 }
@@ -614,8 +622,8 @@ fn as_port_writes(src: &Context, file: &[u8]) -> Vec<u8> {
 /// port encodes their pixels again, but for a single-part file's `type` attribute
 /// ([`as_port_writes`]): every scanline and tiled image of [`images`] whose parts all use one
 /// of [`ENCODES`]' compressions, in every layout `oracle/write_images.py` writes (subsampled,
-/// mixed types, mipmapped tiles among them). Upstream's test images are compared for NONE and
-/// RLE only: older libraries wrote them, with zlib's deflate streams.
+/// mixed types, decreasing-Y scanlines and tiles among them). Upstream's test images are
+/// compared for NONE and RLE only: older libraries wrote them, with zlib's deflate streams.
 #[test]
 fn images_encode_as_the_wheel_wrote_them() {
     let scratch =

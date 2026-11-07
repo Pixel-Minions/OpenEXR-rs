@@ -195,11 +195,15 @@ section. An entry says:
   order, where the C++ library stores them from the bottom (`ImfOutputFile.cpp`).
 - **Who notices:** readers that rely on the line order to read a file in storage order, and
   anyone comparing Core's files with the C++ library's.
-- **A fix:** for scanline parts, ask for the chunks from the last one down.
-- **Status:** **fixed** for scanline parts, deviation D-14 (owner, 2026-11-07) (`crates/openexr-core/src/
+- **A fix:** ask for the chunks in the C++ library's order: for scanline parts, from the last
+  one down; for tiled parts, the levels in chunk order, each from its top row of tiles down,
+  each row left to right (`TiledOutputFile::Data::nextTileCoord`,
+  `src/lib/OpenEXR/ImfTiledOutputFile.cpp:281-386`, `995-997` @ v3.5.3).
+- **Status:** **fixed**, deviation D-14 (owner, 2026-11-07) (`crates/openexr-core/src/
   chunk_write.rs`); checked by `chunk_write::tests::files_rewrite_as_the_cpp_library_wrote_them`
-  on lineOrder_decreasing.exr. Tiled parts keep upstream's order for now (the C++ library's
-  tile order is rows bottom up within each level; `docs/deferred.md`).
+  on lineOrder_decreasing.exr, by the heavy tier on the wheel's decreasing scanline and
+  (one-level) tiled files, and, for the order across levels, which the wheel cannot write, by
+  `chunk_write::tests::decreasing_mipmapped_tiles_go_in_the_cpp_librarys_order`.
 ### I-20. An encode pipeline without a pack stage writes an empty chunk
 
 - **Upstream:** `exr_encoding_run` zeroes `packed_bytes` before packing; with no
@@ -213,6 +217,21 @@ section. An entry says:
   compares the size with `compressed_bytes`) is kept as upstream has it.
 - **Status:** **fixed**, deviation D-16 (owner, 2026-11-07) (`crates/openexr-core/src/encoding.rs`);
   checked by `encoding::tests::caller_packed_chunks_are_written`.
+
+### I-21. The write side's tile chunk info ignores the level's size
+
+- **Upstream:** `exr_write_tile_chunk_info` clips the last tiles of a row or column against
+  the data window, which is the size of level 0, so a tile at the edge of a smaller mipmap or
+  ripmap level keeps the whole tile size (`src/lib/OpenEXRCore/chunk.c:2005-2027` @ v3.5.3);
+  `exr_read_tile_chunk_info` clips against the level's own size (`chunk.c:1175-1193`).
+- **Who notices:** writers of mipmapped or ripmapped tiled parts through Core: the chunk info
+  of such tiles is too large, the encode pipeline packs a whole tile, and the file written
+  does not read back (the reader refuses the chunk's sizes).
+- **A fix:** clip as the read side does. Level 0 gives the same sizes both ways.
+- **Status:** **fixed**, deviation D-17 (owner, 2026-11-07, "anything that is a bug we can
+  fix") (`crates/openexr-core/src/chunk_write.rs`); checked by
+  `chunk_write::tests::decreasing_mipmapped_tiles_go_in_the_cpp_librarys_order`, whose
+  mipmapped file reads back tile by tile.
 
 ## Messages and debug output
 
