@@ -7,9 +7,11 @@
 use std::sync::Mutex;
 
 mod base_units;
+mod buffer;
 mod color_metadata;
 pub(crate) mod general_attr;
 pub(crate) mod read;
+mod write;
 
 /// Held by every test that reads or changes the process-wide defaults of `base.c`, so that
 /// tests running in parallel never see each other's values.

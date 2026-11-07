@@ -16,13 +16,12 @@ without the owner's OK.
 | The deep unpackers (`generic_unpack_deep`, `generic_unpack_deep_pointers`); `internal_exr_match_decode` has none for deep parts yet | Phase 7 | 7 |
 | Tests of D-3 (deep tile unpacked size message) and two D-6 messages | Need corrupt deep files | 7 |
 | The F16C kernel of `half_to_float_buffer` (unpack.c:25-81), which GCC builds take at run time | SIMD | 8 |
-| `exr_copy_unset_attributes`' upstream tests (write.cpp) | Phase 6 | 6 |
 | The 2 GiB string and 134M-entry string vector checks of `general_attr.cpp` | Heavy tier | With the heavy tier |
 | Compare Core's error text with the wheel's: the wheel prints Core's own messages on stderr (for example "(EXR_ERR_BAD_CHUNK_LEADER) Invalid chunk size reconstructing chunk table: found out of range 2013265920" for tiled.exr), so the heavy decode check can capture them and compare them with the port's | Found while adding ZIP (5a); a heavy-tier check | 5a's end, or with the heavy tier |
 | libdeflate's other compression levels: fastest (1, `ht_matchfinder.h`) and near-optimal (10-12, `bt_matchfinder.h`); until then `Compressor::new` gives none, and `exr_compress_buffer` answers `EXR_ERR_OUT_OF_MEMORY`, for them. The wheel writes the default level, 4 (its binding has no setting for another), so the streams of every other level (the lazy ones, 5-9, included) can be checked byte for byte only by a source-built harness (PLAN.md O1) | Ported after level 4, the default | 6 |
 | Performance: `exr_compress_buffer` allocates a compressor (about 700 KB of tables) for every chunk, as upstream does; a compressor cached in the pipeline would give the same bytes | A benchmark | 8 |
 | Performance kernels that give upstream's results by construction: ZIP's SSE2/SSE4.1 predictor and interleave, libdeflate's BMI2 decoder and vectorized Adler-32 | PLAN.md O3 (open) and a benchmark | 8 |
 | I-18 for tiled parts: a `DECREASING_Y` tiled part's tiles in the C++ library's order (level by level, rows bottom up, columns left to right; `ImfTiledOutputFile.cpp:332-360`), which is not a reversal of the chunk index | The scanline fix landed with the chunk writes; tiles need the order tracked by tile | Phase 6, before its end |
-| `write.cpp`'s upstream tests (testWrite*, testStartWrite*, testUpdateMeta and the rest) on the encode pipeline | Ported once the codecs they write are in (some need ZIPS) | 6 |
+| `write.cpp`'s testWriteAttrs, with testCopyAttrsLongChannelName (they check `exr_copy_unset_attributes` too); the other 12 tests are in | Next | 6 |
 | `exr_compress_chunk`'s deep sample count table compression (`compression.c:558-622`), which upstream runs on the freshly allocated, unfilled table and never stores (so a compressed deep chunk written by Core alone is refused for its 0-byte table); an I- entry with the deep writers | The deep writers | 7 |
 
