@@ -1069,7 +1069,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/base.c"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/base.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/bytes.c"
@@ -1259,7 +1260,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_ht_quality.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/internal_ht_quality.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_huf.c"
@@ -1394,7 +1396,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_base.h"
 kind = "api"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/base.rs"
+note = "memory routines (exr_set_default_memory_routines) come with memory.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_chunkio.h"
@@ -1444,7 +1448,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_errors.h"
 kind = "api"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/errors.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_part.h"
@@ -1459,7 +1464,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_version.h"
 kind = "api"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/version.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/pack.c"
@@ -1525,7 +1531,9 @@ note = "build system"
 [[file]]
 path = "src/test/OpenEXRCoreTest/base_units.cpp"
 kind = "test"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/tests/base_units.rs"
+note = "testBase, testBaseErrors, testBaseLimits; testBaseDebug, testCPUIdent, testHalf, testTempContext follow in Phase 1"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/base_units.h"

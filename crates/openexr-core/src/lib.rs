@@ -5,3 +5,11 @@
 //!
 //! Each module mirrors one upstream file and each function cites the upstream lines it
 //! translates. `PLAN.md` is the source of truth for scope and order.
+
+pub mod base;
+pub mod errors;
+mod internal_ht_quality;
+pub mod version;
+
+pub use base::*;
+pub use errors::{ErrorCode, ExrResult};

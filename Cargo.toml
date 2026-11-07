@@ -33,6 +33,10 @@ float_cmp = "allow"
 excessive_precision = "allow"
 approx_constant = "allow"
 many_single_char_names = "allow"
+# Port C comparisons as written (CLAUDE.md, "min, max, clamp"): f32::clamp and
+# RangeInclusive::contains are not the C expressions.
+manual_clamp = "allow"
+manual_range_contains = "allow"
 too_many_arguments = "allow"
 dbg_macro = "deny"
 todo = "deny"
