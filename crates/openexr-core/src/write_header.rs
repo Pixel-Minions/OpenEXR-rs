@@ -489,6 +489,48 @@ pub(crate) mod tests {
         Ok((dst, mem))
     }
 
+    /// A file the wheel wrote, `file`, as Core writes it with a legacy header: a single-part
+    /// file without the `type` attribute the binding always writes (write_header.c:719-728
+    /// @ v3.5.3 leaves it out), and its chunk offsets moved back by the record's size. `src`
+    /// is the file, opened.
+    #[cfg(feature = "heavy")]
+    pub(crate) fn without_type_attr_file(src: &Context, file: &[u8]) -> Vec<u8> {
+        if src.get_count() != 1 {
+            return file.to_vec();
+        }
+        let table = src.get_chunk_table_offset(0).unwrap() as usize;
+        let n = src.get_chunk_count(0).unwrap() as usize;
+        let header = &file[..table];
+        let mut out = header[..8].to_vec();
+        let mut at = 8;
+        loop {
+            let start = at;
+            let name_end = at + header[at..].iter().position(|&b| b == 0).expect("name");
+            if name_end == at {
+                out.extend_from_slice(&header[at..]);
+                break;
+            }
+            let type_end = name_end
+                + 1
+                + header[name_end + 1..]
+                    .iter()
+                    .position(|&b| b == 0)
+                    .expect("type");
+            let size =
+                i32::from_le_bytes(header[type_end + 1..type_end + 5].try_into().unwrap()) as usize;
+            at = type_end + 5 + size;
+            if &header[start..name_end] != b"type" {
+                out.extend_from_slice(&header[start..at]);
+            }
+        }
+        let d = (table - out.len()) as u64;
+        for e in file[table..table + 8 * n].as_chunks::<8>().0 {
+            out.extend_from_slice(&(u64::from_le_bytes(*e) - d).to_le_bytes());
+        }
+        out.extend_from_slice(&file[table + 8 * n..]);
+        out
+    }
+
     /// The header the port writes for `src`'s parts, copied into a new context.
     pub(crate) fn rewrite_header(src: &Context) -> Result<Vec<u8>, crate::context::Error> {
         let (_, mem) = copy_header(src)?;

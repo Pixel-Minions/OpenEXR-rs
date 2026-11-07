@@ -505,13 +505,13 @@ const ENCODES: [Compression; 4] = [
     Compression::ZIP,
 ];
 
+/// A chunk of a file: its first line (or tile x, tile y and levels) and its information.
+type FileChunk = (i32, i32, i32, i32, openexr_core::chunk_info::ChunkInfo);
+
 /// Part `p`'s chunks, in the order the C++ library writes them: chunk order; for a
 /// decreasing-Y part, from the bottom (scanlines), or each level from its top row of tiles
 /// down (tiles). Each is its first line (or tile and levels) and its information.
-fn chunks_in_write_order(
-    src: &Context,
-    p: i32,
-) -> Result<Vec<(i32, i32, i32, i32, openexr_core::chunk_info::ChunkInfo)>, Error> {
+fn chunks_in_write_order(src: &Context, p: i32) -> Result<Vec<FileChunk>, Error> {
     use openexr_core::openexr_attr::{LineOrder, TileLevelMode};
     let mut chunks = Vec::new();
     if src.get_storage(p)? == Storage::SCANLINE {
@@ -611,8 +611,8 @@ fn as_port_writes(src: &Context, file: &[u8]) -> Vec<u8> {
     let n = src.get_chunk_count(0).unwrap() as usize;
     let mut out = without_type_attr(&file[..table]);
     let d = (table - out.len()) as u64;
-    for e in file[table..table + 8 * n].chunks_exact(8) {
-        out.extend_from_slice(&(u64::from_le_bytes(e.try_into().unwrap()) - d).to_le_bytes());
+    for e in file[table..table + 8 * n].as_chunks::<8>().0 {
+        out.extend_from_slice(&(u64::from_le_bytes(*e) - d).to_le_bytes());
     }
     out.extend_from_slice(&file[table + 8 * n..]);
     out

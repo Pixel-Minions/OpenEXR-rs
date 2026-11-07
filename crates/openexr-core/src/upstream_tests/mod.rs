@@ -9,6 +9,7 @@ use std::sync::Mutex;
 mod base_units;
 mod buffer;
 mod color_metadata;
+mod compression;
 pub(crate) mod general_attr;
 pub(crate) mod read;
 mod write;

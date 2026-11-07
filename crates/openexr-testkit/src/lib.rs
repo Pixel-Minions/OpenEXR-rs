@@ -8,3 +8,4 @@
 
 pub mod crt;
 pub mod probe;
+pub mod rand48;

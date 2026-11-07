@@ -1681,7 +1681,9 @@ status = "todo"
 [[file]]
 path = "src/test/OpenEXRCoreTest/compression.cpp"
 kind = "test"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/upstream_tests/compression.rs"
+note = "testNoCompression, testRLECompression, testZIPCompression, testZIPSCompression (the C++ half by the wheel, oracle/save_load.py, heavy tier); the other codecs' tests and testHUF with their codecs"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/compression.h"
