@@ -1,0 +1,5 @@
+[toolchain]
+# PLAN.md O5: the toolchain of recon, the first consumer. Each platform builds for its host.
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = ["crates/openexr-core", "xtask"]
+
+[workspace.package]
+# Our own semver, with the matched OpenEXR release as build metadata (PLAN.md §2).
+version = "0.0.0+openexr.3.5.3"
+edition = "2024"
+# PLAN.md O5: recon's toolchain.
+rust-version = "1.99.1"
+license = "BSD-3-Clause"
+authors = ["Contributors to the OpenEXR Project", "Pixel Minions"]
+repository = "https://github.com/Pixel-Minions/OpenEXR-rs"
+keywords = ["openexr", "exr", "image", "hdr", "vfx"]
+categories = ["graphics", "multimedia::images"]
+publish = false
+
+[workspace.dependencies]
+openexr-core = { path = "crates/openexr-core", package = "openexr-rs-core" }
+# Third-party dependencies are pinned to exact versions (`=x.y.z`), each with a reason and the
+# owner's OK (CLAUDE.md). None yet.
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+# `unsafe` only in the files `xtask guards` allows, each with `#![allow(unsafe_code)]` (PLAN.md D8).
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+# Exactness: comparisons and casts are deliberate in a port that must match C bit for bit.
+float_cmp = "allow"
+excessive_precision = "allow"
+approx_constant = "allow"
+many_single_char_names = "allow"
+too_many_arguments = "allow"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[profile.dev]
+# Pixel checks run millions of values; keep tests fast without changing float semantics.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+debug = "line-tables-only"
