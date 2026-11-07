@@ -1089,8 +1089,8 @@ target = "crates/openexr-core/src/channel_list.rs"
 path = "src/lib/OpenEXRCore/chunk.c"
 kind = "src"
 status = "partial"
-target = "crates/openexr-core/src/chunk.rs"
-note = "the read side: chunk table (read, validate, reconstruct), the scanline and tile chunk info, exr_read_chunk, exr_read_deep_chunk, exr_get_chunk_table_offset; exr_chunk_default_initialize with Phase 5; the writes with Phase 6"
+target = "crates/openexr-core/src/chunk.rs,crates/openexr-core/src/chunk_info.rs"
+note = "the read side: chunk table (read, validate, reconstruct), the scanline and tile chunk info (chunk_info.rs), exr_read_chunk, exr_read_deep_chunk, exr_get_chunk_table_offset; exr_chunk_default_initialize with Phase 5; the writes with Phase 6"
 
 [[file]]
 path = "src/lib/OpenEXRCore/coding.c"
@@ -1446,7 +1446,7 @@ note = "exr_set_default_memory_routines is n/a (PLAN.md O8)"
 path = "src/lib/OpenEXRCore/openexr_chunkio.h"
 kind = "api"
 status = "partial"
-target = "crates/openexr-core/src/chunk.rs"
+target = "crates/openexr-core/src/chunk.rs,crates/openexr-core/src/chunk_info.rs"
 note = "as chunk.c"
 
 [[file]]

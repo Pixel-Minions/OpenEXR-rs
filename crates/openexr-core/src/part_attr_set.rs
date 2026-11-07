@@ -15,12 +15,14 @@ use crate::cfmt::Arg;
 use crate::channel_list::AttrChlist;
 use crate::context::{Context, ContextMode, Error};
 use crate::errors::ErrorCode;
+use crate::internal_constants::*;
 use crate::opaque::Unpacked;
 use crate::openexr_attr::*;
 use crate::preview::AttrPreview;
 
 /// A C string argument for a message: `(null)` for NULL, as the C runtime prints it.
 fn nm(name: Option<&str>) -> Arg<'_> {
+    let name = name.map(crate::string::cstr);
     match name {
         Some(n) => n.into(),
         None => Arg::NullStr,
@@ -31,6 +33,7 @@ macro_rules! attr_set_value {
     ($(#[$doc:meta])* $fn:ident, $t:ident, $entry:literal, $ty:ty, |$v:ident| $value:expr) => {
         $(#[$doc])*
         pub fn $fn(&mut self, part_index: i32, name: Option<&str>, val: $ty) -> Result<(), Error> {
+            let name = name.map(crate::string::cstr);
             let id = self.attr_find_create(part_index, name, AttributeType::$t, $entry)??;
             let $v = val;
             *self.attr_value_mut(part_index, id) = $value;
@@ -43,6 +46,7 @@ macro_rules! attr_set_deref {
     ($(#[$doc:meta])* $fn:ident, $t:ident, $entry:literal, $ty:ty, $variant:ident) => {
         $(#[$doc])*
         pub fn $fn(&mut self, part_index: i32, name: Option<&str>, val: Option<&$ty>) -> Result<(), Error> {
+            let name = name.map(crate::string::cstr);
             let id = self.attr_find_create(part_index, name, AttributeType::$t, $entry);
             self.set_deref(part_index, name, id, val.map(|v| AttrValue::$variant(*v)), $entry)
         }
@@ -68,6 +72,7 @@ impl Context {
 
     /// `exr_attr_list_find_by_name` on a part: `Ok(None)` for `EXR_ERR_NO_ATTR_BY_NAME`.
     fn find_attr_id(&self, part_index: i32, name: Option<&str>) -> Result<Option<AttrId>, Error> {
+        let name = name.map(crate::string::cstr);
         let part = &self.parts[part_index as usize];
         match self.attr_list_find_by_name(&part.attributes, name.map(str::as_bytes)) {
             Ok(id) => Ok(Some(id)),
@@ -83,6 +88,7 @@ impl Context {
         name: Option<&str>,
         t: AttributeType,
     ) -> Result<AttrId, Error> {
+        let name = name.map(crate::string::cstr);
         let Context {
             core,
             parts,
@@ -109,12 +115,13 @@ impl Context {
             .value
     }
 
-    fn attr_type_of(&self, part_index: i32, id: AttrId) -> (AttributeType, Vec<u8>) {
+    /// An attribute's type, and its type name for a mismatch message.
+    fn attr_type_of(&self, part_index: i32, id: AttrId) -> (AttributeType, &[u8]) {
         let a = self.parts[part_index as usize]
             .attributes
             .get(id)
             .expect("attribute");
-        (a.attr_type(), a.type_name.clone())
+        (a.attr_type(), a.type_name.as_slice())
     }
 
     /// `ATTR_FIND_CREATE` (src/lib/OpenEXRCore/part_attr.c:1179-1212 @ v3.5.3). The macro
@@ -128,6 +135,7 @@ impl Context {
         t: AttributeType,
         entry: &str,
     ) -> Result<Result<AttrId, Error>, Error> {
+        let name = name.map(crate::string::cstr);
         self.part_ref(part_index)?;
         self.setter_mode_check()?;
         match self.find_attr_id(part_index, name)? {
@@ -146,7 +154,7 @@ impl Context {
                     return Err(self.print_error(
                         ErrorCode::AttrTypeMismatch,
                         &fmt,
-                        &[nm(name), Arg::Str(&tn)],
+                        &[nm(name), Arg::Str(tn)],
                     ));
                 }
                 Ok(Ok(id))
@@ -165,6 +173,7 @@ impl Context {
         val: Option<AttrValue>,
         entry: &str,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
         let id = id?;
         let Some(val) = val else {
             return Err(self.print_error(
@@ -186,10 +195,11 @@ impl Context {
         name: Option<&str>,
         val: Option<&Box2i>,
     ) -> Result<(), Error> {
-        if name == Some("dataWindow") {
+        let name = name.map(crate::string::cstr);
+        if name == Some(EXR_REQ_DATA_STR) {
             return self.set_data_window(part_index, val);
         }
-        if name == Some("displayWindow") {
+        if name == Some(EXR_REQ_DISP_STR) {
             return self.set_display_window(part_index, val);
         }
         let id = self.attr_find_create(part_index, name, AttributeType::BOX2I, "box2i");
@@ -267,7 +277,8 @@ impl Context {
         name: Option<&str>,
         val: Option<&V2f>,
     ) -> Result<(), Error> {
-        if name == Some("screenWindowCenter") {
+        let name = name.map(crate::string::cstr);
+        if name == Some(EXR_REQ_SCR_WC_STR) {
             return self.set_screen_window_center(part_index, val);
         }
         let id = self.attr_find_create(part_index, name, AttributeType::V2F, "v2f");
@@ -281,7 +292,8 @@ impl Context {
         name: Option<&str>,
         val: Option<&TileDesc>,
     ) -> Result<(), Error> {
-        if name == Some("tiles") {
+        let name = name.map(crate::string::cstr);
+        if name == Some(EXR_REQ_TILES_STR) {
             let Some(v) = val else {
                 return Err(Error::bare(ErrorCode::InvalidArgument));
             };
@@ -308,16 +320,6 @@ impl Context {
         attr_set_double, DOUBLE, "d", f64, |v| AttrValue::Double(v)
     );
 
-    /// The `>= LAST_TYPE` range check of the enum setters: `int` under MSVC, `unsigned int`
-    /// under GCC (docs/improvements.md, I-5).
-    fn enum_out_of_range(v: i32, last: i32) -> bool {
-        if cfg!(target_env = "msvc") {
-            v >= last
-        } else {
-            v as u32 >= last as u32
-        }
-    }
-
     /// Port of `exr_attr_set_compression` (src/lib/OpenEXRCore/part_attr.c:1501-1526 @ v3.5.3).
     pub fn attr_set_compression(
         &mut self,
@@ -325,8 +327,9 @@ impl Context {
         name: Option<&str>,
         cval: Compression,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
         let val = cval.0 as u8;
-        if Self::enum_out_of_range(cval.0, Compression::LAST_TYPE.0) {
+        if crate::part_attr::enum_out_of_range(cval.0, Compression::LAST_TYPE.0) {
             return Err(self.print_error(
                 ErrorCode::ArgumentOutOfRange,
                 "'%s' value for compression type (%d) out of range (%d - %d)",
@@ -338,7 +341,7 @@ impl Context {
                 ],
             ));
         }
-        if name == Some("compression") {
+        if name == Some(EXR_REQ_COMP_STR) {
             return self.set_compression(part_index, cval);
         }
         let id = self.attr_find_create(part_index, name, AttributeType::COMPRESSION, "uc")??;
@@ -353,8 +356,9 @@ impl Context {
         name: Option<&str>,
         eval: Envmap,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
         let val = eval.0 as u8;
-        if Self::enum_out_of_range(eval.0, Envmap::LAST_TYPE.0) {
+        if crate::part_attr::enum_out_of_range(eval.0, Envmap::LAST_TYPE.0) {
             return Err(self.print_error(
                 ErrorCode::ArgumentOutOfRange,
                 "'%s' value for envmap (%d) out of range (%d - %d)",
@@ -378,10 +382,11 @@ impl Context {
         name: Option<&str>,
         val: f32,
     ) -> Result<(), Error> {
-        if name == Some("pixelAspectRatio") {
+        let name = name.map(crate::string::cstr);
+        if name == Some(EXR_REQ_PAR_STR) {
             return self.set_pixel_aspect_ratio(part_index, val);
         }
-        if name == Some("screenWindowWidth") {
+        if name == Some(EXR_REQ_SCR_WW_STR) {
             return self.set_screen_window_width(part_index, val);
         }
         let id = self.attr_find_create(part_index, name, AttributeType::FLOAT, "f")??;
@@ -396,10 +401,11 @@ impl Context {
         name: Option<&str>,
         val: i32,
     ) -> Result<(), Error> {
-        if name == Some("version") {
+        let name = name.map(crate::string::cstr);
+        if name == Some(EXR_REQ_VERSION_STR) {
             return self.set_version(part_index, val);
         }
-        if name == Some("chunkCount") {
+        if name == Some(EXR_REQ_CHUNK_COUNT_STR) {
             return self.set_chunk_count(part_index, val);
         }
         let id = self.attr_find_create(part_index, name, AttributeType::INT, "i")??;
@@ -414,8 +420,9 @@ impl Context {
         name: Option<&str>,
         lval: LineOrder,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
         let val = lval.0 as u8;
-        if Self::enum_out_of_range(lval.0, LineOrder::LAST_TYPE.0) {
+        if crate::part_attr::enum_out_of_range(lval.0, LineOrder::LAST_TYPE.0) {
             return Err(self.print_error(
                 ErrorCode::ArgumentOutOfRange,
                 "'%s' value for line order enum (%d) out of range (%d - %d)",
@@ -427,7 +434,7 @@ impl Context {
                 ],
             ));
         }
-        if name == Some("lineOrder") {
+        if name == Some(EXR_REQ_LO_STR) {
             return self.set_lineorder(part_index, LineOrder(i32::from(val)));
         }
         let id = self.attr_find_create(part_index, name, AttributeType::LINEORDER, "uc")??;
@@ -455,7 +462,8 @@ impl Context {
         }
         let id = match self.parts[part_index as usize].tiles {
             None => {
-                let id = self.add_attr(part_index, Some("tiles"), AttributeType::TILEDESC)?;
+                let id =
+                    self.add_attr(part_index, Some(EXR_REQ_TILES_STR), AttributeType::TILEDESC)?;
                 self.parts[part_index as usize].tiles = Some(id);
                 id
             }
@@ -465,7 +473,7 @@ impl Context {
                     return Err(self.print_error(
                         ErrorCode::FileBadHeader,
                         "Invalid required attribute type '%s' for '%s'",
-                        &[Arg::Str(&tn), "tiles".into()],
+                        &[Arg::Str(tn), EXR_REQ_TILES_STR.into()],
                     ));
                 }
                 id
@@ -487,10 +495,11 @@ impl Context {
     /// Port of `exr_set_name` (src/lib/OpenEXRCore/part_attr.c:1021-1100 @ v3.5.3). A failure
     /// to add the attribute is returned after the value checks, as upstream returns it.
     pub fn set_name(&mut self, part_index: i32, val: Option<&str>) -> Result<(), Error> {
+        let val = val.map(crate::string::cstr);
         let rv = self.req_attr_find_create_deferred(
             part_index,
             |p| &mut p.name,
-            "name",
+            EXR_REQ_NAME_STR,
             AttributeType::STRING,
         )?;
         // old library allowed an empty string :(, but ensure not null
@@ -557,15 +566,20 @@ impl Context {
     }
 
     /// Port of `exr_set_version` (src/lib/OpenEXRCore/part_attr.c:1110-1122 @ v3.5.3): only 1
-    /// is valid (deep data), refused unreported otherwise.
+    /// is valid (deep data). Upstream refuses other values without a message; the port reports
+    /// one, a deviation (docs/improvements.md, I-11).
     pub fn set_version(&mut self, part_index: i32, val: i32) -> Result<(), Error> {
         if val <= 0 || val > 1 {
-            return Err(Error::bare(ErrorCode::ArgumentOutOfRange));
+            return Err(self.print_error(
+                ErrorCode::ArgumentOutOfRange,
+                "Invalid version %d for deep data: only version 1 is supported",
+                &[val.into()],
+            ));
         }
         let id = self.req_attr_find_create_deferred(
             part_index,
             |p| &mut p.version,
-            "version",
+            EXR_REQ_VERSION_STR,
             AttributeType::INT,
         )??;
         *self.attr_value_mut(part_index, id) = AttrValue::Int(val);
@@ -577,7 +591,7 @@ impl Context {
         let id = self.req_attr_find_create_deferred(
             part_index,
             |p| &mut p.chunk_count_attr,
-            "chunkCount",
+            EXR_REQ_CHUNK_COUNT_STR,
             AttributeType::INT,
         )??;
         *self.attr_value_mut(part_index, id) = AttrValue::Int(val);
@@ -592,6 +606,7 @@ impl Context {
         name: Option<&str>,
         val: Option<&AttrBytes>,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
         self.part_ref(part_index)?;
         self.setter_mode_check()?;
         let Some(val) = val else {
@@ -622,7 +637,7 @@ impl Context {
                     return Err(self.print_error(
                         ErrorCode::AttrTypeMismatch,
                         "'%s' requested type 'bytes', but attribute is type '%s'",
-                        &[nm(name), Arg::Str(&tn)],
+                        &[nm(name), Arg::Str(tn)],
                     ));
                 }
                 let can_create = self.can_create();
@@ -690,8 +705,9 @@ impl Context {
         name: Option<&str>,
         channels: Option<&AttrChlist>,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
         self.part_ref(part_index)?;
-        if name == Some("channels") {
+        if name == Some(EXR_REQ_CHANNELS_STR) {
             let Some(c) = channels else {
                 return Err(self.report_error(
                     ErrorCode::InvalidArgument,
@@ -734,6 +750,7 @@ impl Context {
         sz: i32,
         val: Option<&[f32]>,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
         let bytes = (sz as i64 as usize).wrapping_mul(4);
         self.part_ref(part_index)?;
         self.setter_mode_check()?;
@@ -768,7 +785,7 @@ impl Context {
                     return Err(self.print_error(
                         ErrorCode::AttrTypeMismatch,
                         "'%s' requested type 'floatvector', but attribute is type '%s'",
-                        &[nm(name), Arg::Str(&tn)],
+                        &[nm(name), Arg::Str(tn)],
                     ));
                 }
                 let can_create = self.can_create();
@@ -812,6 +829,7 @@ impl Context {
         name: Option<&str>,
         val: Option<&AttrPreview>,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
         self.part_ref(part_index)?;
         self.setter_mode_check()?;
         let found = self.find_attr_id(part_index, name);
@@ -842,7 +860,7 @@ impl Context {
                     return Err(self.print_error(
                         ErrorCode::AttrTypeMismatch,
                         "'%s' requested type 'preview', but attribute is type '%s'",
-                        &[nm(name), Arg::Str(&tn)],
+                        &[nm(name), Arg::Str(tn)],
                     ));
                 }
                 let can_create = self.can_create();
@@ -901,11 +919,13 @@ impl Context {
         name: Option<&str>,
         val: Option<&str>,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
+        let val = val.map(crate::string::cstr);
         self.part_ref(part_index)?;
-        if name == Some("name") {
+        if name == Some(EXR_REQ_NAME_STR) {
             return self.set_name(part_index, val);
         }
-        if name == Some("type") {
+        if name == Some(EXR_REQ_TYPE_STR) {
             if self.mode == ContextMode::Temporary {
                 let Some(v) = val else {
                     return Err(self.print_error(
@@ -924,7 +944,9 @@ impl Context {
             } else {
                 return Err(self.print_error(
                     ErrorCode::InvalidArgument,
-                    "Part type attribute must be implicitly only when adding a part",
+                    // upstream: "must be implicitly only when adding a part", a deviation
+                    // (docs/improvements.md, I-10)
+                    "Part type attribute must be set implicitly, only when adding a part",
                     &[],
                 ));
             }
@@ -959,7 +981,7 @@ impl Context {
                     return Err(self.print_error(
                         ErrorCode::AttrTypeMismatch,
                         "'%s' requested type 'string', but attribute is type '%s'",
-                        &[nm(name), Arg::Str(&tn)],
+                        &[nm(name), Arg::Str(tn)],
                     ));
                 }
                 let can_create = self.can_create();
@@ -1001,6 +1023,10 @@ impl Context {
         size: i32,
         val: Option<&[Option<&str>]>,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
+        let val: Option<Vec<Option<&str>>> =
+            val.map(|v| v.iter().map(|s| s.map(crate::string::cstr)).collect());
+        let val = val.as_deref();
         self.part_ref(part_index)?;
         self.setter_mode_check()?;
         if size < 0 {
@@ -1052,7 +1078,7 @@ impl Context {
             return Err(self.print_error(
                 ErrorCode::AttrTypeMismatch,
                 "'%s' requested type 'stringvector', but attribute is type '%s'",
-                &[nm(name), Arg::Str(&tn)],
+                &[nm(name), Arg::Str(tn)],
             ));
         }
         let Context { core, parts, .. } = self;
@@ -1130,6 +1156,8 @@ impl Context {
         unpacked: Option<Unpacked>,
         packed: Option<&[u8]>,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
+        let type_ = type_.map(crate::string::cstr);
         self.part_ref(part_index)?;
         self.setter_mode_check()?;
         let id = match self.find_attr_id(part_index, name)? {
@@ -1160,7 +1188,7 @@ impl Context {
                     return Err(self.print_error(
                         ErrorCode::AttrTypeMismatch,
                         "'%s' requested type '%s', but stored attributes is type '%s'",
-                        &[nm(name), nm(type_), Arg::Str(&tn)],
+                        &[nm(name), nm(type_), Arg::Str(tn)],
                     ));
                 }
                 id
@@ -1181,5 +1209,85 @@ impl Context {
         } else {
             core.attr_opaquedata_set_packed(opq, packed, size)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::errors::ErrorCode;
+    use crate::openexr_attr::{Compression, Envmap, LineOrder, Storage};
+    use crate::upstream_tests::general_attr::create_dummy_file;
+
+    /// Negative enum values are refused on every platform (docs/improvements.md, I-5).
+    #[test]
+    fn negative_enum_values_are_refused() {
+        let mut f = create_dummy_file("<enums>");
+        let oor = ErrorCode::ArgumentOutOfRange;
+        assert_eq!(f.set_lineorder(0, LineOrder(-1)).unwrap_err().code, oor);
+        assert_eq!(
+            f.attr_set_lineorder(0, Some("lo"), LineOrder(-1))
+                .unwrap_err()
+                .code,
+            oor
+        );
+        assert_eq!(
+            f.attr_set_compression(0, Some("c"), Compression(-1))
+                .unwrap_err()
+                .code,
+            oor
+        );
+        assert_eq!(
+            f.attr_set_envmap(0, Some("e"), Envmap(-1))
+                .unwrap_err()
+                .code,
+            oor
+        );
+        // the valid ones still pass
+        f.set_lineorder(0, LineOrder::DECREASING_Y).unwrap();
+        f.attr_set_envmap(0, Some("e"), Envmap(0)).unwrap();
+    }
+
+    /// `exr_set_version` reports its refusal (docs/improvements.md, I-11), and the part type
+    /// message reads (I-10).
+    #[test]
+    fn refusals_carry_messages() {
+        let mut f = create_dummy_file("<messages>");
+        let e = f.set_version(0, 2).unwrap_err();
+        assert_eq!(e.code, ErrorCode::ArgumentOutOfRange);
+        assert!(e.message.is_some());
+        let e = f
+            .attr_set_string(0, Some("type"), Some("tiledimage"))
+            .unwrap_err();
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        let msg = e.message.expect("message");
+        assert!(msg.ends_with(b"must be set implicitly, only when adding a part"));
+    }
+
+    /// String arguments end at their first NUL, as C's `strlen` and `strcmp` read them.
+    #[test]
+    fn strings_end_at_nul() {
+        let mut f = create_dummy_file("<nul>");
+        f.attr_set_string(0, Some("comments\0ignored"), Some("ab\0cd"))
+            .unwrap();
+        assert_eq!(
+            f.attr_get_string(0, Some("comments")).unwrap(),
+            (2, &b"ab"[..])
+        );
+        f.attr_set_string_vector(
+            0,
+            Some("multiView"),
+            2,
+            Some(&[Some("l\0x"), Some("right")]),
+        )
+        .unwrap();
+        assert_eq!(
+            f.attr_get_string_vector(0, Some("multiView")).unwrap(),
+            vec![&b"l"[..], &b"right"[..]]
+        );
+        // a required name with a tail still redirects to its setter
+        f.attr_set_int(0, Some("version\0x"), 1).unwrap();
+        assert_eq!(f.get_version(0).unwrap(), 1);
+        let p = f.add_part(Some("two\0tail"), Storage::SCANLINE).unwrap();
+        assert_eq!(f.get_name(p).unwrap(), b"two");
     }
 }

@@ -34,7 +34,9 @@ end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
      Vendored code cites its own version: `@ libdeflate v1.26`, `@ zstd v1.5.7`,
      `@ OpenJPH 0.32.0`, `@ Imath v3.2.3`.
    - Don't guess behavior, simplify it, or "fix" it. Upstream bugs that change outputs are ported
-     too, and listed in `docs/improvements.md` in the same chunk.
+     too, and listed in `docs/improvements.md` in the same chunk. The exceptions are the
+     deviations the owner approved (`docs/deviations.md`, with their waivers in
+     `docs/waivers.md`; owner, 2026-11-07); a new one needs the owner's OK.
    - Where upstream reads or writes memory it doesn't own, return an error instead and list it
      as a `U-` entry; where both wheels resolve undefined behavior the same predictable way, match
      them and list it as an `I-` entry. If neither fits, stop and report it.

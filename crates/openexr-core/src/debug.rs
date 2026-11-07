@@ -42,8 +42,9 @@ fn g(v: f32) -> Arg<'static> {
     Arg::F64(f64::from(v))
 }
 
-/// Port of `print_attr` (src/lib/OpenEXRCore/debug.c:18-262 @ v3.5.3). The `bytes` and
-/// `deepImageState` types have no case upstream and print as unknown.
+/// Port of `print_attr` (src/lib/OpenEXRCore/debug.c:18-262 @ v3.5.3). Upstream has no case
+/// for `bytes` and `deepImageState`, which print as unknown types; the port prints their
+/// values, a deviation (docs/improvements.md, I-8).
 fn print_attr(out: &mut Vec<u8>, a: Option<&Attribute>, verbose: bool) {
     let Some(a) = a else { return };
     pf(out, "%s: ", &[Arg::Str(a.name())]);
@@ -53,15 +54,16 @@ fn print_attr(out: &mut Vec<u8>, a: Option<&Attribute>, verbose: bool) {
     match a.value() {
         AttrValue::Box2i(b) => pf(
             out,
-            "[ %d, %d - %d %d ] %d x %d",
+            "[ %d, %d - %d %d ] %lld x %lld",
             &[
                 b.min.x.into(),
                 b.min.y.into(),
                 b.max.x.into(),
                 b.max.y.into(),
-                // int arithmetic, wrapping as the wheels' code does (docs/improvements.md, I-6)
-                b.max.x.wrapping_sub(b.min.x).wrapping_add(1).into(),
-                b.max.y.wrapping_sub(b.min.y).wrapping_add(1).into(),
+                // in 64 bits: upstream's int arithmetic overflows for boxes wider than INT_MAX,
+                // a deviation (docs/improvements.md, I-6)
+                Arg::I64(i64::from(b.max.x) - i64::from(b.min.x) + 1),
+                Arg::I64(i64::from(b.max.y) - i64::from(b.min.y) + 1),
             ],
         ),
         AttrValue::Box2f(b) => pf(
@@ -262,8 +264,19 @@ fn print_attr(out: &mut Vec<u8>, a: Option<&Attribute>, verbose: bool) {
                 addr(o.destroy_unpacked_func_ptr.as_ref()),
             ],
         ),
-        AttrValue::Bytes(_) | AttrValue::DeepImageState(_) => {
-            pf(out, "<ERROR Unknown type '%s'>", &[Arg::Str(a.type_name())])
+        AttrValue::Bytes(b) => {
+            pf(out, "%zu bytes", &[Arg::Usize(b.size)]);
+            if b.hint_length > 0 {
+                let hint = b.type_hint.as_deref().unwrap_or(&[]);
+                let h = (b.hint_length as usize).min(hint.len());
+                pf(out, " hint '%s'", &[Arg::Str(&hint[..h])]);
+            }
+        }
+        AttrValue::DeepImageState(uc) => {
+            // the names of Imf::DeepImageState (src/lib/OpenEXR/ImfDeepImageState.h:52-60)
+            const STATES: [&str; 4] = ["messy", "sorted", "non-overlapping", "tidy"];
+            let st = STATES.get(usize::from(*uc)).copied().unwrap_or("<UNKNOWN>");
+            pf(out, "%d (%s)", &[Arg::I32(i32::from(*uc)), st.into()]);
         }
     }
 }
@@ -389,5 +402,48 @@ impl Context {
         let _ = stdout.write_all(&text);
         let _ = stdout.flush();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::attributes::AttrValue;
+    use crate::bytes::AttrBytes;
+    use crate::openexr_attr::{AttributeType, Box2i, V2i};
+    use crate::upstream_tests::general_attr::create_dummy_file;
+
+    /// The verbose dump prints `bytes` and `deepImageState` values (docs/improvements.md, I-8)
+    /// and box sizes past `INT_MAX` (I-6).
+    #[test]
+    fn dump_prints_every_type() {
+        let mut f = create_dummy_file("<dump>");
+        let bytes = AttrBytes {
+            size: 4,
+            data: Some(vec![1, 2, 3, 4]),
+            hint_length: 4,
+            type_hint: Some(b"blob".to_vec()),
+        };
+        f.attr_set_bytes(0, Some("blobby"), Some(&bytes)).unwrap();
+        let id = f
+            .attr_declare(0, Some("deepImageState"), AttributeType::DEEP_IMAGE_STATE)
+            .unwrap();
+        *f.attr_value_mut(0, id) = AttrValue::DeepImageState(1);
+        let wide = Box2i {
+            min: V2i { x: i32::MIN, y: 0 },
+            max: V2i { x: i32::MAX, y: 0 },
+        };
+        f.attr_set_box2i(0, Some("wide"), Some(&wide)).unwrap();
+
+        let text = String::from_utf8(f.context_info(true)).unwrap();
+        assert!(
+            text.contains("  blobby: bytes 4 bytes hint 'blob'\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("  deepImageState: deepImageState 1 (sorted)\n"),
+            "{text}"
+        );
+        assert!(text.contains("] 4294967296 x 1\n"), "{text}");
+        assert!(!text.contains("Unknown type"), "{text}");
     }
 }

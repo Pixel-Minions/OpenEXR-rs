@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 mod base_units;
 mod color_metadata;
-mod general_attr;
+pub(crate) mod general_attr;
 pub(crate) mod read;
 
 /// Held by every test that reads or changes the process-wide defaults of `base.c`, so that

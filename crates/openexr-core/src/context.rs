@@ -719,6 +719,7 @@ impl Context {
         ctxtdata: Option<Initializer>,
         what: &str,
     ) -> Result<Context, Error> {
+        let filename = filename.map(crate::string::cstr);
         let mut inits = fill_context_data(ctxtdata);
         let Some(filename) = filename else {
             let msg = format!("Invalid filename passed to {what} function");
@@ -751,6 +752,7 @@ impl Context {
         filename: Option<&str>,
         ctxtdata: Option<Initializer>,
     ) -> Result<Context, Error> {
+        let filename = filename.map(crate::string::cstr);
         let mut ret = Context::open_for_read(filename, ctxtdata, "start_read")?;
         crate::parse_header::internal_exr_parse_header(&mut ret)?;
         Ok(ret)
@@ -762,6 +764,7 @@ impl Context {
         filename: Option<&str>,
         ctxtdata: Option<Initializer>,
     ) -> Result<(), Error> {
+        let filename = filename.map(crate::string::cstr);
         let mut ret = Context::open_for_read(filename, ctxtdata, "test file header")?;
         let rv = crate::parse_header::internal_exr_check_magic(&mut ret);
         drop(ret);
@@ -776,6 +779,7 @@ impl Context {
         default_mode: DefaultWriteMode,
         ctxtdata: Option<Initializer>,
     ) -> Result<Context, Error> {
+        let filename = filename.map(crate::string::cstr);
         let inits = fill_context_data(ctxtdata);
         let Some(filename) = filename else {
             return Err(report_without_context(
@@ -802,6 +806,7 @@ impl Context {
         context_name: Option<&str>,
         ctxtdata: Option<Initializer>,
     ) -> Result<Context, Error> {
+        let context_name = context_name.map(crate::string::cstr);
         let inits = fill_context_data(ctxtdata);
         let mut ret = Context::alloc(inits, ContextMode::Temporary);
         ret.core.filename = Some(context_name.unwrap_or("<temporary>").to_owned());
@@ -924,6 +929,7 @@ impl Context {
         pack_func_ptr: Option<crate::opaque::OpaquePackFn>,
         destroy_unpacked_func_ptr: Option<crate::opaque::OpaqueDestroyFn>,
     ) -> Result<(), Error> {
+        let type_ = type_.map(crate::string::cstr);
         use crate::attributes::AttrValue;
         let mlen = i32::from(self.core.max_name_length);
         let ty = match type_ {

@@ -66,6 +66,12 @@ impl AttrString {
     }
 }
 
+/// A Rust string as C sees it: up to its first NUL, as `strlen` and `strcmp` read a `const
+/// char*`. The public API cuts its string arguments with this on the way in.
+pub(crate) fn cstr(s: &str) -> &str {
+    s.split('\0').next().unwrap_or("")
+}
+
 /// `strnlen (d, len)` for a byte slice: a slice without a NUL ends where it ends.
 fn strnlen(d: &[u8], len: usize) -> usize {
     let n = d.len().min(len);

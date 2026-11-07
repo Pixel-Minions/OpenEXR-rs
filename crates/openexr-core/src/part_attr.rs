@@ -48,6 +48,7 @@ macro_rules! attr_get {
     ($(#[$doc:meta])* $fn:ident, $t:ident, $variant:ident, $entry:literal, $ret:ty, |$v:ident| $out:expr) => {
         $(#[$doc])*
         pub fn $fn(&self, part_index: i32, name: Option<&str>) -> Result<$ret, Error> {
+            let name = name.map(crate::string::cstr);
             let attr = self.attr_find_attr(part_index, name, AttributeType::$t, $entry)?;
             match &attr.value {
                 AttrValue::$variant($v) => Ok($out),
@@ -93,6 +94,7 @@ impl Context {
         t: AttributeType,
         entry: &str,
     ) -> Result<&Attribute, Error> {
+        let name = name.map(crate::string::cstr);
         let part = self.part_ref(part_index)?;
         let name = match name {
             Some(n) if !n.is_empty() => n,
@@ -171,6 +173,7 @@ impl Context {
         part_index: i32,
         name: Option<&str>,
     ) -> Result<&Attribute, Error> {
+        let name = name.map(crate::string::cstr);
         let part = self.part_ref(part_index)?;
         let id = self.attr_list_find_by_name(&part.attributes, name.map(str::as_bytes))?;
         Ok(part.attributes.get(id).expect("found"))
@@ -382,6 +385,7 @@ impl Context {
         part_index: i32,
         name: Option<&str>,
     ) -> Result<Vec<&[u8]>, Error> {
+        let name = name.map(crate::string::cstr);
         let attr = self.attr_find_attr(
             part_index,
             name,
@@ -400,6 +404,7 @@ impl Context {
         part_index: i32,
         name: Option<&str>,
     ) -> Result<UserAttr<'_>, Error> {
+        let name = name.map(crate::string::cstr);
         let attr = self.attr_find_attr(part_index, name, AttributeType::OPAQUE, "opaque")?;
         let AttrValue::Opaque(o) = &attr.value else {
             unreachable!("checked")
@@ -426,6 +431,8 @@ impl Context {
         name: Option<&str>,
         type_: Option<&str>,
     ) -> Result<AttrId, Error> {
+        let name = name.map(crate::string::cstr);
+        let type_ = type_.map(crate::string::cstr);
         self.part_ref(part_index)?;
         self.require_write()?;
         let Context {
@@ -453,6 +460,7 @@ impl Context {
         name: Option<&str>,
         type_: AttributeType,
     ) -> Result<AttrId, Error> {
+        let name = name.map(crate::string::cstr);
         self.part_ref(part_index)?;
         self.require_write()?;
         let Context {
@@ -472,6 +480,14 @@ impl Context {
         )
         .map(|(id, _)| id)
     }
+}
+
+/// The enum setters' range check, `value >= LAST_TYPE`. Upstream compares in the enum's
+/// underlying type, `int` under MSVC and `unsigned int` under GCC, so a negative value passes
+/// on Windows only; the port refuses it on every platform, a deviation (docs/improvements.md,
+/// I-5).
+pub(crate) fn enum_out_of_range(v: i32, last: i32) -> bool {
+    v < 0 || v >= last
 }
 
 /// The slot of a required attribute in a part.
@@ -561,6 +577,7 @@ impl Context {
         xsamp: i32,
         ysamp: i32,
     ) -> Result<(), Error> {
+        let name = name.map(crate::string::cstr);
         let id = self.req_attr_find_create(
             part_index,
             |p| &mut p.channels,
@@ -652,14 +669,7 @@ impl Context {
 
     /// Port of `exr_set_lineorder` (src/lib/OpenEXRCore/part_attr.c:811-833 @ v3.5.3).
     pub fn set_lineorder(&mut self, part_index: i32, lo: LineOrder) -> Result<(), Error> {
-        // `exr_lineorder_t` is `int` under MSVC and `unsigned int` under GCC, so a negative
-        // value passes this check on Windows only (docs/improvements.md, I-5)
-        let out_of_range = if cfg!(target_env = "msvc") {
-            lo.0 >= LineOrder::LAST_TYPE.0
-        } else {
-            lo.0 as u32 >= LineOrder::LAST_TYPE.0 as u32
-        };
-        if out_of_range {
+        if enum_out_of_range(lo.0, LineOrder::LAST_TYPE.0) {
             return Err(self.print_error(
                 ErrorCode::ArgumentOutOfRange,
                 "'lineOrder' value for line order (%d) out of range (%d - %d)",

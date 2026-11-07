@@ -56,7 +56,7 @@ fn test_xdr() {
 /// Port of `createDummyFile` (src/test/OpenEXRCoreTest/general_attr.cpp:70-90 @ v3.5.3), with
 /// `dummy_write` (lines 31-41): a write context whose writes all fail, with one scanline part
 /// named "dummy". Upstream's failable allocator has no counterpart (PLAN.md O8).
-fn create_dummy_file(test: &str) -> Context {
+pub(crate) fn create_dummy_file(test: &str) -> Context {
     let cinit = Initializer {
         // we won't actually write to this and so don't need a proper stream but need a
         // writable context to test with.

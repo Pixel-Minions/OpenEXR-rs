@@ -197,6 +197,7 @@ impl Context {
     /// `type_` named `partname`, with its `type` (and for deep parts `version`) attribute;
     /// returns its index.
     pub fn add_part(&mut self, partname: Option<&str>, type_: Storage) -> Result<i32, Error> {
+        let partname = partname.map(crate::string::cstr);
         self.require_write()?;
         let mut partname = partname.map(str::as_bytes);
         let pnamelen = partname.map_or(0, <[u8]>::len);

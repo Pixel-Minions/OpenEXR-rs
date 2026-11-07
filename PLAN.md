@@ -431,6 +431,7 @@ Each has a recommendation. Status on 2026-11-07:
 | O7 OS error text | **Decided** (owner, 2026-11-07): exact, through `FormatMessageA`/`strerror` |
 | O8 What Rust can't have | **Decided** (owner, 2026-11-07): n/a, each with its reason |
 | O9 `unsafe` in the test kit | **Decided** (owner, 2026-11-07): kept |
+| Upstream bugs found in Phases 2-4 (I-5 to I-12) | **Decided** (owner, 2026-11-07): fixed as deviations D-1 to D-8 (`docs/deviations.md`), with waivers W-1 to W-7 (`docs/waivers.md`) |
 
 ### O1 — Oracle
 

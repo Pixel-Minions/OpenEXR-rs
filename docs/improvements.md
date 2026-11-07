@@ -1,10 +1,10 @@
 # Improvement candidates
 
 Upstream bugs and limitations that the port copies, so that its results match OpenEXR 3.5.3
-byte for byte, but that could be fixed. Nothing here is fixed during the port. At the end, the
-owner decides on each one: keep it, or fix it as a deviation (`docs/deviations.md`), which
-changes the port's results for the inputs the entry names. The rules are OpenColorIO-rs's
-(`CLAUDE.md`, rule 1).
+byte for byte, but that could be fixed. The owner decides on each one: keep it, or fix it as a
+deviation (`docs/deviations.md`, with its waiver in `docs/waivers.md`), which changes the
+port's results for the inputs the entry names. The rules are OpenColorIO-rs's (`CLAUDE.md`,
+rule 1). Entries the owner has decided to fix say **fixed** and name their deviation.
 
 **Adding an entry.** A chunk that ports an upstream bug or limitation, or a platform
 difference that exists only because of how the wheels were built, adds an entry here in the
@@ -15,8 +15,8 @@ section. An entry says:
   that showed it;
 - **Who notices:** the inputs or calls affected, in plain words;
 - **A fix:** what the port would do instead, and what that changes;
-- **Status:** matched (with the chunk), to be matched (with the phase), or open; and how it is
-  verified.
+- **Status:** matched (with the chunk), to be matched (with the phase), open, or fixed (a
+  deviation the owner approved); and how it is verified.
 
 ## Base
 
@@ -89,8 +89,9 @@ section. An entry says:
   in is refused on Linux and stored on Windows, as `(uint8_t) value`.
 - **Who notices:** callers passing an invalid line order, compression or envmap through a cast.
 - **A fix:** check `value < 0` too.
-- **Status:** matched on both platforms (`crates/openexr-core/src/part_attr.rs`,
-  `part_attr_set.rs`); the Linux side is checked in the heavy tier.
+- **Status:** **fixed**, deviation D-1 (owner, 2026-11-07): a negative value is refused on every platform
+  (`crates/openexr-core/src/part_attr.rs`, `enum_out_of_range`); checked by
+  `part_attr_set::tests::negative_enum_values_are_refused`.
 
 ### I-6. The debug dump computes a box's size in int
 
@@ -100,7 +101,78 @@ section. An entry says:
   The wheels' code wraps.
 - **Who notices:** callers printing a context whose window spans more than 2^31 pixels.
 - **A fix:** compute in 64 bits.
-- **Status:** matched (wrapping arithmetic, `crates/openexr-core/src/debug.rs`).
+- **Status:** **fixed**, deviation D-2 (owner, 2026-11-07): computed and printed in 64 bits
+  (`crates/openexr-core/src/debug.rs`); checked by `debug::tests::dump_prints_every_type`.
+
+### I-9. exr_copy_unset_attributes fails on a deepImageState attribute
+
+- **Upstream:** `copy_attr` copies each attribute's value by type, but its `switch` has no case
+  for `EXR_ATTR_DEEP_IMAGE_STATE`, which falls to the default: `EXR_ERR_INVALID_ATTR`, the new
+  attribute removed again (`src/lib/OpenEXRCore/part_attr.c:497` @ v3.5.3). The copy stops
+  there, leaving the attributes copied before it.
+- **Who notices:** callers copying the header of a deep part that has the standard
+  `deepImageState` attribute.
+- **A fix:** copy its byte, as for the other one-byte types.
+- **Status:** **fixed**, deviation D-5 (owner, 2026-11-07) (`crates/openexr-core/src/part_attr_copy.rs`);
+  checked by `part_attr_copy::tests::copies_deep_image_state`.
+
+### I-11. exr_set_version refuses without a message
+
+- **Upstream:** a version other than 1 returns `EXR_ERR_ARGUMENT_OUT_OF_RANGE` without calling
+  the error handler (`src/lib/OpenEXRCore/part_attr.c:1114` @ v3.5.3), where every other
+  refusal of the setters reports why.
+- **Who notices:** callers setting a deep part's version through `exr_set_version` or
+  `exr_attr_set_int (f, p, "version", v)`.
+- **A fix:** report "Invalid version %d for deep data: only version 1 is supported".
+- **Status:** **fixed**, deviation D-7 (owner, 2026-11-07) (`crates/openexr-core/src/part_attr_set.rs`);
+  checked by `part_attr_set::tests::refusals_carry_messages`.
+
+### I-12. exr_copy_unset_attributes counts a failed lookup as found
+
+- **Upstream:** for each source attribute, a lookup in the destination that fails with
+  anything but `EXR_ERR_NO_ATTR_BY_NAME` is taken as success, and the attribute is skipped
+  (`src/lib/OpenEXRCore/part_attr.c:573` @ v3.5.3).
+- **Who notices:** no caller today: the source's names are valid, so the lookup can only find
+  the name or not.
+- **A fix:** return the lookup's error.
+- **Status:** **fixed**, deviation D-8 (owner, 2026-11-07) (`crates/openexr-core/src/part_attr_copy.rs`).
+
+## Messages and debug output
+
+### I-7. A deep tile's unpacked size error prints the packed size
+
+- **Upstream:** `exr_read_tile_chunk_info` refuses a deep tile's unpacked size with
+  "invalid unpacked size %" PRId64 but passes `ddata[1]`, the packed size, for it
+  (`src/lib/OpenEXRCore/chunk.c:1412-1425` @ v3.5.3).
+- **Who notices:** readers of corrupt deep tiled files, in the error text.
+- **A fix:** print `ddata[2]`.
+- **Status:** **fixed**, deviation D-3 (owner, 2026-11-07) (`crates/openexr-core/src/chunk_info.rs`). No
+  test yet: it needs a corrupt deep tiled file (Phase 7).
+
+### I-8. The debug dump prints bytes and deepImageState attributes as unknown types
+
+- **Upstream:** `print_attr` has no case for `EXR_ATTR_BYTES` or `EXR_ATTR_DEEP_IMAGE_STATE`,
+  so valid attributes of both types print as `<ERROR Unknown type 'bytes'>`
+  (`src/lib/OpenEXRCore/debug.c:258-260` @ v3.5.3).
+- **Who notices:** readers of `exr_print_context_info (f, 1)` for parts with such attributes.
+- **A fix:** print a bytes attribute as `%zu bytes`, with ` hint '%s'` when it has a type
+  hint, and a deep image state as `%d (%s)` with the names of `Imf::DeepImageState` (messy,
+  sorted, non-overlapping, tidy).
+- **Status:** **fixed**, deviation D-4 (owner, 2026-11-07) (`crates/openexr-core/src/debug.rs`); checked by
+  `debug::tests::dump_prints_every_type`.
+
+### I-10. Three error messages are garbled
+
+- **Upstream:** `exr_read_scanline_chunk_info` reports "Preparing read scanline ..." and,
+  twice, "Preparing to scanline ..." (`src/lib/OpenEXRCore/chunk.c:977`, `1034`, `1069`), and
+  `exr_attr_set_string` reports "Part type attribute must be implicitly only when adding a
+  part" (`part_attr.c:2056`) @ v3.5.3.
+- **Who notices:** readers of the error text.
+- **A fix:** "Preparing to read scanline ..." and "Part type attribute must be set
+  implicitly, only when adding a part".
+- **Status:** **fixed**, deviation D-6 (owner, 2026-11-07) (`crates/openexr-core/src/chunk_info.rs`,
+  `part_attr_set.rs`); the part type message is checked by
+  `part_attr_set::tests::refusals_carry_messages`.
 
 ## Undefined behaviour the port does not copy
 
@@ -193,4 +265,17 @@ section. An entry says:
 - **Who notices:** crafted files with huge data windows and small tiles.
 - **The port:** wraps the sum as the wheels' code does, and refuses a negative offset with the
   same `EXR_ERR_UNKNOWN` "Invalid tile chunk offset" error.
+- **Status:** the port's choice; listed for the owner's review.
+
+### U-8. States header validation already excludes
+
+- **Upstream:** `read_and_validate_chunk_leader` divides by the part's lines per chunk
+  (`src/lib/OpenEXRCore/chunk.c:381` @ v3.5.3), a hardware trap for 0, and
+  `validate_and_compute_tile_chunk_off` indexes the tile level arrays by levels it has only
+  compared with the level counts (lines 37-160). Header parsing and the tile information
+  never leave 0 lines per chunk, nor arrays shorter than the counts.
+- **Who notices:** nobody through the API; the checks keep the port from panicking should an
+  internal state ever break them.
+- **The port:** refuses 0 lines per chunk with `EXR_ERR_BAD_CHUNK_LEADER`, and level arrays
+  shorter than the level counts with the existing "Tile descriptor data missing or corrupt".
 - **Status:** the port's choice; listed for the owner's review.
