@@ -4,7 +4,7 @@
 saveCPP and loadCPP @ v3.5.3), done by the official openexr==3.5.3 wheel.
 
   uv run --project oracle python -I oracle/save_load.py <dir> <cpp.exr> <core.exr> \\
-      <tiled 0|1> <xs> <ys> <compression> <fw> <fh> <dwx> <dwy>
+      <tiled 0|1> <xs> <ys> <compression> <fw> <fh> <dwx> <dwy> [linear]
 
 <dir> holds the test's pixels, one file per channel, each sampled channel's values in raster
 order and native byte order: I.bin (uint32), R.bin, G.bin, B.bin, A.bin and H.bin (half bits)
@@ -12,7 +12,9 @@ and F.bin (float32), each (fh / ys) x (fw / xs). The script writes them to <cpp.
 saveCPP does: display window (0, 0) - (fw - 1, fh - 1), data window from (dwx, dwy) of the
 same size, every channel sampled xs, ys, 32 x 32 one-level tiles when tiled, and the given
 <compression> (a name of the wheel's, such as ZIP_COMPRESSION). saveCPP sets the zip level to
-4, which the binding has no setting for: 4 is the library's default.
+4, which the binding has no setting for: 4 is the library's default. With `linear`, the half
+channels are flagged perceptually linear (pLinear), which upstream's tests never do; the
+port's own checks use it for B44's tables.
 
 Then, as loadCPP, it reads <cpp.exr> and <core.exr> back and writes each channel's pixels to
 <dir>/cpp.<name>.bin and <dir>/core.<name>.bin, as the wheel returns them (native byte order,
@@ -42,13 +44,14 @@ CHANNELS = {
 
 
 def main():
-    if len(sys.argv) != 12:
+    if len(sys.argv) not in (12, 13):
         sys.exit(__doc__)
     d, cpp, core = sys.argv[1], sys.argv[2], sys.argv[3]
     tiled = sys.argv[4] == "1"
     xs, ys = int(sys.argv[5]), int(sys.argv[6])
     comp = getattr(OpenEXR, sys.argv[7])
     fw, fh, dwx, dwy = (int(v) for v in sys.argv[8:12])
+    linear = len(sys.argv) == 13 and sys.argv[12] == "linear"
     sw, sh = fw // xs, fh // ys
 
     header = {
@@ -70,6 +73,8 @@ def main():
         full = np.zeros(fw * fh, dtype=dtype)
         full[: sw * sh] = raw[: sw * sh]
         channels[name] = OpenEXR.Channel(name, full.reshape(fh, fw), xs, ys)
+        if linear and dtype == np.float16:
+            channels[name].pLinear = True
     with OpenEXR.File(header, channels) as f:
         f.write(cpp)
 
