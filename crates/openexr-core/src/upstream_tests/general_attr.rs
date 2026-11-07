@@ -6,7 +6,7 @@
 use crate::attributes::{AttrValue, AttributeList};
 use crate::bytes::AttrBytes;
 use crate::channel_list::AttrChlist;
-use crate::context::Context;
+use crate::context::{Context, ContextCore};
 use crate::errors::ErrorCode;
 use crate::float_vector::AttrFloatVector;
 use crate::internal_xdr::*;
@@ -1082,4 +1082,160 @@ fn test_attr_list_helper() {
         assert_eq!(al.num_attributes, 29);
         f.attr_list_destroy(&mut al);
     }
+}
+
+/// `s_unpack_fail` and `s_pack_fail` (src/test/OpenEXRCoreTest/general_attr.cpp:1137-1158
+/// @ v3.5.3).
+static S_UNPACK_FAIL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+static S_PACK_FAIL: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Partial port of `testAttrHandler` (src/test/OpenEXRCoreTest/general_attr.cpp:1162-1306 @ v3.5.3),
+/// with `test_unpack`, `test_pack` and `test_hdlr_destroy` (lines 1137-1160) as closures; their
+/// identity is compared with `Arc::ptr_eq`, as upstream compares function pointers. Left out:
+/// NULL context and object calls and the malloc failures (PLAN.md O8); `createDummyFile` as in
+/// the other attribute tests.
+#[test]
+fn test_attr_handler() {
+    use crate::opaque::{OpaqueDestroyFn, OpaquePackFn, OpaqueUnpackFn, Unpacked};
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+
+    let test_unpack: OpaqueUnpackFn = Arc::new(|_data, _attrsize, ns, ptr| {
+        *ns = 4;
+        let data4: Unpacked = Arc::new([0xDEu8, 0xAD, 0xBE, 0xEF]);
+        *ptr = Some(data4);
+        if S_UNPACK_FAIL.load(Ordering::Relaxed) > 0 {
+            return ErrorCode::CorruptChunk.code();
+        }
+        ErrorCode::Success.code()
+    });
+    let test_pack: OpaquePackFn = Arc::new(|_data, _datasize, nsize, ptr| {
+        *nsize = 1;
+        if let Some(p) = ptr {
+            p[0] = b'E';
+        }
+        let f = S_PACK_FAIL.load(Ordering::Relaxed);
+        if f == 1 {
+            return ErrorCode::CorruptChunk.code();
+        }
+        if f > 0 {
+            S_PACK_FAIL.store(f - 1, Ordering::Relaxed);
+        }
+        ErrorCode::Success.code()
+    });
+    let test_hdlr_destroy: OpaqueDestroyFn = Arc::new(|_data, _size| {});
+    let inval = ErrorCode::InvalidArgument;
+    let data4: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
+    let unpacked = || -> Option<Unpacked> { Some(Arc::new(data4)) };
+
+    let mut f = create_dummy_file("<attr_handler>");
+    let opaque = |f: &Context, id| -> AttrOpaqueData {
+        match &f.parts[0].attributes.get(id).expect("attr").value {
+            AttrValue::Opaque(o) => o.clone(),
+            _ => panic!("not opaque"),
+        }
+    };
+    let with_opaque =
+        |f: &mut Context, id, op: &mut dyn FnMut(&ContextCore, &mut AttrOpaqueData)| {
+            let Context { core, parts, .. } = f;
+            match &mut parts[0].attributes.get_mut(id).expect("attr").value {
+                AttrValue::Opaque(o) => op(core, o),
+                _ => panic!("not opaque"),
+            }
+        };
+    let foo = f
+        .attr_declare_by_type(0, Some("foo"), Some("mytype"))
+        .unwrap();
+    assert!(opaque(&f, foo).unpack_func_ptr.is_none());
+    with_opaque(&mut f, foo, &mut |c, o| {
+        assert_eq!(c.attr_opaquedata_pack(o).unwrap_err().code, inval);
+        assert_eq!(c.attr_opaquedata_unpack(o).unwrap_err().code, inval);
+    });
+    let reg = |f: &mut Context, t| {
+        f.register_attr_type_handler(
+            t,
+            Some(test_unpack.clone()),
+            Some(test_pack.clone()),
+            Some(test_hdlr_destroy.clone()),
+        )
+    };
+    assert_eq!(reg(&mut f, None).unwrap_err().code, inval);
+    assert_eq!(reg(&mut f, Some("")).unwrap_err().code, inval);
+    assert_eq!(
+        reg(&mut f, Some("reallongreallongreallonglongname"))
+            .unwrap_err()
+            .code,
+        ErrorCode::NameTooLong
+    );
+    assert_eq!(reg(&mut f, Some("box2i")).unwrap_err().code, inval);
+    reg(&mut f, Some("mytype")).unwrap();
+    assert_eq!(reg(&mut f, Some("mytype")).unwrap_err().code, inval);
+    let same_handlers = |o: &AttrOpaqueData| {
+        o.unpack_func_ptr
+            .as_ref()
+            .is_some_and(|p| Arc::ptr_eq(p, &test_unpack))
+            && o.pack_func_ptr
+                .as_ref()
+                .is_some_and(|p| Arc::ptr_eq(p, &test_pack))
+            && o.destroy_unpacked_func_ptr
+                .as_ref()
+                .is_some_and(|p| Arc::ptr_eq(p, &test_hdlr_destroy))
+    };
+    assert!(same_handlers(&opaque(&f, foo)));
+    let bar = f
+        .attr_declare_by_type(0, Some("bar"), Some("mytype"))
+        .unwrap();
+    assert!(same_handlers(&opaque(&f, bar)));
+
+    with_opaque(&mut f, foo, &mut |c, o| {
+        c.attr_opaquedata_set_unpacked(o, unpacked(), 4).unwrap();
+        // make sure it keeps the unpacked value
+        S_UNPACK_FAIL.store(1, Ordering::Relaxed);
+        c.attr_opaquedata_unpack(o).unwrap();
+        S_UNPACK_FAIL.store(0, Ordering::Relaxed);
+        c.attr_opaquedata_pack(o).unwrap();
+        // make sure it keeps the old value
+        S_PACK_FAIL.store(1, Ordering::Relaxed);
+        c.attr_opaquedata_pack(o).unwrap();
+        S_PACK_FAIL.store(0, Ordering::Relaxed);
+    });
+    with_opaque(&mut f, bar, &mut |c, o| {
+        c.attr_opaquedata_set_packed(o, Some(&data4), 4).unwrap();
+        c.attr_opaquedata_set_packed(o, Some(&data4), 4).unwrap();
+        assert_eq!(
+            c.attr_opaquedata_set_packed(o, Some(&data4), -1)
+                .unwrap_err()
+                .code,
+            inval
+        );
+    });
+    let b = opaque(&f, bar);
+    assert!(same_handlers(&b));
+    assert!(b.unpacked_data.is_none());
+    with_opaque(&mut f, bar, &mut |c, o| {
+        S_UNPACK_FAIL.store(1, Ordering::Relaxed);
+        assert_eq!(
+            c.attr_opaquedata_unpack(o).unwrap_err().code,
+            ErrorCode::CorruptChunk
+        );
+        S_UNPACK_FAIL.store(0, Ordering::Relaxed);
+        c.attr_opaquedata_unpack(o).unwrap();
+        assert!(o.unpacked_data.is_some());
+        c.attr_opaquedata_set_packed(o, Some(&data4), 4).unwrap();
+    });
+    with_opaque(&mut f, foo, &mut |c, o| {
+        c.attr_opaquedata_set_unpacked(o, unpacked(), 4).unwrap();
+        S_PACK_FAIL.store(1, Ordering::Relaxed);
+        assert_eq!(
+            c.attr_opaquedata_pack(o).unwrap_err().code,
+            ErrorCode::CorruptChunk
+        );
+        S_PACK_FAIL.store(2, Ordering::Relaxed);
+        assert_eq!(
+            c.attr_opaquedata_pack(o).unwrap_err().code,
+            ErrorCode::CorruptChunk
+        );
+        S_PACK_FAIL.store(0, Ordering::Relaxed);
+    });
+    f.finish().expect("finish");
 }

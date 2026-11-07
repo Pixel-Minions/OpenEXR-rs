@@ -1661,7 +1661,7 @@ path = "src/test/OpenEXRCoreTest/general_attr.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
-note = "testXDR, testAttrSizes; string, vector, bytes, preview, chlist, opaque and list helpers partial (dummy file until exr_start_write; exr_attr_set_* with Phase 3; print_context_info with debug.c; testAttrHandler with exr_register_attr_type_handler)"
+note = "testXDR, testAttrSizes; the string, vector, bytes, preview, chlist, opaque, list and handler tests are partial ports (dummy file until exr_start_write; exr_attr_set_* with the setters; print_context_info with debug.c)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"

@@ -838,6 +838,101 @@ impl Context {
     }
 }
 
+impl Context {
+    /// Port of `exr_register_attr_type_handler` (src/lib/OpenEXRCore/context.c:473-571
+    /// @ v3.5.3): pack and unpack functions for opaque attributes of type `type_`, given to
+    /// the attributes of that type already in the parts and to those declared later.
+    pub fn register_attr_type_handler(
+        &mut self,
+        type_: Option<&str>,
+        unpack_func_ptr: Option<crate::opaque::OpaqueUnpackFn>,
+        pack_func_ptr: Option<crate::opaque::OpaquePackFn>,
+        destroy_unpacked_func_ptr: Option<crate::opaque::OpaqueDestroyFn>,
+    ) -> Result<(), Error> {
+        use crate::attributes::AttrValue;
+        let mlen = i32::from(self.core.max_name_length);
+        let ty = match type_ {
+            Some(t) if !t.is_empty() => t,
+            _ => {
+                return Err(self.report_error(
+                    ErrorCode::InvalidArgument,
+                    b"Invalid type to register_attr_handler",
+                ));
+            }
+        };
+        let slen = ty.len();
+        if slen > mlen as usize {
+            return Err(self.print_error(
+                ErrorCode::NameTooLong,
+                "Provided type name '%s' too long for file (len %d, max %d)",
+                &[ty.into(), (slen as i32).into(), mlen.into()],
+            ));
+        }
+        let tlen = slen as i32;
+        if crate::attributes::internal_exr_is_standard_type(ty.as_bytes()) {
+            return Err(self.print_error(
+                ErrorCode::InvalidArgument,
+                "Provided type name '%s' is a reserved / internal type name",
+                &[ty.into()],
+            ));
+        }
+        if self
+            .attr_list_find_by_name(&self.custom_handlers, Some(ty.as_bytes()))
+            .is_ok()
+        {
+            return Err(self.print_error(
+                ErrorCode::InvalidArgument,
+                "Attribute handler for '%s' previously registered",
+                &[ty.into()],
+            ));
+        }
+        // Upstream looks the new entry's handler up in the list it was just added to, where
+        // its functions are still NULL: an empty list gives the same result.
+        let mut handlers = std::mem::take(&mut self.custom_handlers);
+        let added = self.core.attr_list_add_by_type(
+            &AttributeList::default(),
+            &mut handlers,
+            Some(ty.as_bytes()),
+            Some(ty.as_bytes()),
+            0,
+            false,
+        );
+        let ent = match added {
+            Ok((id, _)) => id,
+            Err(e) => {
+                self.custom_handlers = handlers;
+                return Err(self.print_error(
+                    e.code,
+                    "Unable to register custom handler for type '%s'",
+                    &[ty.into()],
+                ));
+            }
+        };
+        let set = |v: &mut AttrValue| {
+            if let AttrValue::Opaque(o) = v {
+                o.unpack_func_ptr = unpack_func_ptr.clone();
+                o.pack_func_ptr = pack_func_ptr.clone();
+                o.destroy_unpacked_func_ptr = destroy_unpacked_func_ptr.clone();
+            }
+        };
+        set(&mut handlers.get_mut(ent).expect("added").value);
+        self.custom_handlers = handlers;
+        for part in &mut self.parts {
+            let ids: Vec<AttrId> = part
+                .attributes
+                .entries()
+                .iter()
+                .filter(|a| i32::from(a.type_name_length) == tlen && a.type_name == ty.as_bytes())
+                .map(|a| a.id())
+                .collect();
+            for id in ids {
+                set(&mut part.attributes.get_mut(id).expect("listed").value);
+            }
+        }
+        Ok(())
+    }
+}
+
 impl std::ops::Deref for Context {
     type Target = ContextCore;
     fn deref(&self) -> &ContextCore {
