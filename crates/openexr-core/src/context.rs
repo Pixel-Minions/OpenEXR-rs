@@ -609,7 +609,7 @@ impl Context {
         // if we are reading the file, go ahead and set up the first part to make parsing
         // logic easier
         if mode != ContextMode::Write {
-            ctxt.add_part();
+            ctxt.internal_exr_add_part();
         }
         ctxt
     }
@@ -617,7 +617,7 @@ impl Context {
     /// Port of `internal_exr_add_part` (src/lib/OpenEXRCore/internal_structs.c:189-266
     /// @ v3.5.3): appends a part with upstream's "invalid" initial values and the context's
     /// default codec levels; returns its index.
-    pub(crate) fn add_part(&mut self) -> usize {
+    pub(crate) fn internal_exr_add_part(&mut self) -> usize {
         let index = self.parts.len();
         let invalid_window = Box2i {
             min: V2i { x: 0, y: 0 },
@@ -772,6 +772,69 @@ impl Context {
     /// parts.
     pub fn get_count(&self) -> i32 {
         self.parts.len() as i32
+    }
+}
+
+impl Context {
+    /// Port of `exr_get_file_version_and_flags` (src/lib/OpenEXRCore/context.c:428-450
+    /// @ v3.5.3): the version field read from the file, or the one a header written now would
+    /// have.
+    pub fn get_file_version_and_flags(&self) -> u32 {
+        if self.orig_version_and_flags != 0 {
+            self.orig_version_and_flags
+        } else {
+            crate::write_header::internal_exr_calc_header_version_flags(self)
+        }
+    }
+
+    /// Port of `exr_set_longname_support` (src/lib/OpenEXRCore/context.c:573-636 @ v3.5.3):
+    /// allows names of up to 255 bytes (version 2 headers), or back to 31 when every existing
+    /// name fits.
+    pub fn set_longname_support(&mut self, onoff: bool) -> Result<(), Error> {
+        self.require_write()?;
+        let oldval = self.core.max_name_length;
+        let newval = if onoff {
+            self.version = 2;
+            crate::internal_constants::EXR_LONGNAME_MAXLEN
+        } else {
+            self.version = 1;
+            EXR_SHORTNAME_MAXLEN
+        };
+        if oldval > newval {
+            for curp in &self.parts {
+                for curattr in curp.attributes.entries() {
+                    if curattr.name_length > newval || curattr.type_name_length > newval {
+                        return Err(self.print_error(
+                            ErrorCode::NameTooLong,
+                            "Part %d, attribute '%s' (type '%s') has a name too long for new longname setting (%d)",
+                            &[
+                                curp.part_index.into(),
+                                Arg::Str(&curattr.name),
+                                Arg::Str(&curattr.type_name),
+                                i32::from(newval).into(),
+                            ],
+                        ));
+                    }
+                    if let crate::attributes::AttrValue::Chlist(chs) = &curattr.value {
+                        for c in &chs.entries {
+                            if c.name.length > i32::from(newval) {
+                                return Err(self.print_error(
+                                    ErrorCode::NameTooLong,
+                                    "Part %d, channel '%s' has a name too long for new longname setting (%d)",
+                                    &[
+                                        curp.part_index.into(),
+                                        Arg::Str(c.name.c_str()),
+                                        i32::from(newval).into(),
+                                    ],
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        self.core.max_name_length = newval;
+        Ok(())
     }
 }
 

@@ -2237,7 +2237,7 @@ fn parse_header_body(ctxt: &mut Context) -> Result<(), Error> {
                 // next
                 break;
             }
-            curpart = ctxt.add_part();
+            curpart = ctxt.internal_exr_add_part();
         }
         rv = with_parser(ctxt, curpart, |pr, part| {
             pr.pull_attr(part, next_byte[0], &mut scratch)

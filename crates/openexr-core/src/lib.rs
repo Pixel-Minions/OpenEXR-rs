@@ -12,6 +12,7 @@ pub mod bytes;
 #[doc(hidden)]
 pub mod cfmt;
 pub mod channel_list;
+pub mod chunk;
 pub mod color_metadata;
 pub mod compression;
 pub mod context;
@@ -30,11 +31,14 @@ pub mod opaque;
 pub mod openexr_attr;
 mod os_error;
 mod parse_header;
+pub mod part;
+pub mod part_attr;
 pub mod preview;
 pub mod string;
 pub mod string_vector;
 mod validation;
 pub mod version;
+mod write_header;
 
 #[cfg(test)]
 mod upstream_tests;

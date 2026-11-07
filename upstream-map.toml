@@ -1088,7 +1088,9 @@ target = "crates/openexr-core/src/channel_list.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/chunk.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/chunk.rs"
+note = "exr_get_chunk_table_offset; the rest with Phase 4"
 
 [[file]]
 path = "src/lib/OpenEXRCore/coding.c"
@@ -1525,13 +1527,15 @@ note = "complete for reading; done after the heavy tier compares every corpus he
 path = "src/lib/OpenEXRCore/part.c"
 kind = "src"
 status = "partial"
-target = "crates/openexr-core/src/context.rs"
-note = "exr_get_count; the rest with Phase 3"
+target = "crates/openexr-core/src/part.rs,crates/openexr-core/src/context.rs"
+note = "getters, exr_add_part, level setters; chunk table with Phase 4"
 
 [[file]]
 path = "src/lib/OpenEXRCore/part_attr.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/part_attr.rs"
+note = "list queries, required and typed getters, declare; the setters, copy and initialize_required_attr follow"
 
 [[file]]
 path = "src/lib/OpenEXRCore/preview.c"
@@ -1571,7 +1575,9 @@ note = "read-side validation; internal_exr_validate_write_part with the writer (
 [[file]]
 path = "src/lib/OpenEXRCore/write_header.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/write_header.rs"
+note = "internal_exr_calc_header_version_flags; the writer with Phase 6"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/CMakeLists.txt"
@@ -1690,7 +1696,7 @@ path = "src/test/OpenEXRCoreTest/read.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/read.rs"
-note = "testReadBadArgs, testReadBadFiles, testOpenScans, testOpenTiles, testOpenMultiPart; the read and meta tests need the part API and decoding"
+note = "testReadBadArgs, testReadBadFiles, testReadMeta, testOpenScans, testOpenTiles, testOpenMultiPart; the read tests need decoding (Phase 4)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/read.h"

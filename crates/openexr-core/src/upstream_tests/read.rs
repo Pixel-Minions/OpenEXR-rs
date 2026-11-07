@@ -125,3 +125,50 @@ fn test_open_tiles() {
 /// body is empty.
 #[test]
 fn test_open_multi_part() {}
+
+/// Port of `testReadMeta` (src/test/OpenEXRCoreTest/read.cpp:124-209) @ v3.5.3. Left out: the
+/// NULL context and output pointers (PLAN.md O8); `exr_get_user_data`'s `NULL` is `None`.
+#[test]
+fn test_read_meta() {
+    let fn_ = format!("{}v1.7.test.1.exr", test_image_dir());
+    Context::test_file_header(Some(&fn_), cinit()).expect("test_file_header");
+    let mut f = Context::start_read(Some(&fn_), cinit()).expect("start_read");
+    assert_eq!(f.get_file_version_and_flags(), 2);
+
+    let oor = ErrorCode::ArgumentOutOfRange;
+    assert_eq!(f.get_chunk_table_offset(-1).unwrap_err().code, oor);
+    assert_eq!(f.get_chunk_table_offset(2).unwrap_err().code, oor);
+    assert_eq!(f.get_chunk_table_offset(0).unwrap(), 331);
+
+    let now = ErrorCode::NotOpenWrite;
+    assert_eq!(
+        f.attr_declare_by_type(0, Some("foo"), Some("box2i"))
+            .unwrap_err()
+            .code,
+        now
+    );
+    assert_eq!(
+        f.attr_declare(0, Some("bar"), crate::openexr_attr::AttributeType::BOX2I)
+            .unwrap_err()
+            .code,
+        now
+    );
+    assert_eq!(
+        f.add_part(Some("beauty"), crate::openexr_attr::Storage::TILED)
+            .unwrap_err()
+            .code,
+        now
+    );
+    assert_eq!(f.set_longname_support(false).unwrap_err().code, now);
+    assert_eq!(f.set_longname_support(true).unwrap_err().code, now);
+
+    assert!(f.get_user_data().is_none());
+
+    assert_eq!(f.get_zip_compression_level(0).unwrap(), -1);
+    assert_eq!(f.set_zip_compression_level(0, 4).unwrap_err().code, now);
+    assert_eq!(f.get_dwa_compression_level(0).unwrap(), 45.0);
+    assert_eq!(f.set_dwa_compression_level(0, 42.0).unwrap_err().code, now);
+    assert_eq!(f.get_zstd_compression_level(0).unwrap(), 5);
+    assert_eq!(f.set_zstd_compression_level(0, 5).unwrap_err().code, now);
+    f.finish().expect("finish");
+}
