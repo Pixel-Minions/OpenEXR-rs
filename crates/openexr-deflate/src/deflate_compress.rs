@@ -6,8 +6,8 @@
 //! no bit-reversal instruction).
 //!
 //! So far: the Huffman code construction, the block flushing (uncompressed, static and dynamic
-//! blocks), the block splitting heuristic, and the level 0 (uncompressed) and levels 2 to 4
-//! (greedy, `hc_matchfinder`) compressors. The fastest (level 1), lazy (5 to 9) and
+//! blocks), the block splitting heuristic, and the compressors of levels 0 (uncompressed), 2 to
+//! 4 (greedy) and 5 to 9 (lazy and lazy2), on `hc_matchfinder`. The fastest (level 1) and
 //! near-optimal (10 to 12) compressors follow; [`Compressor::new`] gives none for those levels
 //! until then.
 //!
@@ -206,6 +206,8 @@ enum Strategy {
     /// Level 0: no `impl`, every input is passed through as uncompressed blocks.
     None,
     Greedy,
+    Lazy,
+    Lazy2,
 }
 
 /// Port of `struct libdeflate_compressor` (external/deflate/lib/deflate_compress.c:454-697
@@ -776,7 +778,34 @@ fn calculate_min_match_len(data: &[u8], max_search_depth: u32) -> u32 {
     choose_min_match_len(num_used_literals, max_search_depth)
 }
 
-/// Port of `choose_max_block_end` (external/deflate/lib/deflate_compress.c:2380-2386
+/// `bsr32`: the index of the highest set bit of `v` (not 0).
+#[inline]
+fn bsr32(v: u32) -> i32 {
+    31 - v.leading_zeros() as i32
+}
+
+/// Port of `recalculate_min_match_len` (external/deflate/lib/deflate_compress.c:2359-2378
+/// @ libdeflate v1.26): [`choose_min_match_len`] from the literals the block uses, now that
+/// their distribution is known (literals used very rarely are ignored).
+fn recalculate_min_match_len(freqs: &Freqs, max_search_depth: u32) -> u32 {
+    let mut literal_freq = 0u32;
+    let mut num_used_literals = 0u32;
+
+    for &f in &freqs.litlen[..DEFLATE_NUM_LITERALS] {
+        literal_freq = literal_freq.wrapping_add(f);
+    }
+
+    let cutoff = literal_freq >> 10; // Ignore literals used very rarely.
+
+    for &f in &freqs.litlen[..DEFLATE_NUM_LITERALS] {
+        if f > cutoff {
+            num_used_literals += 1;
+        }
+    }
+    choose_min_match_len(num_used_literals, max_search_depth)
+}
+
+/// Port of `choose_max_block_end`(external/deflate/lib/deflate_compress.c:2380-2386
 /// @ libdeflate v1.26).
 #[inline]
 fn choose_max_block_end(in_block_begin: usize, in_end: usize, soft_max_len: usize) -> usize {
@@ -947,7 +976,7 @@ impl Compressor {
     /// (external/deflate/lib/deflate_compress.c:3872-4028 @ libdeflate v1.26): a compressor
     /// for `compression_level`, from 0 (no compression) to 12, or -1 for the default (6);
     /// `None` for another level. The levels whose compressors are not ported yet give `None`
-    /// too, for now (1, and 5 to 12).
+    /// too, for now (1, and 10 to 12).
     pub fn new(compression_level: i32) -> Option<Compressor> {
         // Note: For similarity with zlib's API, -1 is accepted as an alias for the default
         // compression level.
@@ -1001,12 +1030,20 @@ impl Compressor {
             2 => (Strategy::Greedy, 6, 10),
             3 => (Strategy::Greedy, 12, 14),
             4 => (Strategy::Greedy, 16, 30),
+            5 => (Strategy::Lazy, 16, 30),
+            6 => (Strategy::Lazy, 35, 65),
+            7 => (Strategy::Lazy, 100, 130),
+            8 => (Strategy::Lazy2, 300, DEFLATE_MAX_MATCH_LEN as u32),
+            9 => (Strategy::Lazy2, 600, DEFLATE_MAX_MATCH_LEN as u32),
             _ => return None,
         };
         c.strategy = strategy;
         c.max_search_depth = depth;
         c.nice_match_length = nice;
-        if strategy == Strategy::Greedy {
+        if matches!(
+            strategy,
+            Strategy::Greedy | Strategy::Lazy | Strategy::Lazy2
+        ) {
             c.hc_mf = Some(HcMatchfinder::new());
             c.sequences = vec![Sequence::default(); SEQ_STORE_LENGTH + 1];
         }
@@ -1538,7 +1575,205 @@ impl Compressor {
         self.hc_mf = Some(mf);
     }
 
-    /// Port of `libdeflate_deflate_compress` (external/deflate/lib/deflate_compress.c:4030-4072
+    /// Port of `deflate_compress_lazy_generic`, `deflate_compress_lazy` and
+    /// `deflate_compress_lazy2` (external/deflate/lib/deflate_compress.c:2604-2834 @ libdeflate
+    /// v1.26): before choosing a match, look for a better one at the next position (and, in
+    /// `lazy2` mode, the one after); if there is one, output a literal and go on from there.
+    fn deflate_compress_lazy_generic(
+        &mut self,
+        data: &[u8],
+        os: &mut OutputBitstream<'_>,
+        lazy2: bool,
+    ) {
+        let in_end = data.len();
+        let mut in_next = 0usize;
+        let mut in_cur_base = 0usize;
+        let mut max_len = DEFLATE_MAX_MATCH_LEN as u32;
+        let mut nice_len = self.nice_match_length.min(max_len);
+        let mut next_hashes = [0u32; 2];
+        let mut mf = self.hc_mf.take().expect("the lazy parser's matchfinder");
+        let depth = self.max_search_depth;
+
+        mf.init();
+
+        loop {
+            // Starting a new DEFLATE block
+            let in_block_begin = in_next;
+            let in_max_block_end = choose_max_block_end(in_next, in_end, SOFT_MAX_BLOCK_LENGTH);
+            let mut next_recalc_min_len = in_next + (in_end - in_next).min(10000);
+            let mut seq = 0usize;
+
+            self.split_stats.init();
+            self.deflate_begin_sequences(seq);
+            let mut min_len = calculate_min_match_len(&data[in_next..in_max_block_end], depth);
+            loop {
+                // (upstream's `continue`s go to the check at the end of this loop)
+                'step: {
+                    // Recalculate the minimum match length if it hasn't been done recently.
+                    if in_next >= next_recalc_min_len {
+                        min_len = recalculate_min_match_len(&self.freqs, depth);
+                        next_recalc_min_len +=
+                            (in_end - next_recalc_min_len).min(in_next - in_block_begin);
+                    }
+
+                    // Find the longest match at the current position.
+                    adjust_max_and_nice_len(&mut max_len, &mut nice_len, in_end - in_next);
+                    let mut cur_offset = 0u32;
+                    let mut cur_len = mf.longest_match(
+                        data,
+                        &mut in_cur_base,
+                        in_next,
+                        min_len - 1,
+                        max_len,
+                        nice_len,
+                        depth,
+                        &mut next_hashes,
+                        &mut cur_offset,
+                    );
+                    if cur_len < min_len
+                        || (cur_len == DEFLATE_MIN_MATCH_LEN as u32 && cur_offset > 8192)
+                    {
+                        // No match found. Choose a literal.
+                        self.deflate_choose_literal(data[in_next], true, seq);
+                        in_next += 1;
+                        break 'step;
+                    }
+                    in_next += 1;
+
+                    // have_cur_match:
+                    loop {
+                        // We have a match at the current position. If it's very long, choose
+                        // it immediately.
+                        if cur_len >= nice_len {
+                            self.deflate_choose_match(cur_len, cur_offset, true, &mut seq);
+                            mf.skip_bytes(
+                                data,
+                                &mut in_cur_base,
+                                in_next,
+                                in_end,
+                                cur_len - 1,
+                                &mut next_hashes,
+                            );
+                            in_next += cur_len as usize - 1;
+                            break 'step;
+                        }
+
+                        // Try to find a better match at the next position. (Since we already
+                        // have a match at the current position, only half the search depth is
+                        // used at the next position.)
+                        adjust_max_and_nice_len(&mut max_len, &mut nice_len, in_end - in_next);
+                        let mut next_offset = 0u32;
+                        let mut next_len = mf.longest_match(
+                            data,
+                            &mut in_cur_base,
+                            in_next,
+                            cur_len - 1,
+                            max_len,
+                            nice_len,
+                            depth >> 1,
+                            &mut next_hashes,
+                            &mut next_offset,
+                        );
+                        in_next += 1;
+                        if next_len >= cur_len
+                            && 4 * (next_len - cur_len) as i32
+                                + (bsr32(cur_offset) - bsr32(next_offset))
+                                > 2
+                        {
+                            // Found a better match at the next position. Output a literal.
+                            // Then the next match becomes the current match.
+                            self.deflate_choose_literal(data[in_next - 2], true, seq);
+                            cur_len = next_len;
+                            cur_offset = next_offset;
+                            continue;
+                        }
+
+                        if lazy2 {
+                            // In lazy2 mode, look ahead another position
+                            adjust_max_and_nice_len(&mut max_len, &mut nice_len, in_end - in_next);
+                            next_len = mf.longest_match(
+                                data,
+                                &mut in_cur_base,
+                                in_next,
+                                cur_len - 1,
+                                max_len,
+                                nice_len,
+                                depth >> 2,
+                                &mut next_hashes,
+                                &mut next_offset,
+                            );
+                            in_next += 1;
+                            if next_len >= cur_len
+                                && 4 * (next_len - cur_len) as i32
+                                    + (bsr32(cur_offset) - bsr32(next_offset))
+                                    > 6
+                            {
+                                // There's a much better match two positions ahead, so use two
+                                // literals.
+                                self.deflate_choose_literal(data[in_next - 3], true, seq);
+                                self.deflate_choose_literal(data[in_next - 2], true, seq);
+                                cur_len = next_len;
+                                cur_offset = next_offset;
+                                continue;
+                            }
+                            // No better match at either of the next 2 positions. Output the
+                            // current match.
+                            self.deflate_choose_match(cur_len, cur_offset, true, &mut seq);
+                            if cur_len > 3 {
+                                mf.skip_bytes(
+                                    data,
+                                    &mut in_cur_base,
+                                    in_next,
+                                    in_end,
+                                    cur_len - 3,
+                                    &mut next_hashes,
+                                );
+                                in_next += cur_len as usize - 3;
+                            }
+                        } else {
+                            // No better match at the next position. Output the current match.
+                            self.deflate_choose_match(cur_len, cur_offset, true, &mut seq);
+                            mf.skip_bytes(
+                                data,
+                                &mut in_cur_base,
+                                in_next,
+                                in_end,
+                                cur_len - 2,
+                                &mut next_hashes,
+                            );
+                            in_next += cur_len as usize - 2;
+                        }
+                        break 'step;
+                    }
+                }
+
+                // Check if it's time to output another block.
+                if !(in_next < in_max_block_end
+                    && seq < SEQ_STORE_LENGTH
+                    && !self
+                        .split_stats
+                        .should_end_block(in_block_begin, in_next, in_end))
+                {
+                    break;
+                }
+            }
+
+            self.deflate_finish_block(
+                os,
+                data,
+                in_block_begin,
+                (in_next - in_block_begin) as u32,
+                seq,
+                in_next == in_end,
+            );
+            if in_next == in_end || os.overflow {
+                break;
+            }
+        }
+        self.hc_mf = Some(mf);
+    }
+
+    /// Port of `libdeflate_deflate_compress`(external/deflate/lib/deflate_compress.c:4030-4072
     /// @ libdeflate v1.26): the DEFLATE stream of `input` into `out`; returns its size, or 0
     /// when `out` is too small.
     pub fn deflate_compress(&mut self, input: &[u8], out: &mut [u8]) -> usize {
@@ -1561,6 +1796,8 @@ impl Compressor {
         match self.strategy {
             Strategy::None => unreachable!("level 0 passes every input through"),
             Strategy::Greedy => self.deflate_compress_greedy(input, &mut os),
+            Strategy::Lazy => self.deflate_compress_lazy_generic(input, &mut os, false),
+            Strategy::Lazy2 => self.deflate_compress_lazy_generic(input, &mut os, true),
         }
 
         // Return 0 if the output buffer is too small.

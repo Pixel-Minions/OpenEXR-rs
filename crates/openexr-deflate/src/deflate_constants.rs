@@ -27,6 +27,7 @@ pub(crate) const DEFLATE_NUM_OFFSET_SYMS: usize = 32;
 pub(crate) const DEFLATE_MAX_NUM_SYMS: usize = 288;
 
 /// Division of symbols in the literal/length code
+pub(crate) const DEFLATE_NUM_LITERALS: usize = 256;
 pub(crate) const DEFLATE_END_OF_BLOCK: usize = 256;
 pub(crate) const DEFLATE_FIRST_LEN_SYM: usize = 257;
 

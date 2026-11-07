@@ -71,7 +71,7 @@ const EXR_DEFAULT_ZLIB_COMPRESS_LEVEL: i32 = 4;
 /// Port of `exr_compress_buffer` (src/lib/OpenEXRCore/compression.c:121-173 @ v3.5.3): the zlib
 /// stream of `input` into `out` at `level` (a negative level is the default one, else 4);
 /// returns its size. A stream that does not fit is `EXR_ERR_OUT_OF_MEMORY`, as upstream
-/// reports it; so, for now, is a level whose compressor is not ported yet (1, and 5 to 9).
+/// reports it; so, for now, is a level whose compressor is not ported yet (1).
 pub fn compress_buffer(level: i32, input: &[u8], out: &mut [u8]) -> Result<usize, Error> {
     let mut level = level;
     if level < 0 {

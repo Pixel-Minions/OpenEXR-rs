@@ -592,7 +592,7 @@ path = "external/deflate/lib/deflate_compress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-deflate/src/deflate_compress.rs"
-note = "the Huffman codes, block flushing and splitting, levels 0 and 2-4 (uncompressed, greedy); level 4, the default, matches the wheel's ZIP and ZIPS streams byte for byte (heavy tier); the fastest (1), lazy (5-9) and near-optimal (10-12) compressors to come"
+note = "the Huffman codes, block flushing and splitting, levels 0, 2-4 and 5-9 (uncompressed, greedy, lazy, lazy2); level 4, the default, matches the wheel's ZIP and ZIPS streams byte for byte (heavy tier), the other levels round-trip (their streams need the O1 harness); the fastest (1) and near-optimal (10-12) compressors to come"
 
 [[file]]
 path = "external/deflate/lib/deflate_compress.h"
