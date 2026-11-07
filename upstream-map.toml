@@ -771,9 +771,9 @@ note = "the bit scans the port uses"
 [[file]]
 path = "external/zstd/lib/common/bitstream.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/bitstream.rs"
-note = "both halves ported; the decoding half checked through Core's ZSTD decoder (the wheel's ZSTD images decode as the wheel decodes them, heavy tier); the encoding half round-trips through the decoders, and is checked against the wheel's bytes with Core's ZSTD encoder"
+note = "both halves ported; the decoding half checked through Core's ZSTD decoder, the encoding half checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/common/compiler.h"
@@ -902,21 +902,23 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/clevels.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/clevels.rs"
+note = "the table generated from the header; checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/fse_compress.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/fse_compress.rs"
-note = "the table builder, normalizer, header writer and encoder ported (FSE_compress's one-call wrapper isn't in 1.5.7's library); round-trips through Huffman's weight headers; checked against the wheel's bytes with Core's ZSTD encoder"
+note = "the table builder, normalizer, header writer and encoder ported (1.5.7's library has no one-call FSE_compress); checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/hist.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/hist.rs"
-note = "ported; the four-way counting is a speed device with the simple loop's counts; checked against the wheel's bytes with Core's ZSTD encoder"
+note = "ported; the four-way counting is a speed device with the simple loop's counts; checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/hist.h"
@@ -929,26 +931,28 @@ path = "external/zstd/lib/compress/huf_compress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/huf_compress.rs"
-note = "ported, but HUF_readCTable (dictionaries, n/a) and HUF_getNbBitsFromCTable (with the optimal parser); typed workspaces; round-trips through the ported decoders; checked against the wheel's bytes with Core's ZSTD encoder"
+note = "ported, but HUF_readCTable (dictionaries, n/a) and HUF_getNbBitsFromCTable (with the optimal parser); typed workspaces; checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_compress.rs"
+note = "ZSTD_compressCCtx and ZSTD_compressBound for the greedy, lazy and lazy2 strategies (Core's default level at every size), each frame on a fresh window (equivalent: upstream's leftovers lie below the cleared window's low limit); the other strategies answer ParameterUnsupported and frames over 3.5 GB SrcSizeWrong (docs/deferred.md); streaming, dictionaries, LDM, the post-block splitter and the multithreaded mode are n/a for Core; checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_internal.h"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/zstd_compress_internal.rs"
-note = "the types and helpers the ported compressor needs, as it needs them; the length codes checked against the decoder's tables"
+note = "the types and helpers the ported compressor needs (sequences, hashes, the window without extDict, the match state of the lazy match finders); checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_literals.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_compress_literals.rs"
-note = "ported; checked against the wheel's bytes with Core's ZSTD encoder"
+note = "ported; checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_literals.h"
@@ -958,9 +962,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_sequences.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_compress_sequences.rs"
-note = "ported (with FSE_bitCost, fse.h); checked against the wheel's bytes with Core's ZSTD encoder"
+note = "ported (with FSE_bitCost, fse.h); checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_sequences.h"
@@ -1005,7 +1009,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_lazy.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_lazy.rs"
+note = "the greedy, lazy and lazy2 parsers over the hash chain and the row match finder without a dictionary; the binary tree (btlazy2), the dictionary and extDict modes remain; checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_lazy.h"
@@ -1040,7 +1046,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_preSplit.c"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_pre_split.rs"
+note = "ported; checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_preSplit.h"
