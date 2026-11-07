@@ -148,6 +148,7 @@ end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 | `scripts/upstream-build.sh [Release\|Debug] [ctest args]` | The same build and tests on Linux, inside the container |
 | `uv run --project oracle python -I oracle/smoke.py <out> [images]` | The oracle's smoke check |
 | `uv run --project oracle python -I oracle/dump_pixels.py <image> <out>` | The wheel's pixels of every channel of every part, for the decode checks |
+| `uv run --project oracle python -I oracle/write_images.py <out> <compression>...` | Small images in many channel layouts, written by the wheel, for the decode checks |
 | `uv run --no-project python -I scripts/upstream_map.py` | Add new upstream files to `upstream-map.toml` |
 | `cargo xtask gate` | Fast tier: fmt, clippy, guards, tests (every chunk) |
 | `cargo xtask gate --full` | Adds the heavy tier: `--features heavy` tests (deferred, `PLAN.md` §8) |
