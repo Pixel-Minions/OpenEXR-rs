@@ -9,7 +9,8 @@ the heavy-tier decode checks.
 and each layout below it writes <out-dir>/<layout>_<compression>.exr: scanline layouts with 1
 to 5 half channels, 3 and 4 float or uint channels, mixed types, x and y subsampling (on a
 38 x 24 window, a whole number of samples); tiled layouts with 3 and 4 channels (one level);
-a scanline and a tiled layout in decreasing-Y line order ("_dec"); a header holding an
+a scanline and a tiled layout in decreasing-Y line order ("_dec"); half channels flagged
+perceptually linear ("linear_", which B44 maps through its log tables); a header holding an
 attribute of every type the binding writes; and two large images whose pixels
 compress ("smooth": gradients, flat areas, repeats and noisy bands, 2000 x 40), so that the
 codecs' compressed paths are taken, not their fallback to the raw bytes. Pixel bits come from
@@ -75,6 +76,9 @@ LAYOUTS = {
     # decreasing-Y line order (the binding writes only level 0 of a mipmapped or ripmapped
     # part, so the tiled one has one level)
     "half3_dec": ("scanline", [("B", "half", 1, 1), ("G", "half", 1, 1), ("R", "half", 1, 1)]),
+    # pLinear channels
+    "linear_half3": ("scanline", [("B", "half", 1, 1), ("G", "half", 1, 1), ("R", "half", 1, 1)]),
+    "smooth_linear_half2": ("scanline", [("Y", "half", 1, 1), ("A", "half", 1, 1)]),
     "tiled3_dec": ("tiled", [("B", "half", 1, 1), ("G", "half", 1, 1), ("R", "half", 1, 1)]),
     "smooth_half4": ("scanline", [(c, "half", 1, 1) for c in "ABGR"]),
     "smooth_mixed": ("scanline", [("B", "half", 1, 1), ("G", "float", 1, 1), ("R", "float", 1, 1), ("id", "uint", 1, 1)]),
@@ -137,6 +141,8 @@ def main():
                 # the wheel takes every channel at full size and keeps the samples it stores
                 px = channel(rng, kind, w, h, float(i) if is_smooth else None)
                 channels[cname] = OpenEXR.Channel(cname, px, xs, ys)
+                if "linear_" in name:
+                    channels[cname].pLinear = True
             path = os.path.join(out, f"{name}_{comp_name}.exr")
             with OpenEXR.File(header, channels) as f:
                 f.write(path)
