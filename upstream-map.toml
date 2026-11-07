@@ -1102,7 +1102,7 @@ path = "src/lib/OpenEXRCore/color_metadata.c"
 kind = "src"
 status = "done"
 target = "crates/openexr-core/src/color_metadata.rs"
-note = "all but exr_check_color_metadata, which needs the part attribute API (Phase 3)"
+note = "with exr_check_color_metadata"
 
 [[file]]
 path = "src/lib/OpenEXRCore/compression.c"
@@ -1356,9 +1356,9 @@ target = "crates/openexr-core/src/string_vector.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_structs.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/context.rs"
-note = "error dispatch, default handler, alloc_context, add_part; destroy and revert_add_part with attributes"
+note = "error dispatch, default handler, alloc_context, add_part; destroy is Drop, revert_add_part a pop of the new part, restore_handlers in parse_header.rs"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_structs.h"
@@ -1502,12 +1502,15 @@ target = "crates/openexr-core/src/errors.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_part.h"
 kind = "api"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/part.rs,crates/openexr-core/src/part_attr.rs,crates/openexr-core/src/part_attr_set.rs,crates/openexr-core/src/part_attr_copy.rs"
+note = "as part.c (the chunk table with Phase 4) and part_attr.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_std_attr.h"
 kind = "api"
-status = "todo"
+status = "n/a"
+note = "no declarations: a comment listing the standard attribute names"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_version.h"
@@ -1550,7 +1553,8 @@ target = "crates/openexr-core/src/preview.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/std_attr.c"
 kind = "src"
-status = "todo"
+status = "n/a"
+note = "no code: the file only includes openexr_std_attr.h"
 
 [[file]]
 path = "src/lib/OpenEXRCore/string.c"
