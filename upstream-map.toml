@@ -1768,9 +1768,9 @@ status = "todo"
 [[file]]
 path = "src/test/OpenEXRCoreTest/write.cpp"
 kind = "test"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/upstream_tests/write.rs"
-note = "12 of its 13 tests (the NULL pointer checks n/a, PLAN.md O8); testWriteAttrs, with testCopyAttrsLongChannelName, to come"
+note = "all 13 tests, with testCopyAttrsLongChannelName (the NULL pointer checks and an access mode outside the enum n/a, PLAN.md O8)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/write.h"
