@@ -189,12 +189,16 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_common.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/block_common.rs"
+note = "the VLC and UVLC tables, built once as upstream builds them; checked with the codestream"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_common.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/block_common.rs"
+note = "the tables' declarations"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder.h"
@@ -204,12 +208,16 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder32.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/block_decoder32.rs"
+note = "ported (the readers' alignment as upstream's, warnings once per process); checked with the codestream"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder64.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/block_decoder64.rs"
+note = "ported, on the 32-bit decoder's MEL and MagRef readers (I-25); checked with the codestream"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_avx2.cpp"
@@ -261,12 +269,16 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/coding/table0.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/block_common.rs"
+note = "its rows, generated from the header"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/table1.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/block_common.rs"
+note = "its rows, generated from the header"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_arch.h"

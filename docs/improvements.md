@@ -288,6 +288,18 @@ section. An entry says:
   It changes the LJ2K files both wheels write, so it waits for the owner.
 - **Status:** matched (`crates/openexr-openjph/src/params.rs`); listed for the owner's review.
 
+### I-25. OpenJPH's 64-bit block decoder shifts its SigProp value in 32 bits
+
+- **Upstream:** the significance propagation pass of `ojph_decode_codeblock64` sets a new
+  sample to `ui64 val = 3u << (p - 2)`, whose shift is of a 32-bit `unsigned`; with `p` up to
+  62 the count is often 32 or more, which C leaves undefined and x86-64's `shl` takes modulo
+  32 (`external/OpenJPH/src/core/coding/ojph_block_decoder64.cpp:1549` @ OpenJPH 0.32.0).
+- **Who notices:** readers of HTJ2K codeblocks of more than 30 bit planes that carry a SigProp
+  pass; OpenJPH's encoder, and so OpenEXR, writes the cleanup pass only.
+- **A fix:** `3ULL << (p - 2)`. It changes no file OpenEXR writes; it waits for the owner.
+- **Status:** matched, as x86-64 computes it (`crates/openexr-openjph/src/block_decoder64.rs`);
+  listed for the owner's review.
+
 ## Messages and debug output
 
 ### I-7. A deep tile's unpacked size error prints the packed size

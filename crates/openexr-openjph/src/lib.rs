@@ -9,6 +9,12 @@
 mod arch;
 mod base;
 #[allow(dead_code)] // used as the port grows
+mod block_common;
+#[allow(dead_code)] // used as the port grows
+mod block_decoder32;
+#[allow(dead_code)] // used as the port grows
+mod block_decoder64;
+#[allow(dead_code)] // used as the port grows
 mod file;
 #[allow(dead_code)] // used as the port grows
 mod message;
