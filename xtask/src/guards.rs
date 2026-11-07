@@ -58,6 +58,16 @@ const VENDORED_HEADERS: &[(&str, &str, &[&str])] = &[
         ],
     ),
     (
+        "crates/openexr-openjph/",
+        "// SPDX-License-Identifier: BSD-2-Clause",
+        &[
+            "// Copyright (c) 2019, Aous Naman",
+            "// Copyright (c) 2021, Aous Naman",
+            "// Copyright (c) 2022, Aous Naman",
+            "// Copyright (c) 2026, Osamu Watanabe",
+        ],
+    ),
+    (
         "crates/openexr-zstd/",
         "// SPDX-License-Identifier: BSD-3-Clause",
         &["// Copyright (c) Meta Platforms, Inc. and affiliates."],
@@ -68,8 +78,9 @@ const VENDORED_HEADERS: &[(&str, &str, &[&str])] = &[
 fn citation_root(root: &Path, tag: &str) -> PathBuf {
     if tag.starts_with("Imath") {
         root.join("upstream/imath")
-    } else if tag.starts_with("libdeflate") || tag.starts_with("zstd") {
-        // libdeflate and zstd as OpenEXR bundles them; their citations start at `external/`
+    } else if tag.starts_with("libdeflate") || tag.starts_with("zstd") || tag.starts_with("OpenJPH")
+    {
+        // libdeflate, zstd and OpenJPH as OpenEXR bundles them; their citations start at `external/`
         root.join("upstream/openexr")
     } else {
         root.join("upstream/openexr")

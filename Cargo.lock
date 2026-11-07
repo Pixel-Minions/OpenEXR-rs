@@ -16,6 +16,13 @@ name = "openexr-rs-deflate"
 version = "0.0.0+openexr.3.5.3"
 
 [[package]]
+name = "openexr-rs-openjph"
+version = "0.0.0+openexr.3.5.3"
+dependencies = [
+ "openexr-testkit",
+]
+
+[[package]]
 name = "openexr-rs-zstd"
 version = "0.0.0+openexr.3.5.3"
 

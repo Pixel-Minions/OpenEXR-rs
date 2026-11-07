@@ -1,0 +1,23 @@
+[package]
+name = "openexr-rs-openjph"
+description = "An exact Rust port of OpenJPH 0.32.0, as OpenEXR 3.5.3 bundles it"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+name = "openexr_openjph"
+
+[features]
+# The heavy test tier (PLAN.md §8): tests/heavy_*.rs, run by `cargo xtask gate --full`.
+heavy = []
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+openexr-testkit = { workspace = true }

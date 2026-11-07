@@ -274,6 +274,20 @@ section. An entry says:
   fix") (`crates/openexr-core/src/internal_b44.rs`, `internal_pxr24.rs`); checked by
   `heavy_decode::images_encode_from_their_pixels_as_the_wheel_wrote_them`.
 
+### I-24. OpenJPH gives a component's quantization step to the default when it has no QCC
+
+- **Upstream:** `param_qcd::set_delta (comp_idx, delta)` looks for the component's QCC with
+  `get_qcc`, which answers the QCD itself when there is none, never NULL, so the step goes to
+  the QCD (`external/OpenJPH/src/core/codestream/ojph_params.cpp:2029-2036` @ OpenJPH 0.32.0).
+  OpenEXRCore's LJ2K encoder sets the Y step on the QCD, then the Cb and the Cr steps on
+  components 1 and 2 (`src/lib/OpenEXRCore/internal_ht.cpp:819-841` @ v3.5.3), so every
+  component is quantized with the Cr step, and the Y and Cb steps are never used.
+- **Who notices:** writers of LJ2K files: the luminance is quantized more coarsely than
+  intended (the Cr step is the Y step divided by `sqrt (2.4756 / 3)`, about 1.1).
+- **A fix:** add the component's QCC when it has none, as `set_qfactor (comp_idx, ...)` does.
+  It changes the LJ2K files both wheels write, so it waits for the owner.
+- **Status:** matched (`crates/openexr-openjph/src/params.rs`); listed for the owner's review.
+
 ## Messages and debug output
 
 ### I-7. A deep tile's unpacked size error prints the packed size
@@ -528,4 +542,18 @@ section. An entry says:
 - **Who notices:** writers of DWAA/DWAB chunks too large for the memory at hand.
 - **The port:** returns the allocation's `EXR_ERR_OUT_OF_MEMORY`. Every read and write the
   compressor makes outside its buffers is refused with `EXR_ERR_INVALID_ARGUMENT`, as U-12.
+- **Status:** the port's choice, as U-9.
+
+### U-15. OpenJPH reads an NLT segment past its end
+
+- **Upstream:** `param_nlt::read` reads each field of an NLT segment and goes on when a read
+  comes up short, using the field's uninitialized bytes; the codestream ignores its result
+  (`external/OpenJPH/src/core/codestream/ojph_params.cpp:2596-2718` and
+  `ojph_codestream_local.cpp:863` @ OpenJPH 0.32.0). For a LUT of 1-byte points it reads the
+  size of the whole table's storage into the points, which lie at the storage's end, so it
+  writes past the allocation and swallows the bytes after the segment.
+- **Who notices:** readers of truncated or crafted HTJ2K chunks; OpenEXR writes 2- and 4-byte
+  points only.
+- **The port:** refuses the segment (an OpenJPH error with code 0 and no message), which
+  Core reports as `EXR_ERR_CORRUPT_CHUNK`.
 - **Status:** the port's choice, as U-9.

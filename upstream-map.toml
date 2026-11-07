@@ -125,12 +125,16 @@ note = "not an x86-64 or ARM path"
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_params.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/params.rs"
+note = "SIZ, CAP, COD/COC, QCD/QCC (with the gain and weight tables), NLT, SOT, TLM, DFS and ATK, read and written; comment_exchange and the public wrappers with the codestream (I-24, U-15); checked with the codestream"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_params_local.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/params.rs"
+note = "the segments' structures and inline functions ported; checked with the codestream"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_precinct.cpp"
@@ -267,7 +271,9 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_arch.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/arch.rs"
+note = "the bit counts (count_leading_zeros (0) as each compiler answers it), rounding (cvttss2si's out-of-range answer) and alignment ported; get_cpu_ext_level with the SIMD kernels"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_arg.h"
@@ -277,7 +283,9 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_base.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/base.rs"
+note = "ported"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_codestream.h"
@@ -287,12 +295,16 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_defs.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/arch.rs"
+note = "the types are Rust's; NUM_FRAC_BITS and ojph_div_ceil ported"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_file.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/file.rs"
+note = "infile_base, mem_infile and outfile_base; mem_outfile with the encoder; the files on disk are n/a for Core"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_mem.h"
@@ -302,7 +314,9 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_message.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/message.rs"
+note = "OJPH_ERROR, OJPH_WARN and OJPH_INFO: the message printed with upstream's file and line, an error returned where upstream throws; the configuration hooks are n/a for Core"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_params.h"
@@ -322,7 +336,9 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/others/ojph_file.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/file.rs"
+note = "mem_infile ported; mem_outfile with the encoder; the files on disk are n/a for Core"
 
 [[file]]
 path = "external/OpenJPH/src/core/others/ojph_mem.cpp"
@@ -337,7 +353,9 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/others/ojph_message.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/message.rs"
+note = "ported; printf's formats checked against the platform's C runtime"
 
 [[file]]
 path = "external/OpenJPH/src/core/shared/ojph_simd_vsx.h"
