@@ -15,12 +15,14 @@ mod adler32;
 mod deflate_compress;
 mod deflate_constants;
 mod deflate_decompress;
+mod hc_matchfinder;
+mod matchfinder_common;
 mod zlib_compress;
 mod zlib_constants;
 mod zlib_decompress;
 
 pub use adler32::adler32;
-pub use deflate_compress::deflate_compress_bound;
+pub use deflate_compress::{Compressor, deflate_compress_bound};
 pub use deflate_decompress::Decompressor;
 pub use zlib_compress::zlib_compress_bound;
 

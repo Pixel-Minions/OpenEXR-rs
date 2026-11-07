@@ -592,7 +592,7 @@ path = "external/deflate/lib/deflate_compress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-deflate/src/deflate_compress.rs"
-note = "libdeflate_deflate_compress_bound; the compressor with ZIP's compression side"
+note = "the Huffman codes, block flushing and splitting, levels 0 and 2-4 (uncompressed, greedy); level 4, the default, matches the wheel's ZIP and ZIPS streams byte for byte (heavy tier); the fastest (1), lazy (5-9) and near-optimal (10-12) compressors to come"
 
 [[file]]
 path = "external/deflate/lib/deflate_compress.h"
@@ -634,7 +634,9 @@ note = "not compiled into OpenEXRCore (compression.c:43-53)"
 [[file]]
 path = "external/deflate/lib/hc_matchfinder.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/hc_matchfinder.rs"
+note = "ported whole; the greedy compressor's streams match the wheel's (heavy tier); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/deflate/lib/ht_matchfinder.h"
@@ -649,7 +651,9 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/matchfinder_common.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/matchfinder_common.rs"
+note = "ported whole; heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/deflate/lib/riscv/matchfinder_impl.h"
@@ -701,21 +705,22 @@ note = "the BMI2 build of the same decode loop; same results (performance, PLAN.
 [[file]]
 path = "external/deflate/lib/x86/matchfinder_impl.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/matchfinder_common.rs"
+note = "the SSE2 and AVX2 matchfinder_init and matchfinder_rebase store the same values as the portable loops ported"
 
 [[file]]
 path = "external/deflate/lib/zlib_compress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-deflate/src/zlib_compress.rs"
-note = "libdeflate_zlib_compress_bound; libdeflate_zlib_compress with the compressor"
+note = "ported whole; heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/deflate/lib/zlib_constants.h"
 kind = "vendored"
 status = "done"
 target = "crates/openexr-deflate/src/zlib_constants.rs"
-note = "the compression level classes come with the compressor"
 
 [[file]]
 path = "external/deflate/lib/zlib_decompress.c"
