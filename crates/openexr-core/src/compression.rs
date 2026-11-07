@@ -145,8 +145,8 @@ pub fn compress_chunk(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(),
         Compression::ZIP | Compression::ZIPS => {
             crate::internal_zip::internal_exr_apply_zip(encode, ctxt)
         }
-        Compression::PIZ
-        | Compression::PXR24
+        Compression::PIZ => crate::internal_piz::internal_exr_apply_piz(encode, ctxt),
+        Compression::PXR24
         | Compression::B44
         | Compression::B44A
         | Compression::DWAA
@@ -312,8 +312,14 @@ fn decompress_data(
             unpacksz,
             crate::internal_zip::internal_exr_undo_zip,
         ),
-        Compression::PIZ
-        | Compression::PXR24
+        Compression::PIZ => run_codec(
+            decode,
+            target,
+            packsz,
+            unpacksz,
+            crate::internal_piz::internal_exr_undo_piz,
+        ),
+        Compression::PXR24
         | Compression::B44
         | Compression::B44A
         | Compression::DWAA
@@ -505,7 +511,12 @@ mod tests {
             bufs
         };
         let none = decode_all("comp_none.exr");
-        for image in ["comp_rle.exr", "comp_zip.exr", "comp_zips.exr"] {
+        for image in [
+            "comp_rle.exr",
+            "comp_zip.exr",
+            "comp_zips.exr",
+            "comp_piz.exr",
+        ] {
             assert!(decode_all(image) == none, "{image}");
         }
     }

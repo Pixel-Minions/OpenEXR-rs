@@ -22,11 +22,12 @@ use openexr_core::context::{Context, Error};
 use openexr_core::openexr_attr::{Compression, Storage};
 
 /// The compressions the port decodes, with the wheel's names for them.
-const DECODES: [(Compression, &str); 4] = [
+const DECODES: [(Compression, &str); 5] = [
     (Compression::NONE, "NO_COMPRESSION"),
     (Compression::RLE, "RLE_COMPRESSION"),
     (Compression::ZIPS, "ZIPS_COMPRESSION"),
     (Compression::ZIP, "ZIP_COMPRESSION"),
+    (Compression::PIZ, "PIZ_COMPRESSION"),
 ];
 
 fn root() -> PathBuf {
@@ -498,11 +499,12 @@ fn headers_rewrite_as_the_wheel_wrote_them() {
 }
 
 /// The compressions the port encodes.
-const ENCODES: [Compression; 4] = [
+const ENCODES: [Compression; 5] = [
     Compression::NONE,
     Compression::RLE,
     Compression::ZIPS,
     Compression::ZIP,
+    Compression::PIZ,
 ];
 
 /// A chunk of a file: its first line (or tile x, tile y and levels) and its information.
@@ -623,7 +625,7 @@ fn as_port_writes(src: &Context, file: &[u8]) -> Vec<u8> {
 /// ([`as_port_writes`]): every scanline and tiled image of [`images`] whose parts all use one
 /// of [`ENCODES`]' compressions, in every layout `oracle/write_images.py` writes (subsampled,
 /// mixed types, decreasing-Y scanlines and tiles among them). Upstream's test images are
-/// compared for NONE and RLE only: older libraries wrote them, with zlib's deflate streams.
+/// compared for NONE and RLE only: older libraries wrote them.
 #[test]
 fn images_encode_as_the_wheel_wrote_them() {
     let scratch =
@@ -634,8 +636,9 @@ fn images_encode_as_the_wheel_wrote_them() {
         let Ok(src) = Context::start_read(Some(image.to_str().unwrap()), None) else {
             continue;
         };
-        // upstream's test images were written by older libraries: their deflate streams are
-        // zlib's, not libdeflate's, so only the wheel's own files can check ZIP and ZIPS
+        // upstream's test images were written by older libraries (ZIP's deflate streams are
+        // zlib's, not libdeflate's, and comp_b44_piz.exr's PIZ chunks differ too), so only
+        // the wheel's own files check the codecs but NONE and RLE
         let by_wheel = image.parent().is_some_and(|d| d.ends_with("written"));
         let encodable = (0..src.get_count()).all(|p| {
             src.get_compression(p).is_ok_and(|c| {

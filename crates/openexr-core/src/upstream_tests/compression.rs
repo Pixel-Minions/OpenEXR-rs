@@ -162,6 +162,39 @@ impl Pixels {
         }
     }
 
+    /// `compareClose` (src/test/OpenEXRCoreTest/compression.cpp:564-694 @ v3.5.3), for the
+    /// codecs ported so far (PIZ): the uint and float channels exactly, then, for a codec that is
+    /// not B44, DWA or PXR24, the half channels exactly. (The bounds of B44, DWA and PXR24 come
+    /// with those codecs.)
+    fn compare_close(&self, o: &Pixels, comp: Compression, otag: &str, selftag: &str) {
+        assert_eq!(
+            comp,
+            Compression::PIZ,
+            "the bounds of this codec come with it"
+        );
+        for y in 0..self.h {
+            for x in 0..self.w {
+                let idx = (y * self.stride_x + x) as usize;
+                let at = |chan: &str| format!("{chan} at {x}, {y}: {otag} vs {selftag}");
+                assert_eq!(o.i[idx], self.i[idx], "{}", at("I"));
+                // b44 & dwa don't change floats
+                let (af, bf) = (o.f[idx], self.f[idx]);
+                if !(af.is_nan() && bf.is_nan()) {
+                    assert_eq!(af.to_bits(), bf.to_bits(), "{}", at("F"));
+                }
+            }
+        }
+        for y in 0..self.h {
+            for x in 0..self.w {
+                let idx = (y * self.stride_x + x) as usize;
+                assert!(o.hv[idx] == self.hv[idx]);
+                for c in 0..4 {
+                    assert!(o.rgba[c][idx] == self.rgba[c][idx]);
+                }
+            }
+        }
+    }
+
     /// The run's buffers, in [`CHANNELS`]' order, as native bytes.
     fn buffers(&self) -> Vec<Vec<u8>> {
         let h16 = |v: &[u16]| v.iter().flat_map(|s| s.to_ne_bytes()).collect::<Vec<u8>>();
@@ -510,8 +543,15 @@ fn do_write_read(
     #[cfg(not(feature = "heavy"))]
     let _ = (cppfilename, layout);
 
-    // NONE, RLE, ZIP, ZIPS (and ZSTD) are lossless
-    restore.compare_exact(p, "orig", "C loaded C");
+    match comp {
+        Compression::NONE
+        | Compression::RLE
+        | Compression::ZIP
+        | Compression::ZIPS
+        | Compression::ZSTD => restore.compare_exact(p, "orig", "C loaded C"),
+        Compression::PIZ => restore.compare_close(p, comp, "orig", "C loaded C"),
+        _ => panic!("Unknown compression type {}", comp.0),
+    }
 
     let _ = std::fs::remove_file(filename);
     let _ = std::fs::remove_file(cppfilename);
@@ -550,6 +590,7 @@ fn cpp_half(
         Compression::RLE => "RLE_COMPRESSION",
         Compression::ZIPS => "ZIPS_COMPRESSION",
         Compression::ZIP => "ZIP_COMPRESSION",
+        Compression::PIZ => "PIZ_COMPRESSION",
         _ => panic!("no wheel name for this test's compression"),
     };
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -713,4 +754,10 @@ fn test_huf() {
         internal_huf_decompress(None, &encoded[..ebytes], &mut decode.hv[..w], dsize).unwrap();
         assert_eq!(decode.hv[..w], p.hv[..w]);
     }
+}
+
+/// Port of `testPIZCompression` (src/test/OpenEXRCoreTest/compression.cpp:1671-1675) @ v3.5.3.
+#[test]
+fn test_piz_compression() {
+    test_comp(Compression::PIZ);
 }

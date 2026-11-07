@@ -1138,7 +1138,7 @@ path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/compression.rs"
-note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_uncompress_buffer and the cached deflate context, exr_rle_*_buffer; exr_compress_max_buffer_size, exr_compress_buffer, the compression dispatch (exr_compress_chunk); the other codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the deep sample table's compression with Phase 7"
+note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_uncompress_buffer and the cached deflate context, exr_rle_*_buffer; exr_compress_max_buffer_size, exr_compress_buffer, the compression dispatch (exr_compress_chunk); PIZ both ways; the other codecs with Phase 5 (FEATURE_NOT_IMPLEMENTED until then), the deep sample table's compression with Phase 7"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
@@ -1351,7 +1351,9 @@ target = "crates/openexr-core/src/opaque.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_piz.c"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_piz.rs"
+note = "ported whole; decodes as the wheel does and encodes the wheel's files byte for byte (heavy tier, tests/heavy_decode.rs, and testPIZCompression's C++ half); heavy-tier check pending gate --full"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_posix_file_impl.h"
@@ -1683,7 +1685,7 @@ path = "src/test/OpenEXRCoreTest/compression.cpp"
 kind = "test"
 status = "partial"
 target = "crates/openexr-core/src/upstream_tests/compression.rs"
-note = "testNoCompression, testRLECompression, testZIPCompression, testZIPSCompression (the C++ half by the wheel, oracle/save_load.py, heavy tier), testHUF (its comparison with the C++ hufCompress, which the wheel does not expose, n/a); the other codecs' tests with their codecs"
+note = "testNoCompression, testRLECompression, testZIPCompression, testZIPSCompression (the C++ half by the wheel, oracle/save_load.py, heavy tier), testHUF (its comparison with the C++ hufCompress, which the wheel does not expose, n/a), testPIZCompression; the other codecs' tests with their codecs"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/compression.h"

@@ -12,9 +12,6 @@
 //! as C lays it out (the `#[repr(C)]` copy below). The heap of the encoder holds pointers into
 //! the frequency table upstream; here it holds their indices, which compare as the pointers do.
 
-// the coder is used by the PIZ codec, which follows
-#![cfg_attr(not(test), allow(dead_code))]
-
 use crate::cfmt::Arg;
 use crate::context::{Context, Error};
 use crate::errors::ErrorCode;
