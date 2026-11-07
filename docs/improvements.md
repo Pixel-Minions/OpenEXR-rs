@@ -171,7 +171,9 @@ section. An entry says:
 - **Upstream:** `copy_attr`, under `exr_copy_unset_attributes`, adds a source attribute named
   `compression`, `dataWindow`, `displayWindow` or `lineOrder` with the source's type, and
   reads its value as that name's type to update the part (`srca->uc`, `*(srca->box2i)`)
-  whatever the type is (`src/lib/OpenEXRCore/part_attr.c:257-325` @ v3.5.3). A write
+  whatever the type is (`src/lib/OpenEXRCore/part_attr.c:257-325` @ v3.5.3); a copied
+  `tiles` is read as a tile descriptor by `internal_exr_compute_tile_information` after the
+  loop (line 577). A write
   context can hold such an attribute: `exr_attr_set_int (f, 0, "compression", 1)` adds an int
   named `compression`. Reading another type's union member reads a pointer's byte, or follows
   an int as a pointer.

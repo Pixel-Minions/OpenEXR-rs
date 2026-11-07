@@ -32,12 +32,14 @@ fn required_slot(name: &[u8]) -> Option<ReqSlot> {
     })
 }
 
-/// The type `copy_attr` reads a required attribute's value as, where it reads one.
+/// The type a required attribute's value is read as after the copy: by `copy_attr` itself,
+/// or (`tiles`) by the tile information it recomputes.
 fn read_as(name: &[u8]) -> Option<AttributeType> {
     match name {
         b"compression" => Some(AttributeType::COMPRESSION),
         b"dataWindow" | b"displayWindow" => Some(AttributeType::BOX2I),
         b"lineOrder" => Some(AttributeType::LINEORDER),
+        b"tiles" => Some(AttributeType::TILEDESC),
         _ => None,
     }
 }
