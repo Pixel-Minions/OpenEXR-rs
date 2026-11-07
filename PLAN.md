@@ -179,7 +179,7 @@ Carried over from OpenColorIO-rs, adjusted to OpenEXR:
 | **D3** | Target | OpenEXR 3.5.3 exactly | Decided |
 | **D4** | Equivalence | Byte-exact as in §3; waivers only with the owner's sign-off | Carried over |
 | **D7** | Toolchain | Owner item O5 (§14) | Open |
-| **D8** | `unsafe` | Denied across the workspace; allowed only in SIMD modules and files of an allowlist that `xtask guards` enforces | Carried over |
+| **D8** | `unsafe` | Denied across the workspace; allowed only in the files of the allowlist `xtask guards` enforces: SIMD kernels, the test-only C runtime reference (`openexr-testkit/src/crt.rs`), and the one module that asks the OS for its error text (`os_error.rs`) | **Decided** (owner, 2026-11-07, O7-O9) |
 | **D9** | License | BSD-3-Clause with upstream's notice; vendored libraries keep their own (MIT, BSD, BSD-2) in `THIRD-PARTY-NOTICES.md`; DWA carries upstream's `PATENTS` terms | Required |
 | **D11** | Platforms | Windows x86-64 and Linux x86-64 (Rocky Linux 9.8, glibc 2.34); ARM and macOS later | Carried over |
 | **D12** | Output across platforms | Do what OpenEXR does on each platform and CPU | Carried over |
@@ -428,6 +428,9 @@ Each has a recommendation. Status on 2026-11-07:
 | O4 Layout and naming | Recommendation in use since the owner started the port (2026-11-07); open to change until anything is published |
 | O5 Rust version | Recommendation in use since the owner started the port (2026-11-07); open to change |
 | O6 DWA patents | **Decided** (owner, 2026-11-07): credit DreamWorks |
+| O7 OS error text | **Decided** (owner, 2026-11-07): exact, through `FormatMessageA`/`strerror` |
+| O8 What Rust can't have | **Decided** (owner, 2026-11-07): n/a, each with its reason |
+| O9 `unsafe` in the test kit | **Decided** (owner, 2026-11-07): kept |
 
 ### O1 — Oracle
 
@@ -514,6 +517,40 @@ names the patents and the grant; `THIRD-PARTY-NOTICES.md` carries `PATENTS` verb
 DWA chunk on. DWA is used only inside EXR files, as the grant requires. Not chosen for now:
 asking the OpenEXR project or DreamWorks to confirm in writing that the grant covers a
 translation, and putting DWA behind a Cargo feature.
+
+### O7 — OS error text
+
+Core's default file streams put the system's error text into their messages:
+`FormatMessage` with `FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS` and
+`MAKELANGID (LANG_NEUTRAL, SUBLANG_DEFAULT)`, ANSI, its trailing line break kept
+(`internal_win32_file_impl.h`), and `strerror` (`internal_posix_file_impl.h`). Rust's
+`io::Error` text differs on Windows (wide API, another language id, the line break dropped).
+
+**Decided (owner, 2026-11-07): exact.** One module, `crates/openexr-core/src/os_error.rs`, calls
+the same C functions with the same arguments, on the `unsafe` allowlist. The wheel never reaches
+this code (its C++ layer supplies its own streams), so it is checked against the C runtime and,
+if O1 is approved, the source-built harness.
+
+### O8 — What a Rust port can't have
+
+**Decided (owner, 2026-11-07): not applicable, each with its reason in `upstream-map.toml` and
+on the test:**
+- user allocator hooks (`exr_set_default_memory_routines`, `memory.c`): Rust owns allocation and
+  aborts on exhaustion; an allocation hook only if a consumer asks for one (§9);
+- the out-of-memory test paths (`EXRCORE_TEST_RVAL_FAIL_MALLOC`): their tests are ported
+  without those calls;
+- `testInitializerCompat`: C structs versioned by size; the Rust initializer has one version;
+- NULL-pointer calls (`exr_start_temporary_context (NULL, ...)`,
+  `exr_print_context_info (NULL, ...)`, ...): a Rust reference is never NULL; the rest of each
+  test is ported.
+
+The ratchet counts ported tests plus listed n/a tests, out of 73.
+
+### O9 — `unsafe` in the test kit
+
+**Decided (owner, 2026-11-07): kept.** `crates/openexr-testkit/src/crt.rs` calls the platform's
+`snprintf`, the reference for `printf` (CLAUDE.md rule 2); test-only, never a library
+dependency, each call's format checked first.
 
 ---
 

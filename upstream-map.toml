@@ -1388,8 +1388,8 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/memory.c"
 kind = "src"
-status = "todo"
-note = "Rust allocation replaces it (PLAN.md §9); exr_set_default_memory_routines and the malloc-failure tests need an owner decision"
+status = "n/a"
+note = "Rust owns allocation; allocator hooks not provided (owner, 2026-11-07, PLAN.md O8)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/opaque.c"
@@ -1409,9 +1409,9 @@ status = "todo"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_base.h"
 kind = "api"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/base.rs"
-note = "memory routines (exr_set_default_memory_routines) come with memory.c"
+note = "exr_set_default_memory_routines is n/a (PLAN.md O8)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_chunkio.h"
@@ -1629,12 +1629,14 @@ status = "todo"
 [[file]]
 path = "src/test/OpenEXRCoreTest/initializer_compat.cpp"
 kind = "test"
-status = "todo"
+status = "n/a"
+note = "C initializer structs versioned by size; the Rust Initializer has one version (owner, 2026-11-07, PLAN.md O8)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/initializer_compat.h"
 kind = "test"
-status = "todo"
+status = "n/a"
+note = "header of initializer_compat.cpp (PLAN.md O8)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/main.cpp"

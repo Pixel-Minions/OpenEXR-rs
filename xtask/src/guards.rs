@@ -7,7 +7,8 @@
 //! - `unsafe` appears only in the files of [`UNSAFE_ALLOWLIST`];
 //! - no `#[ignore]`, `todo!`, `unimplemented!` or `dbg!`;
 //! - every `Port of` citation names an upstream file that exists, with lines inside it;
-//! - every ported-test marker names a test of upstream's list and sits above a `#[test]`;
+//! - every ported-test marker names a test of upstream's list and sits above a `#[test]`, and
+//!   the n/a tests ([`NA_TESTS`]) are upstream's and not also ported;
 //! - heavy tests (`tests/heavy_*.rs`) are declared with `required-features = ["heavy"]`;
 //! - `upstream-map.toml` is for the pinned commit and each entry is well formed.
 
@@ -21,6 +22,12 @@ const UNSAFE_ALLOWLIST: &[&str] = &[
     // The C runtime reference for `printf` (CLAUDE.md rule 2); test-only.
     "crates/openexr-testkit/src/crt.rs",
 ];
+
+/// Upstream tests that are not applicable to a Rust port, with the owner's decision (PLAN.md O8).
+const NA_TESTS: &[(&str, &str)] = &[(
+    "testInitializerCompat",
+    "C initializer structs versioned by size (PLAN.md O8)",
+)];
 
 const SPDX: &str = "// SPDX-License-Identifier: BSD-3-Clause";
 const COPYRIGHTS: &[&str] = &[
@@ -62,10 +69,21 @@ pub(crate) fn run(root: &Path) -> Result<(), String> {
         }
         return Err(format!("{} violation(s)", errors.len()));
     }
+    for (name, _) in NA_TESTS {
+        if !tests.contains(*name) {
+            return Err(format!(
+                "n/a test `{name}` is not one of upstream's Core tests"
+            ));
+        }
+        if ported.contains(*name) {
+            return Err(format!("`{name}` is both ported and listed n/a"));
+        }
+    }
     println!(
-        "guards: {} Rust files clean; upstream tests ported: {} of {}",
+        "guards: {} Rust files clean; upstream tests: {} ported + {} n/a of {}",
         files.len(),
         ported.len(),
+        NA_TESTS.len(),
         tests.len()
     );
     Ok(())

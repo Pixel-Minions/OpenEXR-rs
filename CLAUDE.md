@@ -89,7 +89,11 @@ end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
   zstd's transforms, OpenJPH's variants) is its own kernel, chosen exactly as upstream chooses it.
   Upstream's `check_for_x86_simd` never reports AVX or F16C under MSVC (the inline-assembly probe
   fails, so `xgetbv` reads as 0): on Windows the port must take the same non-AVX paths.
-  `unsafe` only in SIMD modules, through the allowlist `xtask guards` will enforce.
+  `unsafe` only in the files of `xtask guards`' allowlist (PLAN.md D8, owner 2026-11-07): SIMD
+  kernels, the test-only C runtime reference `openexr-testkit/src/crt.rs`, and `os_error.rs`
+  (the OS error text of the default file streams, O7). Nothing else.
+- **What Rust can't have** (PLAN.md O8): allocator hooks, out-of-memory test paths, C struct
+  versioning and NULL-pointer calls are n/a, each with its reason; port the rest of the test.
 - **Platform differences.** Where the Windows and Linux wheels differ (DWA today:
   `docs/baseline.md`), the port must differ the same way. Check both platforms.
 
