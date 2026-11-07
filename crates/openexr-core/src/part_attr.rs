@@ -487,6 +487,19 @@ impl Context {
         cname: &str,
         t: AttributeType,
     ) -> Result<AttrId, Error> {
+        self.req_attr_find_create_deferred(part_index, slot, cname, t)?
+    }
+
+    /// `REQ_ATTR_FIND_CREATE` as the macro leaves it: the mode and type checks return at once
+    /// (the outer error), a failure to add the attribute is left in `rv` (the inner result)
+    /// for the caller to return when it gets to it.
+    pub(crate) fn req_attr_find_create_deferred(
+        &mut self,
+        part_index: i32,
+        slot: ReqSlot,
+        cname: &str,
+        t: AttributeType,
+    ) -> Result<Result<AttrId, Error>, Error> {
         self.part_ref(part_index)?;
         if self.mode == crate::context::ContextMode::Read {
             return Err(self.standard_error(ErrorCode::NotOpenWrite));
@@ -503,16 +516,18 @@ impl Context {
         let part = &mut parts[part_index as usize];
         match *slot(part) {
             None => {
-                let (id, _) = core.attr_list_add(
+                let added = core.attr_list_add(
                     custom_handlers,
                     &mut part.attributes,
                     Some(cname.as_bytes()),
                     t,
                     0,
                     false,
-                )?;
-                *slot(part) = Some(id);
-                Ok(id)
+                );
+                Ok(added.map(|(id, _)| {
+                    *slot(part) = Some(id);
+                    id
+                }))
             }
             Some(id) => {
                 let attr = part.attributes.get(id).expect("slot");
@@ -523,7 +538,7 @@ impl Context {
                         &[Arg::Str(&attr.type_name), cname.into()],
                     ));
                 }
-                Ok(id)
+                Ok(Ok(id))
             }
         }
     }

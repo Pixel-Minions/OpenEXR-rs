@@ -1534,8 +1534,8 @@ note = "getters, exr_add_part, level setters; chunk table with Phase 4"
 path = "src/lib/OpenEXRCore/part_attr.c"
 kind = "src"
 status = "partial"
-target = "crates/openexr-core/src/part_attr.rs"
-note = "list queries, required and typed getters, declare, required-attribute setters and initialize_required_attr; the exr_attr_set_* family, copy_attr and exr_copy_unset_attributes follow"
+target = "crates/openexr-core/src/part_attr.rs,crates/openexr-core/src/part_attr_set.rs"
+note = "everything but copy_attr and exr_copy_unset_attributes (with the header writer, Phase 6)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/preview.c"

@@ -78,17 +78,20 @@ section. An entry says:
 - **Status:** matched (wrapping arithmetic, `crates/openexr-core/src/parse_header.rs`); the
   oracle check of such a file belongs to the heavy tier.
 
-### I-5. A negative line order passes exr_set_lineorder on Windows
+### I-5. A negative enum value passes the enum setters on Windows
 
 - **Upstream:** `exr_set_lineorder` refuses `lo >= EXR_LINEORDER_LAST_TYPE`
-  (`src/lib/OpenEXRCore/part_attr.c:813-821` @ v3.5.3). The enum's underlying type is
-  implementation-defined: `int` under MSVC, `unsigned int` under GCC (an enum with no negative
-  enumerators). So a negative value passed in is refused on Linux and stored on Windows, as
-  `(uint8_t) lo`.
-- **Who notices:** callers passing an invalid line order through a cast.
-- **A fix:** check `lo < 0` too.
-- **Status:** matched on both platforms (`crates/openexr-core/src/part_attr.rs`); the Linux side
-  is checked in the heavy tier.
+  (`src/lib/OpenEXRCore/part_attr.c:813-821` @ v3.5.3), and `exr_attr_set_compression`,
+  `exr_attr_set_envmap` and `exr_attr_set_lineorder` refuse `>= EXR_COMPRESSION_LAST_TYPE`,
+  `EXR_ENVMAP_LAST_TYPE` and `EXR_LINEORDER_LAST_TYPE` (lines 1508-1516, 1560-1568 and
+  1764-1772). An enum's underlying type is implementation-defined: `int` under MSVC,
+  `unsigned int` under GCC (an enum with no negative enumerators). So a negative value passed
+  in is refused on Linux and stored on Windows, as `(uint8_t) value`.
+- **Who notices:** callers passing an invalid line order, compression or envmap through a cast.
+- **A fix:** check `value < 0` too.
+- **Status:** matched on both platforms (`crates/openexr-core/src/part_attr.rs`,
+  `part_attr_set.rs`); the Linux side is checked in the heavy tier.
+
 
 ## Undefined behaviour the port does not copy
 
@@ -110,8 +113,11 @@ section. An entry says:
 - **Upstream:** the attribute constructors take a pointer and a count and copy (or keep) that
   many elements: `exr_attr_float_vector_create`/`_init_static`
   (`src/lib/OpenEXRCore/float_vector.c:61-127`), `exr_attr_bytes_create` (hint and data,
-  `bytes.c:70-101`) and `exr_attr_preview_create` (`preview.c:54-76`) @ v3.5.3. An array with
-  fewer elements is read past its end.
+  `bytes.c:70-101`) and `exr_attr_preview_create` (`preview.c:54-76`) @ v3.5.3, and the
+  setters that copy into an attribute of the same size: `exr_attr_set_bytes`,
+  `exr_attr_set_float_vector`, `exr_attr_set_preview` and `exr_attr_set_string_vector`
+  (`part_attr.c:1294-1405`, `1612-1702`, `1882-1976`, `2156-2279`). An array with fewer
+  elements is read past its end.
 - **Who notices:** callers passing a count larger than their array; C cannot tell.
 - **The port:** the array is a slice, so its length is known; a slice shorter than the count
   is refused with `EXR_ERR_INVALID_ARGUMENT` and its default message.
@@ -125,4 +131,28 @@ section. An entry says:
 - **Who notices:** a caller that reads an m44d attribute it added before setting it; parsed
   attributes are filled from the file.
 - **The port:** zeroes all sixteen doubles.
+- **Status:** the port's choice; listed for the owner's review.
+
+### U-4. exr_attr_set_channels on an attribute of another type
+
+- **Upstream:** `exr_attr_set_channels` finds the attribute by name and, without checking its
+  type, destroys `attr->chlist` and stores a channel list there
+  (`src/lib/OpenEXRCore/part_attr.c:1446-1466` @ v3.5.3). On an attribute of another type
+  that union member is another value read as a pointer: memory Core does not own is freed and
+  written.
+- **Who notices:** callers setting a channel list under a name already used by another type.
+- **The port:** refuses it with `EXR_ERR_ATTR_TYPE_MISMATCH` and its default message, as the
+  sibling setters refuse a type mismatch.
+- **Status:** the port's choice; listed for the owner's review.
+
+### U-5. exr_attr_set_user after a failed add, or with a built-in type name
+
+- **Upstream:** `exr_attr_set_user` adds a missing attribute with
+  `exr_attr_list_add_by_type` and then uses `attr->opaque` whatever the add returned
+  (`src/lib/OpenEXRCore/part_attr.c:2531-2557` @ v3.5.3). After a failed add `attr` is NULL;
+  with a built-in type name (`"int"`, `"box2i"`, ...) the attribute is not opaque and the
+  union member read as `opaque` is another value.
+- **Who notices:** callers passing an invalid name or type, or a built-in type name.
+- **The port:** returns the add's error; a non-opaque attribute is refused with
+  `EXR_ERR_ATTR_TYPE_MISMATCH` and its default message (the attribute stays added).
 - **Status:** the port's choice; listed for the owner's review.

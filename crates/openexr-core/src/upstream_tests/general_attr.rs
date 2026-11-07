@@ -473,11 +473,10 @@ fn test_float_vector_helper() {
 
 /// Partial port of `testPreviewHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:836-913
 /// @ v3.5.3), run by `testAttrPreview` (lines 915-924). Left out: NULL context and object
-/// calls and the malloc failures (PLAN.md O8); the `exr_attr_set_preview` calls come with the
-/// part attribute API (Phase 3).
+/// calls and the malloc failures (PLAN.md O8).
 #[test]
 fn test_preview_helper() {
-    let f = create_dummy_file("<preview>");
+    let mut f = create_dummy_file("<preview>");
     let mut p = AttrPreview::default();
     let data1x1: [u8; 4] = [0xDE, 0xAD, 0xBE, 0xEF];
     let inval = ErrorCode::InvalidArgument;
@@ -517,15 +516,48 @@ fn test_preview_helper() {
         f.attr_preview_create(&mut p, 1, 1, None).unwrap_err().code,
         inval
     );
+
+    {
+        let preview = AttrPreview {
+            width: 1,
+            height: 1,
+            alloc_size: 0,
+            rgba: None,
+        };
+        assert_eq!(
+            f.attr_set_preview(0, Some("badPreview"), Some(&preview))
+                .unwrap_err()
+                .code,
+            inval
+        );
+    }
+
+    {
+        let mut preview = AttrPreview {
+            width: 1,
+            height: 1,
+            alloc_size: 4,
+            rgba: Some(data1x1.to_vec()),
+        };
+        f.attr_set_preview(0, Some("goodPreview"), Some(&preview))
+            .unwrap();
+
+        preview.rgba = None;
+        assert_eq!(
+            f.attr_set_preview(0, Some("goodPreview"), Some(&preview))
+                .unwrap_err()
+                .code,
+            inval
+        );
+    }
 }
 
 /// Partial port of `testBytesHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:1022-1125
 /// @ v3.5.3), run by `testAttrBytes` (lines 1127-1135). Left out: NULL context and object calls
-/// and the malloc failure (PLAN.md O8); the `exr_attr_set_bytes` calls come with the part
-/// attribute API (Phase 3).
+/// and the malloc failure (PLAN.md O8).
 #[test]
 fn test_bytes_helper() {
-    let f = create_dummy_file("<bytes>");
+    let mut f = create_dummy_file("<bytes>");
     let mut b = AttrBytes::default();
     let data4: [u8; 4] = [0x76, 0x2f, 0x31, 0x01];
     let inval = ErrorCode::InvalidArgument;
@@ -593,15 +625,48 @@ fn test_bytes_helper() {
             .code,
         inval
     );
+
+    {
+        let bytes = AttrBytes {
+            size: 1,
+            data: Some(data4.to_vec()),
+            hint_length: 1,
+            type_hint: None,
+        };
+        assert_eq!(
+            f.attr_set_bytes(0, Some("badBytes"), Some(&bytes))
+                .unwrap_err()
+                .code,
+            inval
+        );
+    }
+
+    {
+        let mut bytes = AttrBytes {
+            size: 4,
+            data: Some(data4.to_vec()),
+            hint_length: 11,
+            type_hint: Some(b"a cool hint".to_vec()),
+        };
+        f.attr_set_bytes(0, Some("goodBytes"), Some(&bytes))
+            .unwrap();
+
+        bytes.type_hint = None;
+        assert_eq!(
+            f.attr_set_bytes(0, Some("goodBytes"), Some(&bytes))
+                .unwrap_err()
+                .code,
+            inval
+        );
+    }
 }
 
 /// Partial port of `testChlistHelper` (src/test/OpenEXRCoreTest/general_attr.cpp:548-822
 /// @ v3.5.3), run by `testAttrChlists` (lines 824-833). Left out: NULL context and object calls
-/// and the malloc failures (PLAN.md O8); `exr_set_channels` and `exr_attr_set_channels` come
-/// with the part attribute API (Phase 3).
+/// and the malloc failures (PLAN.md O8).
 #[test]
 fn test_chlist_helper() {
-    let f = create_dummy_file("<chlist>");
+    let mut f = create_dummy_file("<chlist>");
     let mut cl = AttrChlist::default();
     let inval = ErrorCode::InvalidArgument;
     let (half, lin, log) = (
@@ -751,6 +816,20 @@ fn test_chlist_helper() {
         f.attr_chlist_duplicate(&mut cl2, &bad).unwrap_err().code,
         inval
     );
+    assert_eq!(f.set_channels(0, &bad).unwrap_err().code, inval);
+    assert_eq!(
+        f.attr_set_channels(0, Some("badChlist"), Some(&bad))
+            .unwrap_err()
+            .code,
+        inval
+    );
+    // the setters above borrow the context mutably, so the helper is made again
+    let add = |cl: &mut AttrChlist,
+               n: Option<&[u8]>,
+               p: PixelType,
+               l: PerceptualTreatment,
+               x: i32,
+               y: i32| { f.attr_chlist_add(cl, n, p, l, x, y) };
 
     // without a file, max will be 31
     assert_eq!(
