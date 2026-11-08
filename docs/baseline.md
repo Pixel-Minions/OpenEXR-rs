@@ -168,6 +168,10 @@ AVX-512 irreversible lifting with GCC in `-std=gnu++14`, which contracts `p + f 
 x86-64 at OpenJPH's AVX-512 level (`crates/openexr-openjph/src/transform.rs`). MSVC does not
 contract, so the Windows wheel lifts unfused.
 
+A second difference of the platforms, ported: for an ATK-Eatk past a sample's width, the Linux
+wheel's GCC-vectorized general lifting loops shift differently from the Windows wheel's scalar
+ones (`docs/improvements.md`, I-33).
+
 ## Speed (2026-11-08, Windows)
 
 `scripts/bench.py`: Core (`core_harness bench`, the wheel's build settings, MSVC `/O2`) and the

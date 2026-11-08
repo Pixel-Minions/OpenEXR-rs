@@ -458,6 +458,30 @@ section. An entry says:
 - **Status:** **fixed**, deviation D-21; checked against the wheels and Core on Windows and
   Rocky Linux 9 (heavy tier).
 
+### I-33. OpenJPH's reversible lifting with an ATK-Eatk past the samples' width
+
+- **Upstream:** the reversible lifting shifts by ATK-Eatk, a byte read from the codestream's
+  ATK segment (`param_atk::read`, `external/OpenJPH/src/core/codestream/ojph_params.cpp`
+  @ OpenJPH 0.32.0), and nothing bounds it. At or past a sample's width, SSE2's and AVX2's
+  kernels (`ojph_transform_sse2.cpp`, `ojph_transform_avx2.cpp`) shift the special cases
+  (`a == 1`, `a == -1`) with intrinsics: `_mm_srai_epi32` and `_mm256_srai_epi32` fill with the
+  sign past 31, and the 64-bit `sse2_mm_srai_epi64` and `avx2_mm256_srai_epi64` give 0 past 63.
+  The general case is AVX2's `_mm256_srai_epi32` for 32-bit lines in AVX2's kernel, and C's
+  `>> e` (undefined behaviour) elsewhere.
+- **What the wheels do:** MSVC (Windows) keeps every such C loop scalar, and x86's `sar` takes
+  the count modulo the width. GCC 14.2.1 (Linux, `-O3`, baseline x86-64) vectorizes them:
+  SSE2's 32-bit loops four samples at a time from 4, its 64-bit loops two at a time from 8,
+  AVX2's 64-bit loops four at a time from 4; the vector body uses `psrad` (sign fill) or
+  `(v >>> e) | (sign << (64 - e))` (sign fill at 64, 0 above), and the scalar tail `sar`. The
+  two wheels therefore decode such a codestream differently.
+- **Who notices:** only a crafted or corrupt HTJ2K codestream with a reversible ATK kernel; no
+  encoder in OpenEXR writes one.
+- **The port:** shifts each loop as the wheel of its platform does (`RevKernel`,
+  `crates/openexr-openjph/src/transform.rs`).
+- **Status:** matched; checked against this CPU's instructions for every Eatk, and against both
+  wheels with crafted kernels (`oracle/craft_atk.py`, `tests/heavy_decode.rs`), natively and
+  under SDE (nhm).
+
 ## Undefined behaviour the port does not copy
 
 ### U-1. A string created from no data has an unset terminator
