@@ -35,8 +35,8 @@ use crate::zstd_compress_internal::{
     CParams, DEFAULT_MAX_OFF, EntropyCTables, FseCTables, FseRepeat, LL_DEFAULT_NORM,
     LL_DEFAULT_NORM_LOG, LongLengthType, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG, MatchState,
     OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG, SET_COMPRESSED, SeqStore, Strategy, Window, ZSTD_BTLAZY2,
-    ZSTD_BTOPT, ZSTD_DFAST, ZSTD_FAST, ZSTD_GREEDY, ZSTD_LAZY2, ZSTD_ROW_HASH_CACHE_SIZE, ll_code,
-    min_gain, ml_code,
+    ZSTD_BTOPT, ZSTD_CURRENT_MAX, ZSTD_DFAST, ZSTD_FAST, ZSTD_GREEDY, ZSTD_LAZY2,
+    ZSTD_ROW_HASH_CACHE_SIZE, ZSTD_WINDOW_START_INDEX, ll_code, min_gain, ml_code,
 };
 use crate::zstd_compress_internal::{
     HufCTables, MINMATCH, OptMatch, OptState, Optimal, SET_BASIC, SET_REPEAT, SET_RLE, SeqDef,
@@ -80,9 +80,8 @@ const ZSTD_FRAMEHEADERSIZE_MAX: usize = 18;
 const ZSTD_TARGETLENGTH_MAX: i32 = ZSTD_BLOCKSIZE_MAX as i32;
 /// `ZSTD_MAX_INPUT_SIZE` on 64-bit (external/zstd/lib/zstd.h:248 @ zstd v1.5.7).
 const ZSTD_MAX_INPUT_SIZE: u64 = 0xFF00FF00FF00FF00;
-/// `ZSTD_CURRENT_MAX` on 64-bit (external/zstd/lib/compress/zstd_compress_internal.h:1031
-/// @ zstd v1.5.7): above it upstream corrects its indices.
-const ZSTD_CURRENT_MAX: u64 = 3500 << 20;
+/// `ZSTD_INDEXOVERFLOW_MARGIN` (external/zstd/lib/compress/zstd_compress.c:2078 @ zstd v1.5.7).
+const ZSTD_INDEXOVERFLOW_MARGIN: u32 = 16 << 20;
 /// `ENTROPY_WORKSPACE_SIZE - (MaxSeq + 1) * sizeof (unsigned)`
 /// (external/zstd/lib/compress/zstd_compress_internal.h:442-443 @ zstd v1.5.7), the entropy
 /// workspace after the sequences' counts.
@@ -127,6 +126,27 @@ fn row_match_finder_supported(strategy: Strategy) -> bool {
 /// @ zstd v1.5.7), from `ZSTD_ps_auto`: whether the row match finder is used.
 fn resolve_row_match_finder_mode(cparams: &CParams) -> bool {
     row_match_finder_supported(cparams.strategy) && cparams.window_log > 14
+}
+
+/// Port of `ZSTD_reduceTable_internal` (external/zstd/lib/compress/zstd_compress.c:2612-2652
+/// @ zstd v1.5.7), with `ZSTD_reduceTable` and `ZSTD_reduceTable_btlazy2` (lines 2654-2662):
+/// each index lowered by `reducer_value`, or squashed to zero below it (the special values
+/// below `ZSTD_WINDOW_START_INDEX` protected); `preserve_mark` keeps btlazy2's unsorted mark.
+fn reduce_table(table: &mut [u32], reducer_value: u32, preserve_mark: bool) {
+    /// `ZSTD_DUBT_UNSORTED_MARK` (external/zstd/lib/compress/zstd_compress_internal.h:34
+    /// @ zstd v1.5.7).
+    const ZSTD_DUBT_UNSORTED_MARK: u32 = 1;
+    // Protect special index values < ZSTD_WINDOW_START_INDEX.
+    let reducer_threshold = reducer_value.wrapping_add(ZSTD_WINDOW_START_INDEX);
+    for cell in table.iter_mut() {
+        *cell = if preserve_mark && *cell == ZSTD_DUBT_UNSORTED_MARK {
+            ZSTD_DUBT_UNSORTED_MARK
+        } else if *cell < reducer_threshold {
+            0
+        } else {
+            *cell - reducer_value
+        };
+    }
 }
 
 /// Port of `ZSTD_cycleLog` (external/zstd/lib/compress/zstd_compress.c:1425-1429 @ zstd v1.5.7).
@@ -257,6 +277,9 @@ pub struct CCtx {
     produced_csize: u64,
     /// `ZSTDcs_ending` reached.
     stage_ending: bool,
+    /// Whether the context has been reset once (`initialized`): its indices continue from
+    /// then on.
+    initialized: bool,
 }
 
 impl std::fmt::Debug for HufCompressTables {
@@ -290,7 +313,7 @@ impl CCtx {
         };
         CCtx {
             ms: MatchState {
-                window: Window::for_frame(),
+                window: Window::init(),
                 next_to_update: 0,
                 row_hash_log: 0,
                 tag_table: Vec::new(),
@@ -316,6 +339,7 @@ impl CCtx {
             consumed_src_size: 0,
             produced_csize: 0,
             stage_ending: false,
+            initialized: false,
         }
     }
 
@@ -354,6 +378,16 @@ impl CCtx {
         prev.entropy.fse.matchlength_repeat_mode = FseRepeat::None;
         prev.entropy.fse.litlength_repeat_mode = FseRepeat::None;
 
+        // The indices continue from the last frame's, unless they are too close to the
+        // maximum, or the context is new (ZSTD_indexTooCloseToMax, lines 2079-2082). Upstream
+        // also resets them when it reallocates its workspace; the port has none, and where the
+        // indices start changes no match found (every stale entry lies below the window), so
+        // they continue there.
+        let index_too_close =
+            self.ms.window.next_src > u64::from(ZSTD_CURRENT_MAX - ZSTD_INDEXOVERFLOW_MARGIN);
+        let needs_index_reset = index_too_close || !self.initialized;
+        self.initialized = true;
+
         // ZSTD_reset_matchState
         let ms = &mut self.ms;
         let row = row_match_finder_supported(cparams.strategy) && use_row_match_finder;
@@ -363,13 +397,9 @@ impl CCtx {
             0
         };
         let h_size = 1usize << cparams.hash_log;
-        ms.window = Window::for_frame();
-        ms.lazy_skipping = false;
-        ms.next_to_update = ms.window.dict_limit;
-        ms.hash_table.clear();
-        ms.hash_table.resize(h_size, 0);
-        ms.chain_table.clear();
-        ms.chain_table.resize(chain_size, 0);
+        if needs_index_reset {
+            ms.window = Window::init();
+        }
         // the optimal parser's tables: 3-byte hashes for a minimum match of 3, the stats
         let hash_log3 = if cparams.min_match == 3 {
             cparams.window_log.min(ZSTD_HASHLOG3_MAX)
@@ -377,11 +407,26 @@ impl CCtx {
             0
         };
         ms.hash_log3 = hash_log3;
-        ms.hash_table3.clear();
-        ms.hash_table3
-            .resize(if hash_log3 != 0 { 1 << hash_log3 } else { 0 }, 0);
-        // ZSTD_invalidateMatchState: force reset of btopt stats
-        ms.opt.lit_length_sum = 0;
+        ms.lazy_skipping = false;
+        // ZSTD_invalidateMatchState
+        ms.window.clear();
+        ms.next_to_update = ms.window.dict_limit;
+        ms.opt.lit_length_sum = 0; // force reset of btopt stats
+        // The tables are cleaned (zeroed) when the indices were reset; otherwise they keep
+        // the last frames' entries, every one below the cleared window, which the match
+        // finders reject as they would a zero (ZSTD_cwksp_clean_tables). Space new to a table
+        // is zero.
+        let h_size3 = if hash_log3 != 0 { 1 << hash_log3 } else { 0 };
+        for (t, n) in [
+            (&mut ms.hash_table, h_size),
+            (&mut ms.chain_table, chain_size),
+            (&mut ms.hash_table3, h_size3),
+        ] {
+            if needs_index_reset {
+                t.clear();
+            }
+            t.resize(n, 0);
+        }
         if cparams.strategy >= ZSTD_BTOPT {
             let o = &mut ms.opt;
             o.lit_freq.resize(256, 0);
@@ -392,8 +437,9 @@ impl CCtx {
             o.price_table.resize(ZSTD_OPT_SIZE, Optimal::default());
         }
         if row {
-            // Row match finder needs an additional table of hashes ("tags")
-            ms.tag_table.clear();
+            // Row match finder needs an additional table of hashes ("tags"), zeroed only
+            // where it is new (ZSTD_cwksp_reserve_aligned_init_once): the salt, new at each
+            // reset, keeps the old tags from matching the new hashes
             ms.tag_table.resize(h_size, 0);
             ms.hash_salt = bitmix(ms.hash_salt, 8) ^ bitmix(u64::from(ms.hash_salt_entropy), 4);
             // Switch to 32-entry rows if searchLog is 5 (or more)
@@ -417,21 +463,20 @@ impl CCtx {
         compression_level: i32,
     ) -> ZResult<usize> {
         let cparams = get_cparams_internal(compression_level, src.len() as u64);
-        if src.len() as u64 >= ZSTD_CURRENT_MAX {
-            // upstream corrects its indices past this; not ported (docs/deferred.md)
-            return Err(ErrorCode::SrcSizeWrong);
-        }
         let use_row = resolve_row_match_finder_mode(&cparams);
-        // no LDM: ZSTD_resolveEnableLdm needs a window of 2^27, past these inputs
+        // no LDM (zstd_ldm.c, not ported): ZSTD_resolveEnableLdm (lines 269-273) enables it
+        // for btopt and up with a window of 2^27, which level 22 reaches on inputs over 64 MiB;
+        // those frames differ from upstream's (docs/deferred.md)
         self.reset(cparams, use_row, src.len() as u64);
 
         // ZSTD_compressContinue_internal (frame, last chunk)
         let fh_size = write_frame_header(dst, &cparams, src.len() as u64)?;
         let mut c_size = 0;
         if !src.is_empty() {
-            // ZSTD_window_update: a new segment, from index ZSTD_WINDOW_START_INDEX
-            self.ms.window.next_src = self.ms.window.idx(src.len());
-            self.ms.next_to_update = self.ms.window.dict_limit;
+            // ZSTD_window_update: a new segment, after the window's end
+            if !self.ms.window.update_new_segment(src.len()) {
+                self.ms.next_to_update = self.ms.window.dict_limit;
+            }
             c_size = self.compress_frame_chunk(&mut dst[fh_size..], src)?;
             self.consumed_src_size += src.len() as u64;
             self.produced_csize += (c_size + fh_size) as u64;
@@ -492,7 +537,9 @@ impl CCtx {
                 return Err(ErrorCode::DstSizeTooSmall); // not enough space to store compressed block
             }
 
-            self.ms.window.enforce_max_dist(ip + block_size, max_dist);
+            self.overflow_correct_if_needed(ip, ip + block_size);
+            // (ZSTD_checkDictValidity: no dictionary)
+            self.ms.window.enforce_max_dist(ip, max_dist);
             // Ensure hash/chain table insertion resumes no sooner than lowlimit
             if self.ms.next_to_update < self.ms.window.low_limit {
                 self.ms.next_to_update = self.ms.window.low_limit;
@@ -543,6 +590,47 @@ impl CCtx {
             self.stage_ending = true;
         }
         Ok(op)
+    }
+
+    /// Port of `ZSTD_overflowCorrectIfNeeded` (external/zstd/lib/compress/zstd_compress.c:4526-4548
+    /// @ zstd v1.5.7), without a dictionary: before the block `[ip, iend)`, the indices
+    /// lowered when they would pass `ZSTD_CURRENT_MAX`, every stored one with them.
+    fn overflow_correct_if_needed(&mut self, ip: usize, iend: usize) {
+        let cycle_log = cycle_log(self.cparams.chain_log, self.cparams.strategy);
+        let max_dist = 1u32 << self.cparams.window_log;
+        if self
+            .ms
+            .window
+            .need_overflow_correction(cycle_log, max_dist, ip, iend)
+        {
+            let correction = self.ms.window.correct_overflow(cycle_log, max_dist, ip);
+            self.reduce_index(correction);
+            if self.ms.next_to_update < correction {
+                self.ms.next_to_update = 0;
+            } else {
+                self.ms.next_to_update -= correction;
+            }
+        }
+    }
+
+    /// Port of `ZSTD_reduceIndex` (external/zstd/lib/compress/zstd_compress.c:2666-2684
+    /// @ zstd v1.5.7): every index of the tables lowered by `reducer_value`.
+    fn reduce_index(&mut self, reducer_value: u32) {
+        let ms = &mut self.ms;
+        reduce_table(&mut ms.hash_table, reducer_value, false);
+        // the chain table is allocated for strategies other than fast without the row match
+        // finder (ZSTD_allocateChainTable); it is empty otherwise
+        let row = row_match_finder_supported(self.cparams.strategy) && self.use_row_match_finder;
+        if self.cparams.strategy != crate::zstd_compress_internal::ZSTD_FAST && !row {
+            reduce_table(
+                &mut ms.chain_table,
+                reducer_value,
+                self.cparams.strategy == ZSTD_BTLAZY2,
+            );
+        }
+        if ms.hash_log3 != 0 {
+            reduce_table(&mut ms.hash_table3, reducer_value, false);
+        }
     }
 
     /// Port of `ZSTD_compressBlock_internal`

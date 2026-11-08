@@ -395,44 +395,185 @@ pub(crate) fn hash_ptr(src: &[u8], p: usize, h_bits: u32, mls: u32) -> usize {
 }
 
 /// Port of `ZSTD_window_t` (external/zstd/lib/compress/zstd_compress_internal.h:254-264
-/// @ zstd v1.5.7), for one frame's input: index `i` is the input's byte `i - base`, the
-/// window starting at `ZSTD_WINDOW_START_INDEX` as a fresh one does. Without dictionaries the
-/// window has no extDict (`dictBase` is n/a).
+/// @ zstd v1.5.7), for the context's frames: index `i` is the current input's byte
+/// `i - base`. Upstream's `base` is a pointer, `src - index`; here it is the index of the
+/// input's first byte, which a frame continuing the last one's indices makes large and an
+/// overflow correction can make negative (upstream's pointer then lies before the input).
+/// Without dictionaries the window has no extDict (`dictBase` is n/a): each frame's input
+/// follows the cleared window of the last one, so `lowLimit == dictLimit`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Window {
     /// The index of the input's first byte (`src - base`).
-    pub(crate) base: u32,
-    /// The index after the input seen (`nextSrc - base`).
-    pub(crate) next_src: u32,
+    pub(crate) base: i64,
+    /// The index after the input seen (`nextSrc - base`, as wide as upstream's `size_t`).
+    pub(crate) next_src: u64,
     /// Below that point, need extDict.
     pub(crate) dict_limit: u32,
     /// Below that point, no more valid data.
     pub(crate) low_limit: u32,
+    /// Number of times overflow correction has run since `ZSTD_window_init`.
+    pub(crate) nb_overflow_corrections: u32,
 }
+
+/// `ZSTD_CURRENT_MAX` on 64-bit (external/zstd/lib/compress/zstd_compress_internal.h:1031
+/// @ zstd v1.5.7): above it the indices are corrected.
+pub(crate) const ZSTD_CURRENT_MAX: u32 = 3500 << 20;
+
+/// `ZSTD_WINDOW_OVERFLOW_CORRECT_FREQUENTLY` (external/zstd/lib/compress/zstd_compress_internal.h:1084-1090
+/// @ zstd v1.5.7): a debug setting, 0 in release builds.
+const ZSTD_WINDOW_OVERFLOW_CORRECT_FREQUENTLY: bool = false;
 
 impl Window {
     /// Port of `ZSTD_window_init` (external/zstd/lib/compress/zstd_compress_internal.h:1334-1343
-    /// @ zstd v1.5.7), with `ZSTD_window_clear` (lines 1041-1048) and `ZSTD_window_update`
-    /// (lines 1354-1390) for a frame's input, which never continues the window's last bytes.
-    pub(crate) fn for_frame() -> Self {
+    /// @ zstd v1.5.7): an empty window, whose first position is `ZSTD_WINDOW_START_INDEX`.
+    pub(crate) fn init() -> Self {
         Window {
-            base: ZSTD_WINDOW_START_INDEX,
-            next_src: ZSTD_WINDOW_START_INDEX,
+            base: 0,
+            next_src: u64::from(ZSTD_WINDOW_START_INDEX),
             dict_limit: ZSTD_WINDOW_START_INDEX,
             low_limit: ZSTD_WINDOW_START_INDEX,
+            nb_overflow_corrections: 0,
         }
+    }
+
+    /// Port of `ZSTD_window_clear` (external/zstd/lib/compress/zstd_compress_internal.h:1041-1048
+    /// @ zstd v1.5.7): the history forgotten, the indices kept.
+    pub(crate) fn clear(&mut self) {
+        let end = self.next_src as u32;
+        self.low_limit = end;
+        self.dict_limit = end;
+    }
+
+    /// Port of `ZSTD_window_update` (external/zstd/lib/compress/zstd_compress_internal.h:1354-1390
+    /// @ zstd v1.5.7) for a frame's input of `src_size` bytes, which never continues the
+    /// window's last bytes (its buffer is not the one after them): the input starts a new
+    /// segment at the window's end, the old prefix becoming the extDict, which is empty here
+    /// (the window was cleared), so too small to keep. The overlap check that follows changes
+    /// nothing with an empty extDict. Returns whether the segment was contiguous (never).
+    pub(crate) fn update_new_segment(&mut self, src_size: usize) -> bool {
+        if src_size == 0 {
+            return true;
+        }
+        // not contiguous
+        let distance_from_base = self.next_src;
+        self.low_limit = self.dict_limit;
+        self.dict_limit = distance_from_base as u32;
+        self.base = distance_from_base as i64;
+        if self.dict_limit.wrapping_sub(self.low_limit) < HASH_READ_SIZE {
+            self.low_limit = self.dict_limit; // too small extDict
+        }
+        self.next_src = distance_from_base + src_size as u64;
+        false
     }
 
     /// The input's position of index `i`.
     #[inline]
     pub(crate) fn pos(&self, i: u32) -> usize {
-        (i - self.base) as usize
+        (i64::from(i) - self.base) as usize
     }
 
-    /// The index of the input's position `p`.
+    /// The index of the input's position `p`, as upstream's `(U32)(p - base)`.
     #[inline]
     pub(crate) fn idx(&self, p: usize) -> u32 {
-        p as u32 + self.base
+        (p as i64 + self.base) as u32
+    }
+
+    /// Port of `ZSTD_window_canOverflowCorrect`
+    /// (external/zstd/lib/compress/zstd_compress_internal.h:1097-1125 @ zstd v1.5.7), without a
+    /// dictionary (`loadedDictEnd` 0): whether correcting at position `src` would lower the
+    /// indices enough to be worth it.
+    pub(crate) fn can_overflow_correct(&self, cycle_log: u32, max_dist: u32, src: usize) -> bool {
+        let cycle_size = 1u32 << cycle_log;
+        let curr = self.idx(src);
+        let min_index_to_overflow_correct = cycle_size
+            .wrapping_add(if max_dist > cycle_size {
+                max_dist
+            } else {
+                cycle_size
+            })
+            .wrapping_add(ZSTD_WINDOW_START_INDEX);
+
+        // Adjust the min index to backoff the overflow correction frequency, so we don't
+        // waste too much CPU in overflow correction. If this computation overflows we don't
+        // really care, we just need to make sure it is at least minIndexToOverflowCorrect.
+        let adjustment = self.nb_overflow_corrections.wrapping_add(1);
+        let scaled = min_index_to_overflow_correct.wrapping_mul(adjustment);
+        let adjusted_index = if scaled > min_index_to_overflow_correct {
+            scaled
+        } else {
+            min_index_to_overflow_correct
+        };
+        let index_large_enough = curr > adjusted_index;
+
+        // Only overflow correct early if the dictionary is invalidated already, so we don't
+        // hurt compression ratio.
+        let dictionary_invalidated = curr > max_dist;
+
+        index_large_enough && dictionary_invalidated
+    }
+
+    /// Port of `ZSTD_window_needOverflowCorrection`
+    /// (external/zstd/lib/compress/zstd_compress_internal.h:1132-1146 @ zstd v1.5.7), without a
+    /// dictionary: whether the indices up to position `src_end` are getting too large.
+    pub(crate) fn need_overflow_correction(
+        &self,
+        cycle_log: u32,
+        max_dist: u32,
+        src: usize,
+        src_end: usize,
+    ) -> bool {
+        let curr = self.idx(src_end);
+        if ZSTD_WINDOW_OVERFLOW_CORRECT_FREQUENTLY
+            && self.can_overflow_correct(cycle_log, max_dist, src)
+        {
+            return true;
+        }
+        curr > ZSTD_CURRENT_MAX
+    }
+
+    /// Port of `ZSTD_window_correctOverflow`
+    /// (external/zstd/lib/compress/zstd_compress_internal.h:1159-1230 @ zstd v1.5.7): lowers the
+    /// indices from position `src` on, keeping their low `cycle_log` bits and every index up to
+    /// `max_dist` in the past valid; returns the correction, which every stored index takes.
+    pub(crate) fn correct_overflow(&mut self, cycle_log: u32, max_dist: u32, src: usize) -> u32 {
+        let cycle_size = 1u32 << cycle_log;
+        let cycle_mask = cycle_size - 1;
+        let curr = self.idx(src);
+        let current_cycle = curr & cycle_mask;
+        // Ensure newCurrent - maxDist >= ZSTD_WINDOW_START_INDEX.
+        let current_cycle_correction = if current_cycle < ZSTD_WINDOW_START_INDEX {
+            if cycle_size > ZSTD_WINDOW_START_INDEX {
+                cycle_size
+            } else {
+                ZSTD_WINDOW_START_INDEX
+            }
+        } else {
+            0
+        };
+        let new_current = current_cycle
+            + current_cycle_correction
+            + if max_dist > cycle_size {
+                max_dist
+            } else {
+                cycle_size
+            };
+        let correction = curr - new_current;
+
+        self.base -= i64::from(correction);
+        self.next_src -= u64::from(correction);
+        if self.low_limit < correction + ZSTD_WINDOW_START_INDEX {
+            self.low_limit = ZSTD_WINDOW_START_INDEX;
+        } else {
+            self.low_limit -= correction;
+        }
+        if self.dict_limit < correction + ZSTD_WINDOW_START_INDEX {
+            self.dict_limit = ZSTD_WINDOW_START_INDEX;
+        } else {
+            self.dict_limit -= correction;
+        }
+
+        self.nb_overflow_corrections = self.nb_overflow_corrections.wrapping_add(1);
+        correction
     }
 
     /// Port of `ZSTD_window_enforceMaxDist`

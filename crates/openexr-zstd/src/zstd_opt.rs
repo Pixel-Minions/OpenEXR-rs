@@ -990,8 +990,8 @@ fn init_stats_ultra(
     // invalidate first scan from history, only keep entropy stats
     seq_store.reset();
     let src_size = (iend - istart) as u32;
-    ms.window.base += src_size;
-    ms.window.next_src += src_size;
+    ms.window.base += i64::from(src_size);
+    ms.window.next_src += u64::from(src_size);
     ms.window.dict_limit += src_size;
     ms.window.low_limit = ms.window.dict_limit;
     ms.next_to_update = ms.window.dict_limit;

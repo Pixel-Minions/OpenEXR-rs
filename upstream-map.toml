@@ -1070,14 +1070,14 @@ path = "external/zstd/lib/compress/zstd_compress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/zstd_compress.rs"
-note = "ZSTD_compressCCtx and ZSTD_compressBound at every level (fast to btultra2, with the post-block splitter), each frame on a fresh window (equivalent: upstream's leftovers lie below the cleared window's low limit); Core-only rewrites at every level equal Core's own (tests/heavy_harness.rs); frames over 3.5 GB answer SrcSizeWrong (the index overflow correction, docs/deferred.md); streaming, dictionaries, LDM, sequence producers and multithreading n/a"
+note = "ZSTD_compressCCtx and ZSTD_compressBound at every level (fast to btultra2, with the post-block splitter); a context's indices continue from frame to frame, its tables keeping the last frames' entries below the cleared window (ZSTDirp_continue, reset when too close to the maximum or new; upstream's workspace reallocation, which also resets them, has no counterpart: where indices start changes no match); the index overflow correction (ZSTD_overflowCorrectIfNeeded, ZSTD_reduceIndex); Core-only rewrites at every level equal Core's own (tests/heavy_harness.rs), and frames past ZSTD_CURRENT_MAX, alone and continuing (tests/heavy_zstd_big.rs); streaming, dictionaries, LDM, sequence producers and multithreading n/a"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_internal.h"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/zstd_compress_internal.rs"
-note = "the types and helpers the ported compressor needs (sequences, hashes, the window without extDict, the match state of the lazy match finders); checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
+note = "the types and helpers the ported compressor needs (sequences, hashes, the window without extDict and its overflow correction, the match state of the match finders); checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_literals.c"
