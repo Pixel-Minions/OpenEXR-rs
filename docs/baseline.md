@@ -143,7 +143,8 @@ D-18 left out (3367, nearly all D-17's mip-level edge tiles of the corpus's tile
 `core_harness convert`: each of the six conversions between half, float and uint, over every
 input (2^16 halfs, 2^32 floats and uints), through Core's pack and unpack routines, as
 digests per 2^24 inputs: the port's 2052 digests equal Core's, and its three one-line files
-equal Core's byte for byte.
+equal Core's byte for byte; on Rocky Linux 9 too (its harness unpacks halves to floats with
+F16C on this CPU).
 
 ## Rocky Linux 9 (2026-11-08)
 
@@ -162,3 +163,40 @@ AVX-512 irreversible lifting with GCC in `-std=gnu++14`, which contracts `p + f 
 x86-64 at OpenJPH's AVX-512 level (`crates/openexr-openjph/src/transform.rs`). MSVC does not
 contract, so the Windows wheel lifts unfused.
 
+## Speed (2026-11-08, Windows)
+
+`scripts/bench.py`: Core (`core_harness bench`, the wheel's build settings, MSVC `/O2`) and the
+port (`cargo run --release -p openexr-rs-core --example bench`, the same work through the port's
+API), single-threaded, on three corpus images (Blobbies: scanlines, 5 channels; Ocean: tiles;
+Beachball/singlepart.0001: 20 channels; about 1 MP each) rewritten by Core into each
+compression: every chunk decoded into planar buffers (the file's reads included), and every
+chunk encoded with a `write_fn` that writes nothing; best of 7 runs over 3 rounds, summed over
+the images. The port's time over Core's, before and after the first round of speed work
+(profiles: `perf` on Rocky Linux 9):
+
+| Compression | Decode, before | Decode, after | Encode, before | Encode, after |
+|---|---|---|---|---|
+| NONE | 1.02 | 1.02 | 5.00 | 0.42 |
+| RLE | 0.45 | 0.46 | 1.20 | 0.85 |
+| ZIPS | 1.62 | 1.41 | 1.66 | 1.30 |
+| ZIP | 1.58 | 1.34 | 1.58 | 1.21 |
+| PIZ | 1.03 | 1.04 | 0.95 | 0.85 |
+| PXR24 | 1.43 | 1.29 | 1.66 | 1.28 |
+| B44 | 0.80 | 0.80 | 1.15 | 0.85 |
+| B44A | 0.80 | 0.83 | 1.12 | 0.82 |
+| DWAA | 1.31 | 1.32 | 1.17 | 1.12 |
+| DWAB | 1.18 | 1.17 | 1.18 | 1.11 |
+| HTJ2K256 | 1.55 | 1.54 | 1.46 | 1.29 |
+| HTJ2K32 | 1.34 | 1.34 | 1.36 | 1.27 |
+| LJ2K | 1.73 | 1.74 | 1.81 | 1.65 |
+| ZSTD | 1.44 | 1.06 | 1.50 | 1.18 |
+
+The changes, none of which changes a byte: packing takes a line whose every read and store is in
+bounds through a loop specialized to its types (a copy for the same type), where the per-sample
+checks cannot fail; ZIP's predictor and interleave work as upstream's SSE2 versions do, in
+eight-byte words; libdeflate's hash-chain matchfinder masks its table indices (a no-op) so that
+they need no bounds checks, and its decoder copies match words without `memmove`; zstd's row
+matchfinder compares tags as upstream's SWAR branch does; Core's ZSTD delta and byte shuffles
+run without per-element checks; Adler-32 sums sixteen lanes. What remains is mostly where Core
+uses SIMD the port does not (OpenJPH's block coders, libdeflate's decoder, DWA) and zeroed
+buffers (`docs/deferred.md`).

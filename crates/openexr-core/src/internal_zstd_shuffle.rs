@@ -10,10 +10,22 @@
 /// @ v3.5.3): byte `j` of each 4-byte element into plane `j`.
 pub(crate) fn shuffle_encode_4(input: &[u8], out: &mut [u8]) {
     let elements = input.len() / 4;
-    for i in 0..elements {
-        for j in 0..4 {
-            out[j * elements + i] = input[i * 4 + j];
-        }
+    let (p0, rest) = out[..elements * 4].split_at_mut(elements);
+    let (p1, rest) = rest.split_at_mut(elements);
+    let (p2, p3) = rest.split_at_mut(elements);
+    for ((((e, a), b), c), d) in input
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(p0.iter_mut())
+        .zip(p1.iter_mut())
+        .zip(p2.iter_mut())
+        .zip(p3.iter_mut())
+    {
+        *a = e[0];
+        *b = e[1];
+        *c = e[2];
+        *d = e[3];
     }
 }
 
@@ -21,9 +33,16 @@ pub(crate) fn shuffle_encode_4(input: &[u8], out: &mut [u8]) {
 /// @ v3.5.3).
 pub(crate) fn shuffle_encode_2(input: &[u8], out: &mut [u8]) {
     let elements = input.len() / 2;
-    for i in 0..elements {
-        out[i] = input[i * 2];
-        out[elements + i] = input[i * 2 + 1];
+    let (p0, p1) = out[..elements * 2].split_at_mut(elements);
+    for ((e, a), b) in input
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(p0.iter_mut())
+        .zip(p1.iter_mut())
+    {
+        *a = e[0];
+        *b = e[1];
     }
 }
 
@@ -33,16 +52,34 @@ pub(crate) fn shuffle_encode_2(input: &[u8], out: &mut [u8]) {
 pub(crate) fn shuffle_decode_bytes(dst: &mut [u8], shuf: &[u8], el_bytes: u64) {
     if el_bytes == 4 {
         let elements = shuf.len() / 4;
-        for i in 0..elements {
-            for j in 0..4 {
-                dst[i * 4 + j] = shuf[j * elements + i];
-            }
+        let (p0, rest) = shuf.split_at(elements);
+        let (p1, rest) = rest.split_at(elements);
+        let (p2, rest) = rest.split_at(elements);
+        let p3 = &rest[..elements];
+        for ((((e, a), b), c), d) in dst[..elements * 4]
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(p0)
+            .zip(p1)
+            .zip(p2)
+            .zip(p3)
+        {
+            e.copy_from_slice(&[*a, *b, *c, *d]);
         }
     } else {
         let elements = shuf.len() / 2;
-        for i in 0..elements {
-            dst[i * 2] = shuf[i];
-            dst[i * 2 + 1] = shuf[elements + i];
+        let (p0, rest) = shuf.split_at(elements);
+        let p1 = &rest[..elements];
+        for ((e, a), b) in dst[..elements * 2]
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .zip(p0)
+            .zip(p1)
+        {
+            e[0] = *a;
+            e[1] = *b;
         }
     }
 }

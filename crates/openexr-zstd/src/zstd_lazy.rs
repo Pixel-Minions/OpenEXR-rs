@@ -252,13 +252,31 @@ fn row_update_internal(
 
 /// Port of `ZSTD_row_getMatchMask` (external/zstd/lib/compress/zstd_lazy.c:1059-1123
 /// @ zstd v1.5.7), with `ZSTD_row_getSSEMask` (lines 986-1004): bit `n` set when the row's
-/// `n`th entry after the head has the tag (the x86-64 group width is 1).
+/// `n`th entry after the head has the tag (the x86-64 group width is 1). The mask is computed
+/// as the function's SWAR branch computes it (lines 1080-1101, little-endian), eight tags a
+/// word: the same mask as the SSE2 version's, whose group width is 1 too.
 #[inline]
 fn row_get_match_mask(tag_row: &[u8], tag: u8, head_grouped: u32, row_entries: u32) -> u64 {
+    const CHUNK: usize = 8;
+    const SHIFT: u32 = (CHUNK * 8 - CHUNK) as u32;
+    const X01: u64 = u64::MAX / 0xFF;
+    const X80: u64 = X01 << 7;
+    const EXTRACT_MAGIC: u64 = (u64::MAX / 0x7F) >> CHUNK;
+    let splat = u64::from(tag).wrapping_mul(X01);
     let mut matches: u64 = 0;
-    for (i, &t) in tag_row[..row_entries as usize].iter().enumerate() {
-        matches |= u64::from(t == tag) << i;
+    let mut i = row_entries as usize - CHUNK;
+    loop {
+        let mut chunk = u64::from_le_bytes(tag_row[i..i + CHUNK].try_into().unwrap());
+        chunk ^= splat;
+        chunk = (((chunk | X80).wrapping_sub(X01)) | chunk) & X80;
+        matches <<= CHUNK;
+        matches |= chunk.wrapping_mul(EXTRACT_MAGIC) >> SHIFT;
+        if i < CHUNK {
+            break;
+        }
+        i -= CHUNK;
     }
+    matches = !matches;
     match row_entries {
         16 => u64::from((matches as u16).rotate_right(head_grouped)),
         32 => u64::from((matches as u32).rotate_right(head_grouped)),

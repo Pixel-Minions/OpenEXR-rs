@@ -5,10 +5,10 @@
 //! ZIPS codecs, deflate (libdeflate, `openexr_deflate`) around a byte reordering and a delta
 //! predictor.
 //!
-//! The scalar `reconstruct` and `interleave` are ported. Upstream also has SSE2, SSE4.1 and
-//! NEON versions (lines 49-143, 161-219), which MSVC builds always use on x86-64; they compute
-//! the same bytes (integer prefix sums and byte interleaving), so they are performance work
-//! (PLAN.md O3).
+//! `reconstruct` and `interleave` follow upstream's SSE2 versions (lines 49-94, 161-190), which
+//! MSVC builds always use on x86-64, in plain eight-byte words and byte pairs: they compute
+//! the scalar versions' bytes (integer prefix sums modulo 256 and byte interleaving), as
+//! upstream's SIMD ones do.
 
 use crate::cfmt::Arg;
 use crate::context::{Context, Error};
@@ -18,36 +18,64 @@ use crate::encoding::{
 };
 use crate::errors::ErrorCode;
 
-/// Port of the scalar `reconstruct` (src/lib/OpenEXRCore/internal_zip.c:145-156 @ v3.5.3): undoes
-/// the delta predictor, each byte the previous one plus its difference, offset by 128.
+/// The bytes of `a` and `b` added lane by lane, modulo 256 each (no carry between bytes).
+#[inline]
+fn add_bytes(a: u64, b: u64) -> u64 {
+    const LOW7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+    ((a & LOW7) + (b & LOW7)) ^ ((a ^ b) & !LOW7)
+}
+
+/// Port of `reconstruct` (src/lib/OpenEXRCore/internal_zip.c:50-94 @ v3.5.3, the SSE2 version
+/// MSVC's x86-64 builds use), in eight-byte words: undoes the delta predictor, each byte the
+/// previous one plus its difference, offset by 128 (the scalar version, lines 145-156). As
+/// upstream's SSE2 loop, the first byte is pre-flipped so that every byte is offset alike; a
+/// word's bytes are prefix-summed in three shifted adds and the previous word's last byte
+/// added to all of them; the tail is the scalar loop's. Byte additions modulo 256 in any
+/// order: the scalar version's bytes.
 fn reconstruct(buf: &mut [u8]) {
-    for t in 1..buf.len() {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    if buf.is_empty() {
+        return;
+    }
+    buf[0] = buf[0].wrapping_add(128);
+    let mut prev = 0u64;
+    let done = buf.len() - buf.len() % 8;
+    for w in buf[..done].as_chunks_mut::<8>().0 {
+        let mut d = u64::from_le_bytes(*w) ^ (ONES << 7);
+        d = add_bytes(d, d << 8);
+        d = add_bytes(d, d << 16);
+        d = add_bytes(d, d << 32);
+        d = add_bytes(d, prev.wrapping_mul(ONES));
+        w.copy_from_slice(&d.to_le_bytes());
+        prev = d >> 56;
+    }
+    if done == 0 {
+        // no word: the scalar loop's, the pre-flip undone
+        buf[0] = buf[0].wrapping_add(128);
+        for t in 1..buf.len() {
+            let d = i32::from(buf[t - 1]) + i32::from(buf[t]) - 128;
+            buf[t] = d as u8;
+        }
+        return;
+    }
+    for t in done..buf.len() {
         let d = i32::from(buf[t - 1]) + i32::from(buf[t]) - 128;
         buf[t] = d as u8;
     }
 }
 
-/// Port of the scalar `interleave` (src/lib/OpenEXRCore/internal_zip.c:222-243 @ v3.5.3): the
-/// first half of `source` into the even bytes of `out`, the second into the odd ones.
+/// Port of `interleave` (src/lib/OpenEXRCore/internal_zip.c:161-190 @ v3.5.3, the SSE2 version;
+/// the scalar one is lines 222-243): the first half of `source` (the larger, for an odd size)
+/// into the even bytes of `out`, the second into the odd ones, two bytes at a time.
 fn interleave(out: &mut [u8], source: &[u8]) {
     let out_size = out.len();
-    let (mut t1, mut t2) = (0usize, out_size.div_ceil(2));
-    let mut s = 0usize;
-    loop {
-        if s < out_size {
-            out[s] = source[t1];
-            s += 1;
-            t1 += 1;
-        } else {
-            break;
-        }
-        if s < out_size {
-            out[s] = source[t2];
-            s += 1;
-            t2 += 1;
-        } else {
-            break;
-        }
+    let (a, b) = source[..out_size].split_at(out_size.div_ceil(2));
+    for ((o, x), y) in out.as_chunks_mut::<2>().0.iter_mut().zip(a).zip(b) {
+        o[0] = *x;
+        o[1] = *y;
+    }
+    if out_size % 2 == 1 {
+        out[out_size - 1] = a[a.len() - 1];
     }
 }
 

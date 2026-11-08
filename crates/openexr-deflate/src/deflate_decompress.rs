@@ -562,10 +562,12 @@ impl Decompressor {
                 bitsleft = bitsleft.wrapping_sub($e);
             };
         }
-        // a word-at-a-time copy within the output: load_word_unaligned + store_word_unaligned
+        // a word-at-a-time copy within the output: load_word_unaligned + store_word_unaligned,
+        // the whole word loaded before any of it is stored, as upstream's
         macro_rules! copy_word {
             ($src:expr, $dst:expr) => {
-                out.copy_within($src..$src + WORDBYTES, $dst);
+                let w: [u8; WORDBYTES] = out[$src..$src + WORDBYTES].try_into().unwrap();
+                out[$dst..$dst + WORDBYTES].copy_from_slice(&w);
             };
         }
 

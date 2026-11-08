@@ -84,6 +84,136 @@ fn dst_at(dst: &mut [u8], off: usize, n: usize) -> Result<&mut [u8], Error> {
         .ok_or(Error::bare(ErrorCode::InvalidArgument))
 }
 
+/// The samples of a line whose every read and store is in bounds, `NI` bytes read (native
+/// order) and `NO` stored (little-endian) each, `conv` between: [`pack_line`]'s loop without
+/// its per-sample checks, which cannot fail here, and with the conversion inlined.
+#[inline]
+fn pack_samples<const NI: usize, const NO: usize>(
+    d: &mut [u8],
+    src: &[u8],
+    pos: usize,
+    inc: i64,
+    conv: impl Fn(u32) -> u32,
+) {
+    let read = |b: &[u8]| -> u32 {
+        if NI == 2 {
+            u32::from(u16::from_ne_bytes([b[0], b[1]]))
+        } else {
+            u32::from_ne_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    if inc == NI as i64 {
+        let n = d.len() / NO;
+        let s = &src[pos..pos + n * NI];
+        for (o, i) in d
+            .as_chunks_mut::<NO>()
+            .0
+            .iter_mut()
+            .zip(s.as_chunks::<NI>().0)
+        {
+            o.copy_from_slice(&conv(read(i)).to_le_bytes()[..NO]);
+        }
+    } else {
+        for (x, o) in d.as_chunks_mut::<NO>().0.iter_mut().enumerate() {
+            let p = (pos as i64 + x as i64 * inc) as usize;
+            o.copy_from_slice(&conv(read(&src[p..p + NI])).to_le_bytes()[..NO]);
+        }
+    }
+}
+
+/// [`pack_line`]'s line when all of it is in bounds: every sample's read inside input `buf`
+/// and every store inside `dst`. Returns false, having done nothing, otherwise (or for a type
+/// it does not know), leaving the line to the per-sample loop, whose results, refusals and
+/// partial stores (U-12) are upstream's. In bounds, both store the same bytes.
+#[allow(clippy::too_many_arguments)]
+fn pack_line_fast(
+    dst: &mut [u8],
+    off: usize,
+    inputs: &[&[u8]],
+    buf: usize,
+    pos: i64,
+    pixincrement: i64,
+    w: i32,
+    data_type: u16,
+    user_type: u16,
+) -> bool {
+    let (half, float, uint) = (
+        PixelType::HALF.0 as u16,
+        PixelType::FLOAT.0 as u16,
+        PixelType::UINT.0 as u16,
+    );
+    let size = |t: u16| {
+        if t == half {
+            Some(2usize)
+        } else if t == float || t == uint {
+            Some(4)
+        } else {
+            None
+        }
+    };
+    let (Some(ni), Some(no)) = (size(user_type), size(data_type)) else {
+        return false;
+    };
+    let Some(src) = inputs.get(buf) else {
+        return false;
+    };
+    if w <= 0 {
+        return false;
+    }
+    let Some(last) = i64::from(w - 1)
+        .checked_mul(pixincrement)
+        .and_then(|d| pos.checked_add(d))
+    else {
+        return false;
+    };
+    let (lo, hi) = if pixincrement < 0 {
+        (last, pos)
+    } else {
+        (pos, last)
+    };
+    if lo < 0 || (hi as u64).saturating_add(ni as u64) > src.len() as u64 {
+        return false;
+    }
+    let Some(end) = (w as usize)
+        .checked_mul(no)
+        .and_then(|n| off.checked_add(n))
+    else {
+        return false;
+    };
+    if end > dst.len() {
+        return false;
+    }
+    let d = &mut dst[off..end];
+    let p = pos as usize;
+    if user_type == data_type && pixincrement == ni as i64 && cfg!(target_endian = "little") {
+        // the same type, samples side by side: the bytes as they are
+        d.copy_from_slice(&src[p..p + d.len()]);
+        return true;
+    }
+    match (data_type == half, data_type == float, user_type) {
+        (true, _, t) if t == half => pack_samples::<2, 2>(d, src, p, pixincrement, |v| v),
+        (true, _, t) if t == float => pack_samples::<4, 2>(d, src, p, pixincrement, |v| {
+            u32::from(float_to_half(f32::from_bits(v)))
+        }),
+        (true, _, _) => {
+            pack_samples::<4, 2>(d, src, p, pixincrement, |v| u32::from(uint_to_half(v)))
+        }
+        (false, true, t) if t == half => {
+            pack_samples::<2, 4>(d, src, p, pixincrement, |v| half_to_float_int(v as u16))
+        }
+        (false, true, t) if t == float => pack_samples::<4, 4>(d, src, p, pixincrement, |v| v),
+        (false, true, _) => pack_samples::<4, 4>(d, src, p, pixincrement, uint_to_float_int),
+        (false, false, t) if t == half => {
+            pack_samples::<2, 4>(d, src, p, pixincrement, |v| half_to_uint(v as u16))
+        }
+        (false, false, t) if t == float => pack_samples::<4, 4>(d, src, p, pixincrement, |v| {
+            float_to_uint(f32::from_bits(v))
+        }),
+        (false, false, _) => pack_samples::<4, 4>(d, src, p, pixincrement, |v| v),
+    }
+    true
+}
+
 /// One line of one channel: `w` samples read from `pos` of input `buf`, `pixincrement` bytes
 /// apart, converted from `user_type` to `data_type` and stored little-endian into `dst`.
 #[allow(clippy::too_many_arguments)]
@@ -98,6 +228,19 @@ fn pack_line(
     data_type: u16,
     user_type: u16,
 ) -> Result<(), Error> {
+    if pack_line_fast(
+        dst,
+        off,
+        inputs,
+        buf,
+        pos,
+        pixincrement,
+        w,
+        data_type,
+        user_type,
+    ) {
+        return Ok(());
+    }
     let (half, float, uint) = (
         PixelType::HALF.0 as u16,
         PixelType::FLOAT.0 as u16,

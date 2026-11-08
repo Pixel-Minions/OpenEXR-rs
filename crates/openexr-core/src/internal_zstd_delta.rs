@@ -11,47 +11,61 @@ use crate::internal_xdr::{
 };
 
 /// Port of `delta_encode_row_u16_scalar` (src/lib/OpenEXRCore/internal_zstd_delta.c:16-26
-/// @ v3.5.3).
+/// @ v3.5.3): each value minus the one before it, as the original values were. Upstream walks
+/// the row backwards so that each value's predecessor is still the original; walking it
+/// forwards with the predecessor kept aside gives the same differences.
 pub(crate) fn delta_encode_row_u16(p: &mut [u8], n: u64) {
     if n <= 1 {
         return;
     }
-    for k in (1..n as usize).rev() {
-        let a = unaligned_load16(&p[k * 2..]);
-        let b = unaligned_load16(&p[(k - 1) * 2..]);
-        unaligned_store16(&mut p[k * 2..], a.wrapping_sub(b));
+    let row = &mut p[..n as usize * 2];
+    let mut prev = unaligned_load16(row);
+    for c in row[2..].as_chunks_mut::<2>().0 {
+        let a = unaligned_load16(c);
+        unaligned_store16(c, a.wrapping_sub(prev));
+        prev = a;
     }
 }
 
 /// Port of `delta_decode_row_u16_scalar` (src/lib/OpenEXRCore/internal_zstd_delta.c:28-37
-/// @ v3.5.3).
+/// @ v3.5.3): the running sum, each value plus the (decoded) one before it.
 pub(crate) fn delta_decode_row_u16(p: &mut [u8], n: u64) {
-    for k in 1..n as usize {
-        let a = unaligned_load16(&p[k * 2..]);
-        let b = unaligned_load16(&p[(k - 1) * 2..]);
-        unaligned_store16(&mut p[k * 2..], a.wrapping_add(b));
+    if n <= 1 {
+        return;
+    }
+    let row = &mut p[..n as usize * 2];
+    let mut prev = unaligned_load16(row);
+    for c in row[2..].as_chunks_mut::<2>().0 {
+        prev = unaligned_load16(c).wrapping_add(prev);
+        unaligned_store16(c, prev);
     }
 }
 
 /// Port of `delta_encode_row_u32_scalar` (src/lib/OpenEXRCore/internal_zstd_delta.c:39-49
-/// @ v3.5.3).
+/// @ v3.5.3), as [`delta_encode_row_u16`].
 pub(crate) fn delta_encode_row_u32(p: &mut [u8], n: u64) {
     if n <= 1 {
         return;
     }
-    for k in (1..n as usize).rev() {
-        let a = unaligned_load32(&p[k * 4..]);
-        let b = unaligned_load32(&p[(k - 1) * 4..]);
-        unaligned_store32(&mut p[k * 4..], a.wrapping_sub(b));
+    let row = &mut p[..n as usize * 4];
+    let mut prev = unaligned_load32(row);
+    for c in row[4..].as_chunks_mut::<4>().0 {
+        let a = unaligned_load32(c);
+        unaligned_store32(c, a.wrapping_sub(prev));
+        prev = a;
     }
 }
 
 /// Port of `delta_decode_row_u32_scalar` (src/lib/OpenEXRCore/internal_zstd_delta.c:51-60
-/// @ v3.5.3).
+/// @ v3.5.3), as [`delta_decode_row_u16`].
 pub(crate) fn delta_decode_row_u32(p: &mut [u8], n: u64) {
-    for k in 1..n as usize {
-        let a = unaligned_load32(&p[k * 4..]);
-        let b = unaligned_load32(&p[(k - 1) * 4..]);
-        unaligned_store32(&mut p[k * 4..], a.wrapping_add(b));
+    if n <= 1 {
+        return;
+    }
+    let row = &mut p[..n as usize * 4];
+    let mut prev = unaligned_load32(row);
+    for c in row[4..].as_chunks_mut::<4>().0 {
+        prev = unaligned_load32(c).wrapping_add(prev);
+        unaligned_store32(c, prev);
     }
 }

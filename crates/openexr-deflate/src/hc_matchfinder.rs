@@ -33,13 +33,32 @@ const NEXT_AT: usize = HASH3_SIZE + HASH4_SIZE;
 /// nodes of the linked lists of length 4 matches; and `next_tab`, the "next node" of each
 /// position in the window.
 pub(crate) struct HcMatchfinder {
-    tabs: Vec<MfPos>,
+    tabs: Box<[MfPos; TABS]>,
+}
+
+/// The three tables' length.
+const TABS: usize = NEXT_AT + WINDOW;
+
+// Indices into the tables, masked to their sizes: the masks change no index (a hash code is
+// below its table's size, `lz_hash`; a position is below the window's), but let the
+// compiler see each access is in bounds.
+#[inline]
+fn h3(hash3: usize) -> usize {
+    hash3 & (HASH3_SIZE - 1)
+}
+#[inline]
+fn h4(hash4: usize) -> usize {
+    HASH4_AT + (hash4 & (HASH4_SIZE - 1))
+}
+#[inline]
+fn nx(pos: usize) -> usize {
+    NEXT_AT + (pos & (WINDOW - 1))
 }
 
 impl HcMatchfinder {
     pub(crate) fn new() -> HcMatchfinder {
         HcMatchfinder {
-            tabs: vec![0; NEXT_AT + WINDOW],
+            tabs: vec![0; TABS].into_boxed_slice().try_into().unwrap(),
         }
     }
 
@@ -52,12 +71,12 @@ impl HcMatchfinder {
     /// Port of `hc_matchfinder_slide_window` (external/deflate/lib/hc_matchfinder.h:143-149
     /// @ libdeflate v1.26).
     fn slide_window(&mut self) {
-        matchfinder_rebase(&mut self.tabs);
+        matchfinder_rebase(&mut self.tabs[..]);
     }
 
     #[inline]
     fn next(&self, node: MfPos) -> MfPos {
-        self.tabs[NEXT_AT + (i32::from(node) & (WINDOW as i32 - 1)) as usize]
+        self.tabs[nx((i32::from(node) & (WINDOW as i32 - 1)) as usize)]
     }
 
     /// Port of `hc_matchfinder_longest_match` (external/deflate/lib/hc_matchfinder.h:182-338
@@ -105,17 +124,17 @@ impl HcMatchfinder {
             let hash4 = next_hashes[1] as usize;
 
             // From the hash buckets, get the first node of each linked list.
-            let cur_node3 = self.tabs[hash3];
-            let mut cur_node4 = self.tabs[HASH4_AT + hash4];
+            let cur_node3 = self.tabs[h3(hash3)];
+            let mut cur_node4 = self.tabs[h4(hash4)];
 
             // Update for length 3 matches. This replaces the singleton node in the 'hash3'
             // bucket with the node for the current sequence.
-            self.tabs[hash3] = cur_pos as MfPos;
+            self.tabs[h3(hash3)] = cur_pos as MfPos;
 
             // Update for length 4 matches. This prepends the node for the current sequence to
             // the linked list in the 'hash4' bucket.
-            self.tabs[HASH4_AT + hash4] = cur_pos as MfPos;
-            self.tabs[NEXT_AT + cur_pos as usize] = cur_node4;
+            self.tabs[h4(hash4)] = cur_pos as MfPos;
+            self.tabs[nx(cur_pos as usize)] = cur_node4;
 
             // Compute the next hash codes.
             let next_hashseq = load_u32(data, in_next + 1);
@@ -252,9 +271,9 @@ impl HcMatchfinder {
                 *in_base_p += WINDOW;
                 cur_pos = 0;
             }
-            self.tabs[hash3] = cur_pos as MfPos;
-            self.tabs[NEXT_AT + cur_pos as usize] = self.tabs[HASH4_AT + hash4];
-            self.tabs[HASH4_AT + hash4] = cur_pos as MfPos;
+            self.tabs[h3(hash3)] = cur_pos as MfPos;
+            self.tabs[nx(cur_pos as usize)] = self.tabs[h4(hash4)];
+            self.tabs[h4(hash4)] = cur_pos as MfPos;
 
             in_next += 1;
             let next_hashseq = load_u32(data, in_next);

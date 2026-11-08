@@ -53,7 +53,7 @@ pub(crate) fn lz_hash(seq: u32, num_bits: u32) -> u32 {
 /// `load_u32_unaligned` on little-endian x86-64: the 4 bytes at `p`.
 #[inline]
 pub(crate) fn load_u32(data: &[u8], p: usize) -> u32 {
-    u32::from_le_bytes([data[p], data[p + 1], data[p + 2], data[p + 3]])
+    u32::from_le_bytes(data[p..p + 4].try_into().unwrap())
 }
 
 /// Port of `load_u24_unaligned` (external/deflate/lib/matchfinder_common.h:34-45 @ libdeflate
