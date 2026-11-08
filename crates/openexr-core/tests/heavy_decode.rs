@@ -304,13 +304,68 @@ fn images(scratch: &Path) -> Vec<PathBuf> {
     images
 }
 
+/// Every `.exr` under `dir`, recursively.
+fn exr_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .expect("a directory")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    entries.sort();
+    for p in entries {
+        if p.is_dir() {
+            exr_files(&p, out);
+        } else if p.extension().is_some_and(|e| e == "exr") {
+            out.push(p);
+        }
+    }
+}
+
+/// The images of the decode check: [`images`], the corpus (`corpus/openexr-images`, fetched
+/// by `scripts/fetch-corpus.sh`, which the heavy tier needs), and damaged copies of all of
+/// them (`oracle/native_accept_messages.py`'s: cut, 16 bytes of a chunk set to 0xff, a chunk's
+/// size made huge), which the wheel decodes as far as it can. Files the C++ library wrote for
+/// another version, the corpus's, are not the encode checks' (their bytes are not 3.5.3's).
+fn decode_images(scratch: &Path) -> Vec<PathBuf> {
+    let mut images = images(scratch);
+    let corpus = root().join("corpus/openexr-images");
+    assert!(
+        corpus.is_dir(),
+        "{} is missing: fetch it with scripts/fetch-corpus.sh",
+        corpus.display()
+    );
+    exr_files(&corpus, &mut images);
+    let damaged = scratch.join("damaged");
+    std::fs::create_dir_all(&damaged).unwrap();
+    // (the list in a file: a command line of every path is too long for Windows)
+    let list = scratch.join("files.txt");
+    let names: Vec<String> = images
+        .iter()
+        .map(|f| f.to_string_lossy().into_owned())
+        .collect();
+    std::fs::write(&list, names.join("\n")).unwrap();
+    let script = "import sys\nsys.path.insert(0, sys.argv[1])\nimport native_accept_messages as m\nfor p in open(sys.argv[3], encoding='utf-8').read().split(chr(10)):\n    m.damaged(p, sys.argv[2])\n";
+    let mut c = Command::new("uv");
+    let status = c
+        .args(["run", "--project"])
+        .arg(root().join("oracle"))
+        .args(["python", "-I", "-c", script])
+        .arg(root().join("oracle"))
+        .arg(&damaged)
+        .arg(&list)
+        .status()
+        .expect("uv runs the oracle");
+    assert!(status.success(), "the damaged copies");
+    exr_files(&damaged, &mut images);
+    images
+}
+
 #[test]
 fn images_decode_as_the_wheel_does() {
     let scratch =
         std::env::temp_dir().join(format!("openexr_rs_heavy_decode_{}", std::process::id()));
     let (mut parts_checked, mut layouts_checked, mut parts_skipped, mut parts_refused) =
         (0, 0, 0, 0);
-    for (n, image) in images(&scratch).iter().enumerate() {
+    for (n, image) in decode_images(&scratch).iter().enumerate() {
         let out = scratch.join(n.to_string());
         let wheel = oracle(image, &out);
         let path = image.to_str().expect("utf-8 path");
@@ -339,6 +394,13 @@ fn images_decode_as_the_wheel_does() {
                     "{}: part {p}: the wheel reads it, the port fails: {e}",
                     image.display()
                 ),
+                // the C++ library refuses a part whose chunk table Core does not validate
+                // (ImfInputFile.cpp:439, ImfContext.cpp:858-861 @ v3.5.3, "Unable to use generic API to read with
+                // (partially?) corrupt chunk table"), where Core reads the chunks there are
+                Ok(Some(_)) if !wheel_read_it && f.validate_chunk_table(p).is_err() => {
+                    parts_refused += 1;
+                    continue;
+                }
                 Ok(Some(_)) if !wheel_read_it => {
                     panic!(
                         "{}: part {p}: the port decodes it, the wheel could not",
@@ -375,7 +437,7 @@ fn images_decode_as_the_wheel_does() {
     }
     let _ = std::fs::remove_dir_all(&scratch);
     eprintln!(
-        "parts compared: {parts_checked} ({layouts_checked} layouts); refused by both: {parts_refused}; parts for later phases: {parts_skipped}"
+        "parts compared: {parts_checked} ({layouts_checked} layouts); refused by both: {parts_refused}; deep parts (heavy_deep.rs): {parts_skipped}"
     );
     assert!(parts_checked > 0);
 }

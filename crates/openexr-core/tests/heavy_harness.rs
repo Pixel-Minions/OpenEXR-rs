@@ -114,6 +114,18 @@ fn exr_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The corpus (`corpus/openexr-images`, fetched by `scripts/fetch-corpus.sh`), which the heavy
+/// tier needs.
+fn corpus() -> PathBuf {
+    let c = root().join("corpus/openexr-images");
+    assert!(
+        c.is_dir(),
+        "{} is missing: fetch it with scripts/fetch-corpus.sh",
+        c.display()
+    );
+    c
+}
+
 /// The images to read: upstream's test tree and `write_images.py`'s, and their damaged copies.
 fn read_set(scratch: &Path) -> Vec<PathBuf> {
     let written = scratch.join("written");
@@ -123,6 +135,7 @@ fn read_set(scratch: &Path) -> Vec<PathBuf> {
     write_images(&written);
     let mut files = Vec::new();
     exr_files(&root().join("upstream/openexr/src/test"), &mut files);
+    exr_files(&corpus(), &mut files);
     exr_files(&written, &mut files);
     // the damaged copies native_accept_messages.py checks the harness on
     // (the list in a file: a command line of every path is too long for Windows)
@@ -754,6 +767,14 @@ fn files_written_by_core_alone_as_core_writes_them() {
     let mut upstream = Vec::new();
     exr_files(&root().join("upstream/openexr/src/test"), &mut upstream);
     sources.extend(upstream.into_iter().filter(|p| clean_source(p)));
+    // the corpus's, each compression at its default level (its images are large)
+    let mut from_corpus = Vec::new();
+    exr_files(&corpus(), &mut from_corpus);
+    let corpus_sources: Vec<PathBuf> = from_corpus
+        .into_iter()
+        .filter(|p| clean_source(p))
+        .collect();
+    sources.extend(corpus_sources.iter().cloned());
 
     let mut runs: Vec<(Compression, Level)> =
         COMPRESSIONS.iter().map(|c| (c.0, Level::Default)).collect();
@@ -780,7 +801,14 @@ fn files_written_by_core_alone_as_core_writes_them() {
             .replace("_NO_COMPRESSION.exr", "");
         let src =
             Context::start_read(Some(src_path.to_str().unwrap()), None).expect("the port reads it");
-        for &(comp, level) in &runs {
+        let defaults: Vec<(Compression, Level)> =
+            COMPRESSIONS.iter().map(|c| (c.0, Level::Default)).collect();
+        let these = if corpus_sources.contains(src_path) {
+            &defaults
+        } else {
+            &runs
+        };
+        for &(comp, level) in these {
             let mut cmd = Command::new(harness());
             cmd.arg("recompress")
                 .arg(src_path)

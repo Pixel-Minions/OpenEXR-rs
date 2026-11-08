@@ -51,6 +51,7 @@ type Compressed = (Vec<u8>, bool);
 
 /// A deep channel as the wheel decoded it: its pixels' sample counts and its samples.
 struct OracleChannel {
+    part: i32,
     name: Vec<u8>,
     counts: Vec<u32>,
     samples: Vec<u8>,
@@ -88,6 +89,7 @@ fn oracle(image: &Path, out: &Path) -> Vec<OracleChannel> {
         assert!(cols[3].starts_with("deep-"), "a deep channel");
         let counts = std::fs::read(out.join(cols[8].replace(".bin", ".counts"))).expect("counts");
         chans.push(OracleChannel {
+            part: cols[0].parse().expect("a part"),
             name: unhex(cols[2]),
             counts: counts
                 .as_chunks::<4>()
@@ -108,37 +110,42 @@ fn oracle(image: &Path, out: &Path) -> Vec<OracleChannel> {
 /// table is a buffer of its own, each pixel's pointer naming its samples' place in the
 /// channel's sample buffer, the pixels laid out backwards there.
 fn decode(f: &Context, pointers: bool) -> Result<(PixelSamples, Vec<u32>), Error> {
-    let dw = f.get_data_window(0)?;
+    decode_part(f, 0, pointers)
+}
+
+/// Part `p` decoded by the port, as [`decode`] decodes part 0.
+fn decode_part(f: &Context, p: i32, pointers: bool) -> Result<(PixelSamples, Vec<u32>), Error> {
+    let dw = f.get_data_window(p)?;
     let (w, h) = (
         (dw.max.x - dw.min.x + 1) as usize,
         (dw.max.y - dw.min.y + 1) as usize,
     );
-    let nchan = f.get_channels(0)?.entries().len();
+    let nchan = f.get_channels(p)?.entries().len();
     let mut pixels: Vec<Vec<Vec<u8>>> = vec![vec![Vec::new(); w * h]; nchan];
     let mut counts = vec![0u32; w * h];
 
     // the chunks, each with its first pixel in the data window
     let mut chunks = Vec::new();
-    if f.get_storage(0)? == Storage::DEEP_SCANLINE {
-        let lpc = f.get_scanlines_per_chunk(0)?;
+    if f.get_storage(p)? == Storage::DEEP_SCANLINE {
+        let lpc = f.get_scanlines_per_chunk(p)?;
         let mut y = dw.min.y;
         while y <= dw.max.y {
             chunks.push((
                 0usize,
                 (y - dw.min.y) as usize,
-                f.read_scanline_chunk_info(0, y)?,
+                f.read_scanline_chunk_info(p, y)?,
             ));
             y += lpc;
         }
     } else {
-        let (tw, th, _, _) = f.get_tile_descriptor(0)?;
-        let (cx, cy) = f.get_tile_counts(0, 0, 0)?;
+        let (tw, th, _, _) = f.get_tile_descriptor(p)?;
+        let (cx, cy) = f.get_tile_counts(p, 0, 0)?;
         for ty in 0..cy {
             for tx in 0..cx {
                 chunks.push((
                     (tx as u32 * tw) as usize,
                     (ty as u32 * th) as usize,
-                    f.read_tile_chunk_info(0, tx, ty, 0, 0)?,
+                    f.read_tile_chunk_info(p, tx, ty, 0, 0)?,
                 ));
             }
         }
@@ -148,10 +155,10 @@ fn decode(f: &Context, pointers: bool) -> Result<(PixelSamples, Vec<u32>), Error
         let (cw, ch) = (cinfo.width as usize, cinfo.height as usize);
         // the chunk's samples: a first run without outputs decodes its sample count table,
         // whose individual counts end with their total
-        let mut dec = f.decoding_initialize(0, &cinfo)?;
+        let mut dec = f.decoding_initialize(p, &cinfo)?;
         dec.decode_flags |= EXR_DECODE_SAMPLE_COUNTS_AS_INDIVIDUAL;
-        f.decoding_choose_default_routines(0, &mut dec)?;
-        f.decoding_run(0, &mut dec, &mut [])?;
+        f.decoding_choose_default_routines(p, &mut dec)?;
+        f.decoding_run(p, &mut dec, &mut [])?;
         let samp: Vec<u32> = dec
             .sample_counts()
             .as_chunks::<4>()
@@ -175,7 +182,7 @@ fn decode(f: &Context, pointers: bool) -> Result<(PixelSamples, Vec<u32>), Error
             acc += samp[p] as usize;
         }
 
-        let mut dec = f.decoding_initialize(0, &cinfo)?;
+        let mut dec = f.decoding_initialize(p, &cinfo)?;
         dec.decode_flags |= EXR_DECODE_SAMPLE_COUNTS_AS_INDIVIDUAL;
         if pointers {
             dec.decode_flags |= EXR_DECODE_NON_IMAGE_DATA_AS_POINTERS;
@@ -211,9 +218,9 @@ fn decode(f: &Context, pointers: bool) -> Result<(PixelSamples, Vec<u32>), Error
             }
             bufs.push(vec![0u8; total * bpe]);
         }
-        f.decoding_choose_default_routines(0, &mut dec)?;
+        f.decoding_choose_default_routines(p, &mut dec)?;
         let mut outs: Vec<&mut [u8]> = bufs.iter_mut().map(|b| &mut b[..]).collect();
-        f.decoding_run(0, &mut dec, &mut outs)?;
+        f.decoding_run(p, &mut dec, &mut outs)?;
 
         let samp: Vec<u32> = dec
             .sample_counts()
@@ -541,4 +548,193 @@ fn deep_chunks_compress_as_the_wheel_wrote_them() {
     let _ = std::fs::remove_dir_all(&scratch);
     eprintln!("deep files re-encoded: {files} ({chunks_compared} chunks)");
     assert!(files > 0);
+}
+
+/// The wheel's deep channels of every part of `image` it reads, or `None` when it refuses the
+/// file: [`oracle`] for files the wheel may refuse or only partly read, whose other channels
+/// are left out.
+fn oracle_lenient(image: &Path, out: &Path) -> Option<Vec<OracleChannel>> {
+    let status = oracle_script("oracle/dump_pixels.py")
+        .arg(image)
+        .arg(out)
+        .status()
+        .expect("uv runs the oracle");
+    if !status.success() {
+        return None;
+    }
+    let manifest = std::fs::read_to_string(out.join("manifest.tsv")).ok()?;
+    let mut chans = Vec::new();
+    for line in manifest.lines().filter(|l| !l.is_empty()) {
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols[0] == "error" {
+            return None;
+        }
+        if !cols[3].starts_with("deep-") {
+            continue;
+        }
+        let counts = std::fs::read(out.join(cols[8].replace(".bin", ".counts"))).expect("counts");
+        chans.push(OracleChannel {
+            part: cols[0].parse().expect("a part"),
+            name: unhex(cols[2]),
+            counts: counts
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| u32::from_ne_bytes(*b))
+                .collect(),
+            samples: std::fs::read(out.join(cols[8])).expect("samples"),
+        });
+    }
+    Some(chans)
+}
+
+/// Every `.exr` under `dir`, recursively.
+fn exr_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .expect("a directory")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    entries.sort();
+    for p in entries {
+        if p.is_dir() {
+            exr_files(&p, out);
+        } else if p.extension().is_some_and(|e| e == "exr") {
+            out.push(p);
+        }
+    }
+}
+
+/// The deep parts of `f`.
+fn deep_parts(f: &Context) -> Vec<i32> {
+    (0..f.get_count())
+        .filter(|&p| {
+            matches!(
+                f.get_storage(p),
+                Ok(Storage::DEEP_SCANLINE) | Ok(Storage::DEEP_TILED)
+            )
+        })
+        .collect()
+}
+
+/// Heavy tier: the deep files of upstream's test tree and of the corpus
+/// (`corpus/openexr-images`, `scripts/fetch-corpus.sh`), and damaged copies of them
+/// (`oracle/native_accept_messages.py`'s), decode as the wheel decodes them, part by part, with
+/// and without pointer tables. A part the wheel reads and the port refuses fails, and so does
+/// one the port reads and the wheel refuses, unless Core does not validate its chunk table,
+/// which the C++ library refuses (`ImfDeepScanLineInputFile.cpp:294`,
+/// `ImfDeepTiledInputFile.cpp:312` @ v3.5.3).
+#[test]
+fn existing_deep_files_decode_as_the_wheel_does() {
+    let scratch = std::env::temp_dir().join(format!(
+        "openexr_rs_heavy_deep_existing_{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&scratch).expect("scratch");
+    let corpus = root().join("corpus/openexr-images");
+    assert!(
+        corpus.is_dir(),
+        "{} is missing: fetch it with scripts/fetch-corpus.sh",
+        corpus.display()
+    );
+    let mut all = Vec::new();
+    exr_files(&root().join("upstream/openexr/src/test"), &mut all);
+    exr_files(&corpus, &mut all);
+    let mut files: Vec<PathBuf> = all
+        .into_iter()
+        .filter(|p| {
+            Context::start_read(Some(p.to_str().unwrap()), None)
+                .is_ok_and(|f| !deep_parts(&f).is_empty())
+        })
+        .collect();
+    // damaged copies, as the decode check makes them
+    let damaged = scratch.join("damaged");
+    std::fs::create_dir_all(&damaged).unwrap();
+    let list = scratch.join("files.txt");
+    let names: Vec<String> = files
+        .iter()
+        .map(|f| f.to_string_lossy().into_owned())
+        .collect();
+    std::fs::write(&list, names.join("\n")).unwrap();
+    let script = "import sys\nsys.path.insert(0, sys.argv[1])\nimport native_accept_messages as m\nfor p in open(sys.argv[3], encoding='utf-8').read().split(chr(10)):\n    m.damaged(p, sys.argv[2])\n";
+    let status = Command::new("uv")
+        .args(["run", "--project"])
+        .arg(root().join("oracle"))
+        .args(["python", "-I", "-c", script])
+        .arg(root().join("oracle"))
+        .arg(&damaged)
+        .arg(&list)
+        .status()
+        .expect("uv runs the oracle");
+    assert!(status.success(), "the damaged copies");
+    exr_files(&damaged, &mut files);
+
+    let (mut compared, mut refused) = (0, 0);
+    for (n, image) in files.iter().enumerate() {
+        let wheel = oracle_lenient(image, &scratch.join(format!("dump{n}")));
+        let Ok(f) = Context::start_read(Some(image.to_str().unwrap()), None) else {
+            assert!(
+                wheel.as_ref().is_none_or(|w| w.is_empty()),
+                "{}: the wheel reads it, the port refuses it",
+                image.display()
+            );
+            continue;
+        };
+        let wheel = wheel.unwrap_or_default();
+        for p in deep_parts(&f) {
+            let wheel_part: Vec<&OracleChannel> = wheel.iter().filter(|c| c.part == p).collect();
+            let names: Vec<Vec<u8>> = f
+                .get_channels(p)
+                .unwrap()
+                .entries()
+                .iter()
+                .map(|c| c.name.c_str().to_vec())
+                .collect();
+            for pointers in [false, true] {
+                match (wheel_part.is_empty(), decode_part(&f, p, pointers)) {
+                    (true, Err(_)) => refused += 1,
+                    (true, Ok(_)) if f.validate_chunk_table(p).is_err() => refused += 1,
+                    (true, Ok(_)) => panic!(
+                        "{}: part {p}: the port decodes it, the wheel could not",
+                        image.display()
+                    ),
+                    (false, Err(e)) => panic!(
+                        "{}: part {p}: the wheel reads it, the port fails: {e}",
+                        image.display()
+                    ),
+                    (false, Ok((pixels, counts))) => {
+                        for (i, name) in names.iter().enumerate() {
+                            let n = String::from_utf8_lossy(name);
+                            let w =
+                                wheel_part
+                                    .iter()
+                                    .find(|c| &c.name == name)
+                                    .unwrap_or_else(|| {
+                                        panic!(
+                                            "{}: part {p}: channel {n} not in the wheel's",
+                                            image.display()
+                                        )
+                                    });
+                            assert!(
+                                w.counts == counts,
+                                "{}: part {p}: channel {n} (pointers {pointers}): sample counts differ",
+                                image.display()
+                            );
+                            assert!(
+                                w.samples == pixels[i].concat(),
+                                "{}: part {p}: channel {n} (pointers {pointers}): samples differ",
+                                image.display()
+                            );
+                        }
+                        compared += 1;
+                    }
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&scratch);
+    eprintln!(
+        "deep files: {}, parts compared: {compared}, refused by both: {refused}",
+        files.len()
+    );
+    assert!(compared > 0);
 }
