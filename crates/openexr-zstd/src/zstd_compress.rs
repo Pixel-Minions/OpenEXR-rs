@@ -14,9 +14,10 @@
 //! XORed into the whole hash, which relabels the rows and the tags without changing which
 //! positions share them; it only tells upstream's leftover tags from new ones.
 //!
-//! The block compressors ported are the greedy, lazy and lazy2 ones (levels 4 to 12, by
-//! input size, Core's default 5 at every size); a level whose parameters choose another strategy returns
-//! `ParameterUnsupported` until its compressor is ported (docs/deferred.md). Streaming,
+//! The block compressors ported are the fast, dfast, greedy, lazy and lazy2 ones (levels 1 to
+//! 12, by input size, Core's default 5 at every size); a level whose parameters choose a binary
+//! tree strategy returns `ParameterUnsupported` until its compressor is ported
+//! (docs/deferred.md). Streaming,
 //! dictionaries, long-distance matching, the post-block splitter, external sequence producers
 //! and the multithreaded mode are n/a: `ZSTD_compressCCtx` never uses them at these levels.
 
@@ -29,7 +30,8 @@ use crate::zstd_compress_internal::{
     CParams, DEFAULT_MAX_OFF, EntropyCTables, FseCTables, FseRepeat, LL_DEFAULT_NORM,
     LL_DEFAULT_NORM_LOG, LongLengthType, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG, MatchState,
     OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG, SET_COMPRESSED, SeqStore, Strategy, Window, ZSTD_BTLAZY2,
-    ZSTD_BTOPT, ZSTD_GREEDY, ZSTD_LAZY2, ZSTD_ROW_HASH_CACHE_SIZE, ll_code, min_gain, ml_code,
+    ZSTD_BTOPT, ZSTD_DFAST, ZSTD_FAST, ZSTD_GREEDY, ZSTD_LAZY2, ZSTD_ROW_HASH_CACHE_SIZE, ll_code,
+    min_gain, ml_code,
 };
 use crate::zstd_compress_literals::zstd_compress_literals;
 use crate::zstd_compress_sequences::{
@@ -39,6 +41,8 @@ use crate::zstd_decompress_internal::{
     BLOCK_HEADER_SIZE, LL_FSE_LOG, LONGNBSEQ, MAX_LL, MAX_ML, MAX_OFF, MAX_SEQ, MIN_CBLOCK_SIZE,
     ML_FSE_LOG, OFF_FSE_LOG, REP_START_VALUE,
 };
+use crate::zstd_double_fast::compress_block_double_fast;
+use crate::zstd_fast::compress_block_fast;
 use crate::zstd_lazy::{ZSTD_ROW_HASH_TAG_BITS, bounded_4_6, compress_block_lazy};
 use crate::zstd_pre_split::zstd_split_block;
 
@@ -374,8 +378,8 @@ impl CCtx {
         compression_level: i32,
     ) -> ZResult<usize> {
         let cparams = get_cparams_internal(compression_level, src.len() as u64);
-        if !(ZSTD_GREEDY..=ZSTD_LAZY2).contains(&cparams.strategy) {
-            // fast, dfast and the binary tree strategies: not ported yet (docs/deferred.md)
+        if !(ZSTD_FAST..=ZSTD_LAZY2).contains(&cparams.strategy) {
+            // the binary tree strategies: not ported yet (docs/deferred.md)
             return Err(ErrorCode::ParameterUnsupported);
         }
         if src.len() as u64 >= ZSTD_CURRENT_MAX {
@@ -559,17 +563,28 @@ impl CCtx {
         let prev_rep = self.blocks[self.prev].rep;
         self.blocks[next].rep = prev_rep;
         let row = self.use_row_match_finder && row_match_finder_supported(self.cparams.strategy);
-        let depth = self.cparams.strategy - ZSTD_GREEDY;
-        let last_ll_size = compress_block_lazy(
+        // ZSTD_selectBlockCompressor (lines 3065-3152), without a dictionary
+        let (ms, seq_store, rep) = (
             &mut self.ms,
             &mut self.seq_store,
             &mut self.blocks[next].rep,
-            src,
-            istart,
-            istart + src_size,
-            row,
-            depth,
         );
+        let last_ll_size = match self.cparams.strategy {
+            ZSTD_FAST => compress_block_fast(ms, seq_store, rep, src, istart, istart + src_size),
+            ZSTD_DFAST => {
+                compress_block_double_fast(ms, seq_store, rep, src, istart, istart + src_size)
+            }
+            s => compress_block_lazy(
+                ms,
+                seq_store,
+                rep,
+                src,
+                istart,
+                istart + src_size,
+                row,
+                s - ZSTD_GREEDY,
+            ),
+        };
         let last_literals = istart + src_size - last_ll_size;
         self.seq_store
             .lit
@@ -968,7 +983,7 @@ mod tests {
         ] {
             for level in 1..=ZSTD_MAX_CLEVEL {
                 let s = get_cparams_internal(level, len as u64).strategy;
-                if (ZSTD_GREEDY..=ZSTD_LAZY2).contains(&s) {
+                if (ZSTD_FAST..=ZSTD_LAZY2).contains(&s) {
                     round_trip(&mut cctx, &image_like(len, len as u32), level);
                 }
             }
@@ -981,10 +996,6 @@ mod tests {
     fn unported_strategies_are_refused() {
         let mut cctx = CCtx::new();
         let mut dst = vec![0u8; 1024];
-        assert_eq!(
-            cctx.compress_cctx(&mut dst, &[1, 2, 3], 1),
-            Err(ErrorCode::ParameterUnsupported)
-        );
         assert_eq!(
             cctx.compress_cctx(&mut dst, &[1, 2, 3], 19),
             Err(ErrorCode::ParameterUnsupported)

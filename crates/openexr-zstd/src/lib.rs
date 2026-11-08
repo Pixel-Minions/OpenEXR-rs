@@ -36,6 +36,8 @@ mod zstd_compress_sequences;
 mod zstd_decompress;
 mod zstd_decompress_block;
 mod zstd_decompress_internal;
+mod zstd_double_fast;
+mod zstd_fast;
 #[allow(dead_code)] // the compressor's, used with zstd_compress.c
 mod zstd_lazy;
 #[allow(dead_code)] // the compressor's, used with zstd_compress.c

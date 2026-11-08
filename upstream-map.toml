@@ -1119,7 +1119,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_double_fast.c"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_double_fast.rs"
+note = "the dfast block compressor without a dictionary; the dictionary modes n/a (ZSTD_compressCCtx uses none); Core-only ZSTD rewrites at the dfast levels equal Core's own (tests/heavy_harness.rs)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_double_fast.h"
@@ -1129,7 +1131,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_fast.c"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_fast.rs"
+note = "the fast block compressor without a dictionary (cmov and branch variants find the same matches); the dictionary modes n/a (ZSTD_compressCCtx uses none); Core-only ZSTD rewrites at the fast levels equal Core's own (tests/heavy_harness.rs)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_fast.h"
