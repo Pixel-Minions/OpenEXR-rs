@@ -198,7 +198,17 @@ pub(crate) fn get_cpu_ext_level() -> i32 {
 #[inline]
 pub(crate) fn cvt_f32_i32(f: f32) -> i32 {
     if f >= -2147483648.0 && f < 2147483648.0 {
-        f.round_ties_even() as i32
+        // round to nearest, ties to even, without the library call `round_ties_even` is on
+        // x86-64 without SSE4.1: below 2^23, adding 2^23 rounds the magnitude to an integer
+        // (the sum's spacing is 1, and 2^23 is even, so a tie goes to the even integer), and
+        // subtracting it back is exact; from 2^23 on, every float is an integer already
+        let a = f.abs();
+        let r = if a < 8388608.0 {
+            ((a + 8388608.0) - 8388608.0).copysign(f)
+        } else {
+            f
+        };
+        r as i32
     } else {
         i32::MIN
     }
