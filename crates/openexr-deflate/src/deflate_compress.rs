@@ -743,10 +743,13 @@ fn adjust_max_and_nice_len(max_len: &mut u32, nice_len: &mut u32, remaining: usi
 /// number of different literals the data uses.
 fn choose_min_match_len(num_used_literals: u32, max_search_depth: u32) -> u32 {
     // map from num_used_literals to min_len
+    #[rustfmt::skip]
     const MIN_LENS: [u8; 80] = [
-        9, 9, 9, 9, 9, 9, 8, 8, 7, 7, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
-        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
-        4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+        9, 9, 9, 9, 9, 9, 8, 8, 7, 7, 6, 6, 6, 6, 6, 6,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+        5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 4, 4, 4,
+        4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+        4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
     ];
     // (the rest is implicitly 3)
     if num_used_literals as usize >= MIN_LENS.len() {
@@ -1984,4 +1987,43 @@ pub fn deflate_compress_bound(in_nbytes: usize) -> usize {
     // and NLEN fields; empty inputs need 1 (empty) block.
     let max_blocks = in_nbytes.div_ceil(MIN_BLOCK_LENGTH).max(1);
     5usize.wrapping_mul(max_blocks).wrapping_add(in_nbytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `min_lens` as upstream writes it (external/deflate/lib/deflate_compress.c:2299-2306
+    /// @ libdeflate v1.26), read from the source.
+    fn upstream_min_lens() -> Vec<u32> {
+        let src = include_str!("../../../upstream/openexr/external/deflate/lib/deflate_compress.c");
+        let start = src
+            .find("static const u8 min_lens[] = {")
+            .expect("min_lens")
+            + "static const u8 min_lens[] = {".len();
+        let body = &src[start..start + src[start..].find("};").expect("its end")];
+        let mut values = Vec::new();
+        for line in body.lines() {
+            let line = line.split("/*").next().unwrap_or("");
+            for v in line.split(',') {
+                let v = v.trim();
+                if !v.is_empty() {
+                    values.push(v.parse().expect("a number"));
+                }
+            }
+        }
+        values
+    }
+
+    /// `choose_min_match_len` gives upstream's table entry for every literal count (and 3
+    /// past it), at a search depth that leaves it unchanged.
+    #[test]
+    fn min_match_len_table_is_upstreams() {
+        let table = upstream_min_lens();
+        assert_eq!(table.len(), 80);
+        for n in 0..=256u32 {
+            let want = table.get(n as usize).copied().unwrap_or(3);
+            assert_eq!(choose_min_match_len(n, 16), want, "{n} literals");
+        }
+    }
 }
