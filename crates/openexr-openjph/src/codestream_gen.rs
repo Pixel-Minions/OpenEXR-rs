@@ -44,6 +44,7 @@ pub(crate) fn rev_tx_to_cb32(
 
 /// Port of `gen_rev_tx_to_cb64`
 /// (external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp:81-100 @ OpenJPH 0.32.0).
+#[inline(always)]
 pub(crate) fn rev_tx_to_cb64(
     sp: &[i64],
     dp: &mut [u64],
@@ -121,6 +122,7 @@ pub(crate) fn rev_tx_from_cb32(sp: &[u32], dp: &mut [i32], k_max: u32, count: u3
 
 /// Port of `gen_rev_tx_from_cb64`
 /// (external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp:140-153 @ OpenJPH 0.32.0).
+#[inline(always)]
 pub(crate) fn rev_tx_from_cb64(sp: &[u64], dp: &mut [i64], k_max: u32, count: u32) {
     let shift = 63 - k_max;
     for (d, &v) in dp[..count as usize].iter_mut().zip(sp) {

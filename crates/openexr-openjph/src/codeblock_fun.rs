@@ -78,7 +78,7 @@ impl CodeblockFun {
         }
     }
 
-    /// `tx_to_cb64` of an integer line: `gen_rev_tx_to_cb64`.
+    /// `tx_to_cb64` of an integer line: `gen_rev_tx_to_cb64`, or AVX2's (the same samples).
     pub(crate) fn tx_to_cb64_i(
         &self,
         sp: &[i64],
@@ -88,6 +88,10 @@ impl CodeblockFun {
         max_val: &mut u64,
     ) {
         debug_assert!(self.reversible);
+        #[cfg(target_arch = "x86_64")]
+        if avx2_level() && crate::codestream_avx2::rev_tx_to_cb64(sp, dp, k_max, count, max_val) {
+            return;
+        }
         cg::rev_tx_to_cb64(sp, dp, k_max, count, max_val);
     }
 
@@ -111,9 +115,14 @@ impl CodeblockFun {
         cg::irv_tx_from_cb32(sp, dp, delta, count);
     }
 
-    /// `tx_from_cb64` into an integer line: `gen_rev_tx_from_cb64`.
+    /// `tx_from_cb64` into an integer line: `gen_rev_tx_from_cb64`, or AVX2's (the same
+    /// samples).
     pub(crate) fn tx_from_cb64_i(&self, sp: &[u64], dp: &mut [i64], k_max: u32, count: u32) {
         debug_assert!(self.reversible);
+        #[cfg(target_arch = "x86_64")]
+        if avx2_level() && crate::codestream_avx2::rev_tx_from_cb64(sp, dp, k_max, count) {
+            return;
+        }
         cg::rev_tx_from_cb64(sp, dp, k_max, count);
     }
 
