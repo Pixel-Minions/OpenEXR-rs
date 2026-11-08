@@ -769,7 +769,7 @@ fn files_written_by_core_alone_as_core_writes_them() {
         runs.push((Compression::DWAB, Level::Dwa(l)));
     }
 
-    let (mut compared, mut unported, mut deviations, mut differing) = (0, 0, 0, Vec::new());
+    let (mut compared, mut deviations, mut differing) = (0, 0, Vec::new());
     // both write to the same name, which Core's messages carry
     let out = scratch.join("rewrite.exr");
     for src_path in &sources {
@@ -847,12 +847,6 @@ fn files_written_by_core_alone_as_core_writes_them() {
                 continue;
             }
             if let Err(e) = &port {
-                if matches!(level, Level::Zstd(_))
-                    && e.code == openexr_core::errors::ErrorCode::CompressionFailed
-                {
-                    unported += 1; // zstd's strategies not yet ported (docs/deferred.md)
-                    continue;
-                }
                 differing.push(format!(
                     "{what}: the port failed: {:?} {}",
                     e.code,
@@ -907,7 +901,7 @@ fn files_written_by_core_alone_as_core_writes_them() {
         eprintln!("{d}");
     }
     eprintln!(
-        "rewrites compared: {compared}; the port's deviations: {deviations}; zstd levels not yet ported: {unported}; differing: {}",
+        "rewrites compared: {compared}; the port's deviations: {deviations}; differing: {}",
         differing.len()
     );
     assert!(compared > 0);

@@ -1068,7 +1068,7 @@ path = "external/zstd/lib/compress/zstd_compress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/zstd_compress.rs"
-note = "ZSTD_compressCCtx and ZSTD_compressBound for the greedy, lazy and lazy2 strategies (Core's default level at every size), each frame on a fresh window (equivalent: upstream's leftovers lie below the cleared window's low limit); the other strategies answer ParameterUnsupported and frames over 3.5 GB SrcSizeWrong (docs/deferred.md); streaming, dictionaries, LDM, the post-block splitter and the multithreaded mode are n/a for Core; checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
+note = "ZSTD_compressCCtx and ZSTD_compressBound at every level (fast to btultra2, with the post-block splitter), each frame on a fresh window (equivalent: upstream's leftovers lie below the cleared window's low limit); Core-only rewrites at every level equal Core's own (tests/heavy_harness.rs); frames over 3.5 GB answer SrcSizeWrong (the index overflow correction, docs/deferred.md); streaming, dictionaries, LDM, sequence producers and multithreading n/a"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_internal.h"
@@ -1170,9 +1170,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_opt.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_opt.rs"
-note = "the optimal parsers (btopt, btultra, btultra2 with its first-block pass) over the binary tree, without a dictionary or long distance matching (n/a: ZSTD_compressCCtx uses none, and LDM needs a 2^27 window); Core-only ZSTD rewrites at these levels equal Core's own (tests/heavy_harness.rs) where the window is under 2^17; larger windows wait for the post-block splitter (zstd_compress.c)"
+note = "the optimal parsers (btopt, btultra, btultra2 with its first-block pass) over the binary tree, without a dictionary or long distance matching (n/a: ZSTD_compressCCtx uses none, and LDM needs a 2^27 window); Core-only ZSTD rewrites at these levels equal Core's own (tests/heavy_harness.rs)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_opt.h"
