@@ -119,3 +119,15 @@ reach, and only where it reproduces the wheel:
 |---|---|---|
 | `oracle/native_accept.py`: every layout of `oracle/write_images.py`, rewritten from its uncompressed copy into each of the 14 compressions by Core alone, against the wheel's own file of that compression, chunk by chunk | 2145 chunks byte-identical; 46 not, all from two upstream bugs of Core's writer, where the harness is not accepted: I-14 (the `attrs` layout's bytes attribute, which Core refuses to write) and I-23 (B44 and B44A on parts without half channels) | pending |
 | `oracle/native_accept_messages.py`: the 53 images of upstream's test tree and the `write_images.py` set, each also cut, with 16 bytes of its first chunk set to 0xff, and with its first chunk's size set to 0x7fffffff: every Core message the wheel prints is printed by the harness, byte for byte | 1300 files, 627 with messages from the wheel, none missed | pending |
+
+The port is checked against it by `crates/openexr-core/tests/heavy_harness.rs` (heavy tier,
+Windows, 2026-11-07): every image of upstream's test tree and of `write_images.py`, whole and
+damaged as above (1278 files), opened and read chunk by chunk as `core_harness info --read`
+does, per-chunk results, a digest (FNV-1a 64) of every decoded chunk's bytes, and Core's and
+OpenJPH's messages, line for line, with header parsing silent and not; and
+`exr_print_context_info`'s verbose text, byte for byte: identical but for the lines of the
+waived deviations D-4 (178) and D-6 (5). Every `write_images.py` layout rewritten by Core
+alone into each compression, ZIP and ZIPS at levels 0-9, ZSTD at -1 to 22, DWAA and DWAB at
+five levels: the header byte for byte and every chunk by index, 973 rewrites identical; left
+out, D-10 and D-18 (76), and the ZSTD levels whose strategies are not yet ported (321).
+

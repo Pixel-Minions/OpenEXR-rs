@@ -272,13 +272,11 @@ pub enum DefaultWriteMode {
     IntermediateTempFile = 1,
 }
 
-/// Port of `default_error_handler` (src/lib/OpenEXRCore/internal_structs.c:28-79 @ v3.5.3): one
-/// line on stderr, under a process-wide lock.
-fn default_error_handler(r: &ErrorReport<'_>) {
-    static LOCK: Mutex<()> = Mutex::new(());
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+/// The line `default_error_handler` prints for `r` (src/lib/OpenEXRCore/internal_structs.c:28-79
+/// @ v3.5.3), newline included: for a handler of the caller's that wants Core's own text.
+pub fn default_error_line(r: &ErrorReport<'_>) -> Vec<u8> {
     let name = get_error_code_as_string(r.code);
-    let line = if r.has_context {
+    if r.has_context {
         match r.file_name {
             Some(f) => cfmt::sprintf(
                 Crt::NATIVE,
@@ -297,7 +295,15 @@ fn default_error_handler(r: &ErrorReport<'_>) {
         }
     } else {
         cfmt::sprintf(Crt::NATIVE, "<ERROR>: %s\n", &[Arg::Str(r.message)])
-    };
+    }
+}
+
+/// Port of `default_error_handler` (src/lib/OpenEXRCore/internal_structs.c:28-79 @ v3.5.3): one
+/// line on stderr, under a process-wide lock.
+fn default_error_handler(r: &ErrorReport<'_>) {
+    static LOCK: Mutex<()> = Mutex::new(());
+    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let line = default_error_line(r);
     let mut err = std::io::stderr().lock();
     let _ = err.write_all(&line);
     let _ = err.flush();
