@@ -113,7 +113,7 @@ fn vcvtps2ph(f: f32) -> u16 {
 
 /// `vcvtph2ps` of one value: exact, as Imath's conversion, except that a signaling NaN is
 /// quieted (bit 22 set).
-fn vcvtph2ps(h: u16) -> f32 {
+pub(crate) fn vcvtph2ps(h: u16) -> f32 {
     if (h & 0x7c00) == 0x7c00 && (h & 0x03ff) != 0 {
         let sign = u32::from(h & 0x8000) << 16;
         return f32::from_bits(sign | 0x7fc0_0000 | (u32::from(h & 0x03ff) << 13));

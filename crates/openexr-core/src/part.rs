@@ -143,6 +143,39 @@ impl Context {
         ))
     }
 
+    /// Port of `exr_get_chunk_table` (src/lib/OpenEXRCore/part.c:447-468 @ v3.5.3): the part's
+    /// chunk table, read from the file on first use, and its chunk count. Upstream keeps a
+    /// write context's lock on return (U-21); the port has no locks.
+    pub fn get_chunk_table(&self, part_index: i32) -> Result<(&[u64], i32), Error> {
+        let count = self.get_chunk_count(part_index)?;
+        // need to read from the file to get the packed chunk size
+        let (table, _chunkmin) = self.extract_chunk_table(part_index as usize)?;
+        Ok((table, count))
+    }
+
+    /// Port of `exr_validate_chunk_table` (src/lib/OpenEXRCore/part.c:472-502 @ v3.5.3):
+    /// `EXR_ERR_INCOMPLETE_CHUNK_TABLE` unless every chunk offset lies after the chunk table
+    /// and inside the file. Upstream keeps a write context's lock on return (U-21).
+    pub fn validate_chunk_table(&self, part_index: i32) -> Result<(), Error> {
+        let part = self.part_ref(part_index)?;
+        // need to read from the file to get the packed chunk size
+        let (ctable, chunkmin) = self.extract_chunk_table(part_index as usize)?;
+
+        let maxoff = if self.file_size > 0 {
+            self.file_size as u64
+        } else {
+            u64::MAX
+        };
+        let complete = ctable[..part.chunk_count.max(0) as usize]
+            .iter()
+            .all(|&cchunk| !(cchunk < chunkmin || cchunk >= maxoff));
+
+        if !complete {
+            return Err(Error::bare(ErrorCode::IncompleteChunkTable));
+        }
+        Ok(())
+    }
+
     /// Port of `exr_get_scanlines_per_chunk` (src/lib/OpenEXRCore/part.c:506-523 @ v3.5.3).
     pub fn get_scanlines_per_chunk(&self, part_index: i32) -> Result<i32, Error> {
         let part = self.part_ref(part_index)?;
@@ -358,5 +391,129 @@ impl Context {
             ErrorCode::InvalidArgument,
             b"Invalid zstd compression level (valid range is 1-22)",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::{
+        Context, DefaultWriteMode, EXR_CONTEXT_FLAG_DISABLE_CHUNK_RECONSTRUCTION, Initializer,
+    };
+    use crate::errors::ErrorCode;
+    use crate::openexr_attr::{Compression, PerceptualTreatment, PixelType, Storage};
+    use crate::upstream_tests::read::make_temp_dir;
+
+    /// A 1x2 scanline file without compression (two chunks), written by the port; its bytes
+    /// and the file offset of its chunk table.
+    fn two_chunk_file(path: &str) -> (Vec<u8>, usize) {
+        let mut f = Context::start_write(Some(path), DefaultWriteMode::WriteFileDirectly, None)
+            .expect("start_write");
+        f.add_part(Some("p"), Storage::SCANLINE).expect("add_part");
+        f.initialize_required_attr_simple(0, 1, 2, Compression::NONE)
+            .expect("required attributes");
+        f.add_channel(
+            0,
+            Some("Y"),
+            PixelType::HALF,
+            PerceptualTreatment::LOGARITHMIC,
+            1,
+            1,
+        )
+        .expect("add_channel");
+        f.write_header().expect("write_header");
+        let table_off = f.get_chunk_table_offset(0).expect("chunk table offset") as usize;
+        for y in 0..2 {
+            f.write_scanline_chunk(0, y, Some(&[0, 0x3c]))
+                .expect("write_scanline_chunk");
+        }
+        f.finish().expect("finish");
+        (std::fs::read(path).expect("the file"), table_off)
+    }
+
+    fn open(path: &str, flags: i32) -> Context {
+        Context::start_read(
+            Some(path),
+            Some(Initializer {
+                flags,
+                ..Initializer::default()
+            }),
+        )
+        .expect("start_read")
+    }
+
+    /// `exr_get_chunk_table` returns the offsets stored in the file; `exr_validate_chunk_table`
+    /// accepts them, and refuses an offset past the end of the file when the table is not
+    /// rebuilt.
+    #[test]
+    fn chunk_table_get_and_validate() {
+        let tempdir = make_temp_dir();
+        let path = format!("{tempdir}chunktable.exr");
+        let (bytes, table_off) = two_chunk_file(&path);
+        let stored: Vec<u64> = (0..2)
+            .map(|i| {
+                u64::from_le_bytes(
+                    bytes[table_off + 8 * i..table_off + 8 * i + 8]
+                        .try_into()
+                        .unwrap(),
+                )
+            })
+            .collect();
+
+        let f = open(&path, 0);
+        let (table, count) = f.get_chunk_table(0).expect("exr_get_chunk_table");
+        assert_eq!((table, count), (&stored[..], 2));
+        f.validate_chunk_table(0).expect("exr_validate_chunk_table");
+        assert_eq!(
+            f.get_chunk_table(1).unwrap_err().code,
+            ErrorCode::ArgumentOutOfRange
+        );
+        assert_eq!(
+            f.validate_chunk_table(-1).unwrap_err().code,
+            ErrorCode::ArgumentOutOfRange
+        );
+        drop(f);
+
+        // the second chunk's offset at the end of the file
+        let mut bad = bytes.clone();
+        bad[table_off + 8..table_off + 16].copy_from_slice(&(bytes.len() as u64).to_le_bytes());
+        std::fs::write(&path, &bad).unwrap();
+
+        let f = open(&path, EXR_CONTEXT_FLAG_DISABLE_CHUNK_RECONSTRUCTION);
+        assert_eq!(
+            f.get_chunk_table(0).unwrap().0,
+            &[stored[0], bytes.len() as u64]
+        );
+        assert_eq!(
+            f.validate_chunk_table(0).unwrap_err().code,
+            ErrorCode::IncompleteChunkTable
+        );
+        drop(f);
+
+        // rebuilt from the chunks themselves
+        let f = open(&path, 0);
+        assert_eq!(f.get_chunk_table(0).unwrap().0, &stored[..]);
+        f.validate_chunk_table(0).expect("exr_validate_chunk_table");
+        drop(f);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `exr_start_inplace_header_update` is not implemented upstream: every call is refused.
+    #[test]
+    fn inplace_header_update_is_refused() {
+        let r = Context::start_inplace_header_update(Some("any.exr"), None);
+        let Err(e) = r else {
+            panic!("exr_start_inplace_header_update is refused")
+        };
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+    }
+
+    /// `exr_compression_is_lossy`: PXR24, B44, B44A, DWAA, DWAB and LJ2K
+    /// (src/lib/OpenEXRCore/compression.c:480-496 @ v3.5.3).
+    #[test]
+    fn compression_is_lossy() {
+        let lossy: Vec<i32> = (-1..16)
+            .filter(|&c| crate::compression::compression_is_lossy(Compression(c)))
+            .collect();
+        assert_eq!(lossy, [5, 6, 7, 8, 9, 12]);
     }
 }

@@ -11,10 +11,10 @@
 //! write set lies inside the caller's buffers, and refuses the layout with a message before
 //! writing anything if not (docs/improvements.md, U-9); every store is bounds-checked as well.
 //!
-//! `half_to_float_buffer` is the scalar `half_to_float` loop. Upstream's GCC build can take an
-//! F16C kernel at run time (`half_to_float_buffer_f16c`, lines 25-81, chosen by
-//! `choose_half_to_float_impl`, lines 143-155); that kernel comes with the SIMD work of Phase
-//! 8. MSVC never builds it, so on Windows the scalar loop is upstream's path.
+//! `half_to_float_buffer` is upstream's choice of kernel: the scalar `half_to_float` loop, or
+//! on a GCC build (Linux) with AVX and F16C the F16C kernel (`half_to_float_buffer_f16c`, lines
+//! 25-81, chosen by `choose_half_to_float_impl`, lines 143-155), emulated in safe code. MSVC
+//! never builds the kernel, so on Windows the scalar loop is upstream's path.
 
 use crate::coding::{BufferRef, Region, check_regions, out_bytes, put16, put32};
 use crate::context::Error;
@@ -218,10 +218,28 @@ fn planar(
     Ok(())
 }
 
-/// Port of the scalar `half_to_float_buffer` (src/lib/OpenEXRCore/unpack.c:157-205 @ v3.5.3),
-/// with `half_to_float4` and `half_to_float8` (lines 83-99): `in`'s halves, as stored, to
-/// floats in native order at `out`.
+/// `half_to_float_buffer`: the kernel upstream's build would take on this machine, as
+/// `choose_half_to_float_impl` picks it (src/lib/OpenEXRCore/unpack.c:143-155 @ v3.5.3), once
+/// per process. Only GCC and clang builds for x86-64 have the F16C kernel (`ENABLE_F16C_TEST`,
+/// lines 17-23); MSVC builds the scalar loop alone.
 fn half_to_float_buffer(out: &mut [u8], inp: &[u8]) {
+    static F16C: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let f16c = *F16C.get_or_init(|| {
+        cfg!(all(target_arch = "x86_64", not(target_env = "msvc")))
+            && crate::internal_cpuid::has_native_half() != 0
+    });
+    if f16c {
+        half_to_float_buffer_f16c(out, inp);
+    } else {
+        half_to_float_buffer_impl(out, inp);
+    }
+}
+
+/// Port of the scalar `half_to_float_buffer` (src/lib/OpenEXRCore/unpack.c:157-205 @ v3.5.3),
+/// with `half_to_float4` and `half_to_float8` (lines 83-99), and of
+/// `half_to_float_buffer_impl` (lines 101-141), the same loop: `in`'s halves, as stored, to
+/// floats in native order at `out`.
+fn half_to_float_buffer_impl(out: &mut [u8], inp: &[u8]) {
     for (o, i) in out
         .as_chunks_mut::<4>()
         .0
@@ -231,6 +249,28 @@ fn half_to_float_buffer(out: &mut [u8], inp: &[u8]) {
         *o = half_to_float(u16::from_ne_bytes(*i))
             .to_bits()
             .to_ne_bytes();
+    }
+}
+
+/// Port of `half_to_float_buffer_f16c` (src/lib/OpenEXRCore/unpack.c:25-81 @ v3.5.3), the
+/// `__GNUC__ >= 9` tail: eight halves at a time through `vcvtph2ps` (`_mm256_cvtph_ps`), then a
+/// last four through it (`_mm_cvtph_ps`) when four to seven remain, the rest through
+/// `half_to_float`. `vcvtph2ps` differs from `half_to_float` only in quieting a signaling NaN.
+fn half_to_float_buffer_f16c(out: &mut [u8], inp: &[u8]) {
+    use crate::internal_dwa_simd::vcvtph2ps;
+
+    let halves = inp.as_chunks::<2>().0;
+    let floats = out.as_chunks_mut::<4>().0;
+    let w = halves.len().min(floats.len());
+    let simd = if w % 8 >= 4 { w - w % 8 + 4 } else { w - w % 8 };
+    for (x, (o, i)) in floats[..w].iter_mut().zip(&halves[..w]).enumerate() {
+        let h = u16::from_ne_bytes(*i);
+        let f = if x < simd {
+            vcvtph2ps(h)
+        } else {
+            half_to_float(h)
+        };
+        *o = f.to_bits().to_ne_bytes();
     }
 }
 
@@ -990,6 +1030,46 @@ pub(crate) fn internal_exr_match_decode(
 mod tests {
     use super::*;
     use crate::decoding::DecodeFn;
+
+    /// `half_to_float_buffer_f16c` converts each run of eight, and a last four when four to
+    /// seven remain, as `vcvtph2ps` does, and the rest as `half_to_float`: told apart by a
+    /// signaling NaN, which only `vcvtph2ps` quiets. Every other half converts the same way in
+    /// both kernels.
+    #[test]
+    fn half_to_float_buffer_f16c_tail() {
+        use crate::internal_dwa_simd::vcvtph2ps;
+
+        let snan = 0x7c01u16;
+        assert_ne!(vcvtph2ps(snan).to_bits(), half_to_float(snan).to_bits());
+        for w in 0..=27usize {
+            let inp: Vec<u8> = std::iter::repeat_n(snan.to_ne_bytes(), w)
+                .flatten()
+                .collect();
+            let mut out = vec![0u8; w * 4];
+            half_to_float_buffer_f16c(&mut out, &inp);
+            // upstream: while (w >= 8) ...; switch (w) { case 7..4: _mm_cvtph_ps of four }
+            let simd = 8 * (w / 8) + if w % 8 >= 4 { 4 } else { 0 };
+            for x in 0..w {
+                let got = u32::from_ne_bytes(out[x * 4..x * 4 + 4].try_into().unwrap());
+                let want = if x < simd {
+                    vcvtph2ps(snan)
+                } else {
+                    half_to_float(snan)
+                };
+                assert_eq!(got, want.to_bits(), "w {w}, x {x}");
+            }
+        }
+
+        let all: Vec<u8> = (0..=u16::MAX).flat_map(u16::to_ne_bytes).collect();
+        let (mut a, mut b) = (vec![0u8; all.len() * 2], vec![0u8; all.len() * 2]);
+        half_to_float_buffer_f16c(&mut a, &all);
+        half_to_float_buffer_impl(&mut b, &all);
+        for h in 0..=u16::MAX {
+            let i = h as usize * 4;
+            let quiet = (h & 0x7c00) == 0x7c00 && (h & 0x03ff) != 0 && (h & 0x0200) == 0;
+            assert_eq!(a[i..i + 4] == b[i..i + 4], !quiet, "half {h:#06x}");
+        }
+    }
 
     /// The name of an unpack routine of this module.
     fn routine_name(f: Option<DecodeFn>) -> &'static str {

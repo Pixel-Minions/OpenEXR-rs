@@ -248,6 +248,19 @@ pub fn compression_lines_per_chunk(comptype: Compression) -> i32 {
     }
 }
 
+/// Port of `exr_compression_is_lossy` (src/lib/OpenEXRCore/compression.c:480-496 @ v3.5.3).
+pub fn compression_is_lossy(comptype: Compression) -> bool {
+    matches!(
+        comptype,
+        Compression::PXR24
+            | Compression::B44
+            | Compression::B44A
+            | Compression::DWAA
+            | Compression::DWAB
+            | Compression::LJ2K
+    )
+}
+
 /// Port of `exr_compression_is_valid_for_deep` (src/lib/OpenEXRCore/compression.c:500-514
 /// @ v3.5.3).
 pub fn compression_is_valid_for_deep(comptype: Compression) -> bool {

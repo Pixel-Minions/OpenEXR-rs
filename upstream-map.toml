@@ -1295,16 +1295,16 @@ target = "crates/openexr-core/src/channel_list.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/chunk.c"
 kind = "src"
-status = "partial"
-target = "crates/openexr-core/src/chunk.rs,crates/openexr-core/src/chunk_info.rs,crates/openexr-core/src/chunk_write.rs"
-note = "ported whole (reads, writes, the chunk tables, exr_chunk_default_initialize, internal_validate_next_chunk) with D-13 and D-14; the C++ library's files rewrite byte for byte. Tiled decreasing-Y order: docs/deferred.md"
+status = "done"
+target = "crates/openexr-core/src/chunk.rs"
+note = "ported whole (reads, writes, the chunk tables, exr_chunk_default_initialize, internal_validate_next_chunk) with D-13 and D-14 (decreasing-Y scanlines and tiles in the C++ library's order); the C++ library's files rewrite byte for byte"
 
 [[file]]
 path = "src/lib/OpenEXRCore/coding.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/coding.rs"
-note = "channel info fill and update, the decode buffers (decoding.rs) and the encode buffers (encoding.rs)"
+note = "channel info fill and update, the decode buffers (decoding.rs) and the encode buffers (encoding.rs); the free_buffer functions are Drop"
 
 [[file]]
 path = "src/lib/OpenEXRCore/color_metadata.c"
@@ -1323,9 +1323,9 @@ note = "ported whole: the dispatch both ways for every codec, the buffers, the c
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
 kind = "src"
-status = "partial"
-target = "crates/openexr-core/src/context.rs,crates/openexr-core/src/write_header.rs"
-note = "start_read, start_write, test_file_header, temporary context, finish, accessors, longname support, attr handlers, exr_write_header; the chunk table at finish with the chunk writes"
+status = "done"
+target = "crates/openexr-core/src/context.rs"
+note = "start_read, start_write, start_inplace_header_update (not implemented upstream), test_file_header, temporary context, finish, accessors, longname support, attr handlers, exr_write_header"
 
 [[file]]
 path = "src/lib/OpenEXRCore/debug.c"
@@ -1579,8 +1579,8 @@ note = "ported whole; decodes as the wheel does and encodes the wheel's files by
 path = "src/lib/OpenEXRCore/internal_posix_file_impl.h"
 kind = "src"
 status = "partial"
-target = "crates/openexr-core/src/file_impl.rs,crates/openexr-core/src/os_error.rs"
-note = "read and write streams, temp names, failed-write cleanup; rename with Phase 6; checked on Linux in the heavy tier"
+target = "crates/openexr-core/src/file_impl.rs"
+note = "read and write streams, temp names, failed-write cleanup, the finished write's rename (D-20); checked on Linux in the heavy tier"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_preview.h"
@@ -1624,9 +1624,9 @@ note = "error dispatch, default handler, alloc_context, add_part; destroy is Dro
 [[file]]
 path = "src/lib/OpenEXRCore/internal_structs.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/context.rs"
-note = "context and part fields grow with each phase; locks are Rust borrows (&mut for writers)"
+note = "context and part fields; locks are Rust borrows (&mut for writers; U-21)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_thread.h"
@@ -1643,9 +1643,9 @@ target = "crates/openexr-core/src/internal_util.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_win32_file_impl.h"
 kind = "src"
-status = "partial"
-target = "crates/openexr-core/src/file_impl.rs,crates/openexr-core/src/os_error.rs"
-note = "read and write streams, temp names, failed-write cleanup; the finished-write rename (ReplaceFileW) with Phase 6"
+status = "done"
+target = "crates/openexr-core/src/file_impl.rs"
+note = "read and write streams, temp names, failed-write cleanup, the finished write's rename (D-20)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_xdr.h"
@@ -1716,8 +1716,8 @@ note = "exr_set_default_memory_routines is n/a (PLAN.md O8)"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_chunkio.h"
 kind = "api"
-status = "partial"
-target = "crates/openexr-core/src/chunk.rs,crates/openexr-core/src/chunk_info.rs"
+status = "done"
+target = "crates/openexr-core/src/chunk.rs"
 note = "as chunk.c"
 
 [[file]]
@@ -1750,9 +1750,9 @@ note = "export and visibility macros"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_context.h"
 kind = "api"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/context.rs"
-note = "initializer, flags, callbacks; the remaining functions as context.c"
+note = "initializer, flags, callbacks, and the functions of context.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_debug.h"
@@ -1771,9 +1771,9 @@ note = "exr_decode_pipeline_t; pipe_size, the custom allocators and free_compres
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_encode.h"
 kind = "api"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/encoding.rs"
-note = "the encode pipeline and its flags, as encoding.c; the deep flags are tested with Phase 7"
+note = "the encode pipeline and its flags, as encoding.c; the deep flags tested with deep data"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_errors.h"
@@ -1784,9 +1784,9 @@ target = "crates/openexr-core/src/errors.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_part.h"
 kind = "api"
-status = "partial"
-target = "crates/openexr-core/src/part.rs,crates/openexr-core/src/part_attr.rs,crates/openexr-core/src/part_attr_set.rs,crates/openexr-core/src/part_attr_copy.rs"
-note = "as part.c (the chunk table with Phase 4) and part_attr.c"
+status = "done"
+target = "crates/openexr-core/src/part.rs"
+note = "as part.c and part_attr.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_std_attr.h"
@@ -1817,16 +1817,16 @@ note = "complete for reading; done after the heavy tier compares every corpus he
 [[file]]
 path = "src/lib/OpenEXRCore/part.c"
 kind = "src"
-status = "partial"
-target = "crates/openexr-core/src/part.rs,crates/openexr-core/src/context.rs"
-note = "getters, exr_add_part, level setters; chunk table with Phase 4"
+status = "done"
+target = "crates/openexr-core/src/part.rs"
+note = "getters, exr_add_part, level setters, exr_get_chunk_table and exr_validate_chunk_table (their write locks: U-21)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/part_attr.c"
 kind = "src"
-status = "partial"
-target = "crates/openexr-core/src/part_attr.rs,crates/openexr-core/src/part_attr_set.rs,crates/openexr-core/src/part_attr_copy.rs"
-note = "ported whole; exr_copy_unset_attributes is first tested by write.cpp (Phase 6)"
+status = "done"
+target = "crates/openexr-core/src/part_attr.rs"
+note = "ported whole; exr_copy_unset_attributes tested by write.cpp's ports and the deep writer emulation (heavy_deep)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/preview.c"
@@ -1857,7 +1857,7 @@ path = "src/lib/OpenEXRCore/unpack.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/unpack.rs"
-note = "the image and deep unpackers and internal_exr_match_decode; deep decoding checked against the wheel's deep files, with and without pointer tables (heavy_deep); the F16C half_to_float_buffer kernel (GCC builds, chosen at run time) with Phase 8"
+note = "ported whole: the image and deep unpackers, internal_exr_match_decode, and half_to_float_buffer's kernels as upstream chooses them (the F16C kernel on GCC builds); deep decoding checked against the wheel's deep files (heavy_deep); the F16C emulation awaits a CPU check (docs/deferred.md)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/validation.c"
@@ -1889,7 +1889,9 @@ note = "testBaseDebug n/a: it only passes a NULL context (PLAN.md O8)"
 [[file]]
 path = "src/test/OpenEXRCoreTest/base_units.h"
 kind = "test"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/base_units.rs"
+note = "the declarations of its tests"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/buffer.cpp"
@@ -1901,19 +1903,23 @@ note = "its 1 test"
 [[file]]
 path = "src/test/OpenEXRCoreTest/buffer.h"
 kind = "test"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/buffer.rs"
+note = "the declarations of its tests"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/color_metadata.cpp"
 kind = "test"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/upstream_tests/color_metadata.rs"
-note = "testColorInteropChromaticities, testColorMetadataValues; testColorMetadataFile needs exr_start_write and exr_start_read"
+note = "testColorInteropChromaticities, testColorMetadataValues, testColorMetadataFile"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/color_metadata.h"
 kind = "test"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/color_metadata.rs"
+note = "the declarations of its tests"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/compression.cpp"
@@ -1925,7 +1931,9 @@ note = "every test ported: the codecs' (their C++ halves by the wheel, oracle/sa
 [[file]]
 path = "src/test/OpenEXRCoreTest/compression.h"
 kind = "test"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/compression.rs"
+note = "the declarations of its tests"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/compressionTables.cpp"
@@ -1944,19 +1952,23 @@ note = "every test ported; testOpenDeep and testReadDeep in the heavy tier, the 
 [[file]]
 path = "src/test/OpenEXRCoreTest/deep.h"
 kind = "test"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/deep.rs"
+note = "the declarations of its tests"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/dwaLookups.h"
 kind = "test-data"
-status = "todo"
-note = "generated tables the DWA tests compare against"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/compression_tables.rs"
+note = "read verbatim (include_str!) by testDWATable's port"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/dwaQuantTables.h"
 kind = "test-data"
-status = "todo"
-note = "generated tables the DWA tests compare against"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/compression_tables.rs"
+note = "read verbatim (include_str!) by testDWAQuantize's port"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.cpp"
@@ -1968,7 +1980,9 @@ note = "all 11 tests ported; the 2 GiB string and 134M-entry vector checks are h
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"
 kind = "test"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
+note = "the declarations of its tests"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/initializer_compat.cpp"
@@ -1985,7 +1999,8 @@ note = "header of initializer_compat.cpp (PLAN.md O8)"
 [[file]]
 path = "src/test/OpenEXRCoreTest/main.cpp"
 kind = "test"
-status = "todo"
+status = "n/a"
+note = "the test runner and its TEST list: cargo test runs each #[test]; xtask guards checks every test has its port"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/performance.cpp"
@@ -2003,12 +2018,15 @@ note = "all 11 tests"
 [[file]]
 path = "src/test/OpenEXRCoreTest/read.h"
 kind = "test"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/read.rs"
+note = "the declarations of its tests"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/test_value.h"
 kind = "test"
-status = "todo"
+status = "n/a"
+note = "the EXRCORE_TEST macros: assert!, assert_eq! and expect in their place"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/write.cpp"
@@ -2020,7 +2038,9 @@ note = "all 13 tests, with testCopyAttrsLongChannelName (the NULL pointer checks
 [[file]]
 path = "src/test/OpenEXRCoreTest/write.h"
 kind = "test"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/write.rs"
+note = "the declarations of its tests"
 
 [[file]]
 path = "src/test/OpenEXRTest/invalid.exr"

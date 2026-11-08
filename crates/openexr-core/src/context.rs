@@ -816,6 +816,17 @@ impl Context {
         Ok(ret)
     }
 
+    /// Port of `exr_start_inplace_header_update` (src/lib/OpenEXRCore/context.c:364-375
+    /// @ v3.5.3): not implemented upstream ("TODO: not yet implemented"), so it refuses every
+    /// call, without a message.
+    pub fn start_inplace_header_update(
+        filename: Option<&str>,
+        ctxtdata: Option<Initializer>,
+    ) -> Result<Context, Error> {
+        let _ = (filename, ctxtdata);
+        Err(Error::bare(ErrorCode::InvalidArgument))
+    }
+
     /// Port of `exr_start_temporary_context` (src/lib/OpenEXRCore/context.c:379-405 @ v3.5.3):
     /// a context to build a header in, named `context_name` or `"<temporary>"`.
     pub fn start_temporary_context(

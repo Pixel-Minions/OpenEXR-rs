@@ -316,10 +316,15 @@ pub(crate) fn make_temp_filename(ctxt: &mut Context) -> Result<(), Error> {
     Ok(())
 }
 
-/// Port of `finalize_write` (src/lib/OpenEXRCore/internal_win32_file_impl.h:117-148
-/// @ v3.5.3; on Linux, internal_posix_file_impl.h:68-92): a failed write to Core's own file is
-/// deleted. Renaming a finished temporary file comes with the header writer (Phase 6), which
-/// is the only way a write context finishes without failing.
+/// Port of `finalize_write` (src/lib/OpenEXRCore/internal_win32_file_impl.h:117-153
+/// @ v3.5.3; on Linux, internal_posix_file_impl.h:68-94): a failed write to Core's own file is
+/// deleted, a finished temporary file renamed to the file name.
+///
+/// Deviation D-20 (I-30): upstream renames the temporary file while its handle is still open,
+/// with `ReplaceFileW` on Windows, which then always fails (a sharing violation, or "file not
+/// found" when the file name does not exist yet) and leaves the temporary file behind; and on
+/// Linux it reports a failed rename with `strerror (0)`. The port closes the file first,
+/// renames it over the file name, and reports the rename's own error.
 pub(crate) fn finalize_write(ctxt: &mut Context, failed: bool) -> Result<(), Error> {
     // upstream: "Do we actually want to do this or leave the garbage file there"
     if failed && ctxt.default_stream {
@@ -334,5 +339,112 @@ pub(crate) fn finalize_write(ctxt: &mut Context, failed: bool) -> Result<(), Err
             let _ = std::fs::remove_file(t);
         }
     }
+
+    if !failed && let Some(tmp) = ctxt.tmp_filename.clone() {
+        // D-20: close the file (default_shutdown's job, after this upstream) before renaming
+        if ctxt.default_stream {
+            ctxt.write_fn = None;
+        }
+        let dest = ctxt.core.filename.clone().unwrap_or_default();
+        if let Err(e) = std::fs::rename(&tmp, &dest) {
+            #[cfg(windows)]
+            return Err(print_error_helper(
+                &ctxt.core,
+                ErrorCode::FileAccess,
+                os_code(&e) as u32,
+                None,
+                "Unable to rename temporary file to final destination",
+            ));
+            #[cfg(not(windows))]
+            {
+                let msg = crate::os_error::strerror(os_code(&e));
+                return Err(ctxt.core.print_error(
+                    ErrorCode::FileAccess,
+                    "Unable to rename temporary file: %s",
+                    &[Arg::Str(&msg)],
+                ));
+            }
+        }
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::{Context, DefaultWriteMode};
+    use crate::openexr_attr::{Compression, PerceptualTreatment, PixelType, Storage};
+    use crate::upstream_tests::read::make_temp_dir;
+
+    /// A finished one-part file written through a temporary file; the temporary file's name.
+    fn write_via_temp(path: &str) -> String {
+        let mut f = Context::start_write(Some(path), DefaultWriteMode::IntermediateTempFile, None)
+            .expect("start_write");
+        let tmp = f.tmp_filename.clone().expect("a temporary file name");
+        assert!(
+            std::path::Path::new(&tmp).exists(),
+            "the temporary file is written to"
+        );
+        f.add_part(Some("p"), Storage::SCANLINE).expect("add_part");
+        f.initialize_required_attr_simple(0, 1, 1, Compression::NONE)
+            .expect("required attributes");
+        f.add_channel(
+            0,
+            Some("Y"),
+            PixelType::HALF,
+            PerceptualTreatment::LOGARITHMIC,
+            1,
+            1,
+        )
+        .expect("add_channel");
+        f.write_header().expect("write_header");
+        f.write_scanline_chunk(0, 0, Some(&[0, 0x3c]))
+            .expect("write_scanline_chunk");
+        f.finish().expect("finish renames the temporary file");
+        tmp
+    }
+
+    /// D-20: a write through a temporary file ends with the file under its name, whether or
+    /// not that name existed, and no temporary file left.
+    #[test]
+    fn temporary_file_is_renamed() {
+        let tempdir = make_temp_dir();
+        let path = format!("{tempdir}viatemp.exr");
+        let _ = std::fs::remove_file(&path);
+
+        // upstream's name: "tmp.<pid>" before the file name, in its directory
+        let tmp = write_via_temp(&path);
+        assert_eq!(
+            tmp,
+            format!("{tempdir}tmp.{}viatemp.exr", std::process::id())
+        );
+        assert!(!std::path::Path::new(&tmp).exists());
+        let f = Context::start_read(Some(&path), None).expect("the file reads");
+        assert_eq!(f.get_count(), 1);
+        drop(f);
+
+        // over an existing file
+        std::fs::write(&path, b"old").unwrap();
+        let tmp = write_via_temp(&path);
+        assert!(!std::path::Path::new(&tmp).exists());
+        let f = Context::start_read(Some(&path), None).expect("the file reads");
+        assert_eq!(f.get_count(), 1);
+        drop(f);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A write through a temporary file that does not finish removes the temporary file and
+    /// leaves the file name alone.
+    #[test]
+    fn unfinished_temporary_file_is_removed() {
+        let tempdir = make_temp_dir();
+        let path = format!("{tempdir}viatemp_unfinished.exr");
+        std::fs::write(&path, b"old").unwrap();
+        let f = Context::start_write(Some(&path), DefaultWriteMode::IntermediateTempFile, None)
+            .expect("start_write");
+        let tmp = f.tmp_filename.clone().expect("a temporary file name");
+        f.finish().expect("finish");
+        assert!(!std::path::Path::new(&tmp).exists());
+        assert_eq!(std::fs::read(&path).unwrap(), b"old");
+        let _ = std::fs::remove_file(&path);
+    }
 }

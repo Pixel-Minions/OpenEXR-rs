@@ -339,3 +339,229 @@ fn test_color_metadata_values() {
         }
     }
 }
+
+/// `width` (src/test/OpenEXRCoreTest/color_metadata.cpp:17 @ v3.5.3).
+const WIDTH: i32 = 4;
+
+/// Port of `writeTwoPart` (src/test/OpenEXRCoreTest/color_metadata.cpp:37-114 @ v3.5.3): a two
+/// part file whose parts have the given colorInteropID values, `None` leaving the attribute off
+/// a part.
+fn write_two_part(fn_: &str, first_id: Option<&str>, second_id: Option<&str>) {
+    use crate::coding::BufferRef;
+    use crate::context::{Context, DefaultWriteMode, Initializer};
+    use crate::openexr_attr::{
+        Box2i, Compression, LineOrder, PerceptualTreatment, PixelType, Storage, V2f, V2i,
+    };
+
+    let names = ["first", "second"];
+    let ids = [first_id, second_id];
+    let num_parts = 2;
+
+    let _ = std::fs::remove_file(fn_);
+
+    let mut f = Context::start_write(
+        Some(fn_),
+        DefaultWriteMode::WriteFileDirectly,
+        Some(Initializer::default()),
+    )
+    .expect("exr_start_write");
+
+    for p in 0..num_parts {
+        let partidx = f
+            .add_part(Some(names[p]), Storage::SCANLINE)
+            .expect("exr_add_part");
+
+        // a single uncompressed scanline, so that each part is one chunk
+        let dataw = Box2i {
+            min: V2i { x: 0, y: 0 },
+            max: V2i { x: WIDTH - 1, y: 0 },
+        };
+        let dispw = Box2i {
+            min: V2i { x: 0, y: 0 },
+            max: V2i { x: WIDTH - 1, y: 0 },
+        };
+        let swc = V2f { x: 0.0, y: 0.0 };
+
+        f.initialize_required_attr(
+            partidx,
+            Some(&dataw),
+            Some(&dispw),
+            1.0,
+            Some(&swc),
+            1.0,
+            LineOrder::INCREASING_Y,
+            Compression::NONE,
+        )
+        .expect("exr_initialize_required_attr");
+
+        f.add_channel(
+            partidx,
+            Some("R"),
+            PixelType::HALF,
+            PerceptualTreatment::LOGARITHMIC,
+            1,
+            1,
+        )
+        .expect("exr_add_channel");
+
+        if let Some(id) = ids[p] {
+            f.attr_set_string(partidx, Some("colorInteropID"), Some(id))
+                .expect("exr_attr_set_string");
+        }
+    }
+
+    f.write_header().expect("exr_write_header");
+
+    let pixels: Vec<u8> = vec![0u16; WIDTH as usize]
+        .iter()
+        .flat_map(|v| v.to_ne_bytes())
+        .collect();
+
+    for p in 0..num_parts as i32 {
+        let cinfo = f
+            .write_scanline_chunk_info(p, 0)
+            .expect("exr_write_scanline_chunk_info");
+        let mut encoder = f
+            .encoding_initialize(p, &cinfo)
+            .expect("exr_encoding_initialize");
+
+        encoder.channels[0].data = Some(BufferRef {
+            buffer: 0,
+            offset: 0,
+        });
+        encoder.channels[0].user_pixel_stride = std::mem::size_of::<u16>() as i32;
+        encoder.channels[0].user_line_stride = (std::mem::size_of::<u16>() * WIDTH as usize) as i32;
+
+        f.encoding_choose_default_routines(p, &mut encoder)
+            .expect("exr_encoding_choose_default_routines");
+        f.encoding_run(p, &mut encoder, &[&pixels])
+            .expect("exr_encoding_run");
+        f.encoding_destroy(&mut encoder)
+            .expect("exr_encoding_destroy");
+    }
+
+    f.finish().expect("exr_finish");
+}
+
+/// `cinit` with `cinit.flags |= EXR_CONTEXT_FLAG_SILENT_HEADER_PARSE`.
+fn silent_cinit() -> Option<crate::context::Initializer> {
+    let mut cinit = crate::context::Initializer::default();
+    cinit.flags |= crate::context::EXR_CONTEXT_FLAG_SILENT_HEADER_PARSE;
+    Some(cinit)
+}
+
+/// Port of `expectWarnings` (src/test/OpenEXRCoreTest/color_metadata.cpp:119-142 @ v3.5.3): checks
+/// both parts of a file written by `write_two_part`.
+fn expect_warnings(fn_: &str, first_expected: u32, second_expected: u32) {
+    let f = crate::context::Context::start_read(Some(fn_), silent_cinit()).expect("exr_start_read");
+
+    let warnings = f.check_color_metadata(0).expect("exr_check_color_metadata");
+    assert_eq!(warnings, first_expected);
+
+    let warnings = f.check_color_metadata(1).expect("exr_check_color_metadata");
+    assert_eq!(warnings, second_expected);
+
+    f.finish().expect("exr_finish");
+
+    let _ = std::fs::remove_file(fn_);
+}
+
+/// Port of `testColorMetadataFile` (src/test/OpenEXRCoreTest/color_metadata.cpp:632-717)
+/// @ v3.5.3. The call with a NULL output pointer has no Rust counterpart (PLAN.md O8).
+#[test]
+fn test_color_metadata_file() {
+    use crate::upstream_tests::read::make_temp_dir;
+
+    let tempdir = make_temp_dir();
+    let t = |name: &str| format!("{tempdir}{name}");
+
+    //
+    // A later part may omit colorInteropID, set it to "data", or repeat the
+    // first part's.
+    //
+
+    write_two_part(&t("core_cif_omitted.exr"), Some("lin_ap1_scene"), None);
+    expect_warnings(
+        &t("core_cif_omitted.exr"),
+        EXR_COLOR_METADATA_OK,
+        EXR_COLOR_METADATA_OK,
+    );
+
+    write_two_part(&t("core_cif_data.exr"), Some("lin_ap1_scene"), Some("data"));
+    expect_warnings(
+        &t("core_cif_data.exr"),
+        EXR_COLOR_METADATA_OK,
+        EXR_COLOR_METADATA_OK,
+    );
+
+    write_two_part(
+        &t("core_cif_same.exr"),
+        Some("lin_ap1_scene"),
+        Some("lin_ap1_scene"),
+    );
+    expect_warnings(
+        &t("core_cif_same.exr"),
+        EXR_COLOR_METADATA_OK,
+        EXR_COLOR_METADATA_OK,
+    );
+
+    //
+    // But any other value that differs from the first part's is reported
+    // against the later part, not the first.
+    //
+
+    write_two_part(
+        &t("core_cif_conflict.exr"),
+        Some("lin_ap1_scene"),
+        Some("lin_ap0_scene"),
+    );
+    expect_warnings(
+        &t("core_cif_conflict.exr"),
+        EXR_COLOR_METADATA_OK,
+        EXR_COLOR_METADATA_INTEROP_ID_NOT_SHARED,
+    );
+
+    write_two_part(&t("core_cif_nofirst.exr"), None, Some("lin_ap1_scene"));
+    expect_warnings(
+        &t("core_cif_nofirst.exr"),
+        EXR_COLOR_METADATA_OK,
+        EXR_COLOR_METADATA_INTEROP_ID_NOT_SHARED,
+    );
+
+    //
+    // An empty ID on a later part is both empty and non-conforming.
+    //
+
+    write_two_part(&t("core_cif_empty.exr"), Some("lin_ap1_scene"), Some(""));
+    expect_warnings(
+        &t("core_cif_empty.exr"),
+        EXR_COLOR_METADATA_OK,
+        EXR_COLOR_METADATA_EMPTY_INTEROP_ID | EXR_COLOR_METADATA_INTEROP_ID_NOT_SHARED,
+    );
+
+    //
+    // Bad arguments against a real context.
+    //
+
+    {
+        let fn_ = t("core_cif_args.exr");
+
+        write_two_part(&fn_, Some("lin_ap1_scene"), None);
+
+        let f = crate::context::Context::start_read(Some(&fn_), silent_cinit())
+            .expect("exr_start_read");
+
+        assert_eq!(
+            f.check_color_metadata(-1).unwrap_err().code,
+            ErrorCode::IncorrectPart
+        );
+        assert_eq!(
+            f.check_color_metadata(2).unwrap_err().code,
+            ErrorCode::IncorrectPart
+        );
+
+        f.finish().expect("exr_finish");
+
+        let _ = std::fs::remove_file(&fn_);
+    }
+}

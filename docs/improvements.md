@@ -348,6 +348,26 @@ section. An entry says:
   fix") (`crates/openexr-core/src/compression.rs`); Core alone now writes the chunks the wheel
   writes, byte for byte (`tests/heavy_deep.rs`).
 
+### I-30. A write through a temporary file never finishes on Windows
+
+- **Upstream:** `exr_finish` renames the temporary file of `EXR_INTERMEDIATE_TEMP_FILE`
+  (`finalize_write`) before `default_shutdown` closes its handle. On Windows it does so with
+  `ReplaceFileW (filename, tmpname, ...)`, which fails both ways: with a sharing violation (32)
+  when the file name exists, since the temporary file is still open, and with "file not found"
+  (2) when it does not, since `ReplaceFileW` replaces only an existing file. `exr_finish` then
+  returns `EXR_ERR_FILE_ACCESS` ("Unable to rename temporary file to final destination") and
+  leaves the temporary file behind (`src/lib/OpenEXRCore/internal_win32_file_impl.h:117-153`
+  @ v3.5.3; both cases checked on Windows 11 by calling `ReplaceFileW` with upstream's handle
+  and share mode). On Linux `rename` succeeds, but a failure is reported with
+  `strerror (rv)`, `rv` being 0 ("Success": `internal_posix_file_impl.h:68-94`).
+- **Who notices:** writers of Core's files on Windows who ask for a temporary file; the C++
+  library writes through its own streams and does not.
+- **A fix:** close the file, then rename it over the file name, and report the rename's own
+  error.
+- **Status:** **fixed**, deviation D-20 (owner, 2026-11-07: "anything that is a bug we can
+  fix") (`crates/openexr-core/src/file_impl.rs`), checked by
+  `file_impl::tests::temporary_file_is_renamed`.
+
 ## Messages and debug output
 
 ### I-7. A deep tile's unpacked size error prints the packed size
@@ -685,3 +705,18 @@ section. An entry says:
 - **The port:** refuses the codeblock (an OpenJPH error), which Core reports as
   `EXR_ERR_INCORRECT_CHUNK`.
 - **Status:** the port's choice, as U-9.
+
+### U-21. Core keeps or releases write locks it should not
+
+- **Upstream:** in a write context (`EXR_CONTEXT_WRITE`), `exr_get_chunk_table` and
+  `exr_validate_chunk_table` take the context's lock (`EXR_LOCK_WRITE_AND_DEFINE_PART`) and
+  return without releasing it (`src/lib/OpenEXRCore/part.c:447-502` @ v3.5.3), so the next call
+  that locks deadlocks on Linux (a default pthread mutex) and recurses on Windows (a critical
+  section); `exr_get_file_name` releases the lock without having taken it (`context.c:410-424`),
+  undefined for both; and `exr_write_tile_chunk_info` keeps it when refusing a level above 255
+  (`chunk.c:2037-2043`), which the level checks before it make unreachable.
+- **Who notices:** callers of those functions on a context being written, from any thread.
+- **The port:** has no locks: a context is borrowed (`&mut` to write), so these calls neither
+  deadlock nor release anything.
+- **Status:** the port's choice (`internal_structs.h`'s locks are Rust borrows,
+  `upstream-map.toml`).
