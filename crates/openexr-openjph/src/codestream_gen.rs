@@ -5,7 +5,7 @@
 //! (external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp:1-185 @ OpenJPH 0.32.0): the
 //! generic conversions between a line's samples and a codeblock's sign and magnitude.
 
-use crate::arch::ojph_trunc;
+use crate::arch::{cvt_f32_i32, ojph_trunc};
 
 /// Port of `gen_find_max_val32` (external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp:53
 /// @ OpenJPH 0.32.0).
@@ -77,6 +77,29 @@ pub(crate) fn irv_tx_to_cb32(
         let t = ojph_trunc(v * delta_inv);
         let sign = if t >= 0 { 0u32 } else { 0x8000_0000 };
         let val = (if t >= 0 { t } else { t.wrapping_neg() }) as u32;
+        *d = sign | val;
+        tmax |= val;
+    }
+    *max_val = tmax;
+}
+
+/// `sse2_irv_tx_to_cb32` and `avx2_irv_tx_to_cb32`
+/// (external/OpenJPH/src/core/codestream/ojph_codestream_sse2.cpp:129-181 and
+/// ojph_codestream_avx2.cpp:124-167 @ OpenJPH 0.32.0) per lane: as `gen_irv_tx_to_cb32`, the
+/// product rounded to nearest even (`cvtps2dq`, `0x80000000` out of range). Past `count` the
+/// SIMD stores write into the codeblock's padding and keep it out of `max_val`.
+pub(crate) fn irv_tx_to_cb32_rounded(
+    sp: &[f32],
+    dp: &mut [u32],
+    delta_inv: f32,
+    count: u32,
+    max_val: &mut u32,
+) {
+    let mut tmax = *max_val;
+    for (d, &v) in dp[..count as usize].iter_mut().zip(sp) {
+        let t = cvt_f32_i32(v * delta_inv);
+        let sign = if t >= 0 { 0u32 } else { 0x8000_0000 };
+        let val = t.unsigned_abs();
         *d = sign | val;
         tmax |= val;
     }

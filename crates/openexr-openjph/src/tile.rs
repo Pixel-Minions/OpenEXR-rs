@@ -14,15 +14,16 @@ use crate::codestream::{
     OJPH_TILEPART_RESOLUTIONS,
 };
 use crate::colour::{
-    ict_backward, irv_convert_to_integer, irv_convert_to_integer_nlt, rct_backward, rev_convert,
+    ict_backward, ict_forward, irv_convert_to_float, irv_convert_to_float_nlt,
+    irv_convert_to_integer, irv_convert_to_integer_nlt, rct_backward, rct_forward, rev_convert,
     rev_convert_nlt_type3,
 };
-use crate::file::{Infile, Seek};
+use crate::file::{Infile, Outfile, Seek};
 use crate::mem::LineBuf;
 use crate::message::{Arg, OjphError, OjphResult, error, info};
 use crate::params::{
     NltRec, OJPH_NLT_BINARY_COMPLEMENT_NLT, OJPH_NLT_BINARY_COMPLEMENT_PLUS_LUT,
-    OJPH_NLT_LUT_STYLE_NLT, ParamSot, prog_order,
+    OJPH_NLT_LUT_STYLE_NLT, ParamSot, ParamTlm, prog_order,
 };
 use crate::tile_comp::TileComp;
 
@@ -557,6 +558,350 @@ impl Tile {
             }
         }
         file.seek(tile_end_location as i64, Seek::Set);
+        Ok(())
+    }
+}
+
+/// `SOD` (external/OpenJPH/src/core/codestream/ojph_params_local.h:146 @ OpenJPH 0.32.0).
+const SOD: u16 = 0xFF93;
+
+impl Tile {
+    /// The conversion of an input line into a component's line (or the colour transform's):
+    /// the shift and the nonlinearity of a reversible component, the scaling to floats of an
+    /// irreversible one.
+    fn convert_in(&self, comp_num: usize, line: &LineBuf, tc: &mut LineBuf, comp_width: u32) {
+        let nlt = self.nlt[comp_num].as_ref();
+        let lo = self.line_offsets[comp_num];
+        let (num_bits, is_signed) = (self.num_bits[comp_num], self.is_signed[comp_num]);
+        if self.reversible[comp_num] {
+            let mut shift = 1i64 << (num_bits.wrapping_sub(1) & 63);
+            match nlt {
+                None => {
+                    shift = if is_signed { 0 } else { -shift };
+                    rev_convert(line, lo, tc, 0, shift, comp_width);
+                }
+                Some(rec) if is_signed && rec.get_type() == OJPH_NLT_BINARY_COMPLEMENT_NLT => {
+                    rev_convert_nlt_type3(line, lo, tc, 0, shift + 1, comp_width);
+                }
+                // `rev_encode_nlt` (external/OpenJPH/src/core/transform/ojph_colour.cpp:
+                // 444-457 @ OpenJPH 0.32.0) writes nothing: `param_nlt::check_validity`
+                // refuses the combination
+                _ => {}
+            }
+        } else {
+            match nlt {
+                None => irv_convert_to_float(false, line, lo, tc, num_bits, is_signed, comp_width),
+                Some(rec) if rec.get_type() == OJPH_NLT_BINARY_COMPLEMENT_NLT => {
+                    irv_convert_to_float(true, line, lo, tc, num_bits, is_signed, comp_width);
+                }
+                Some(rec)
+                    if rec.get_type() == OJPH_NLT_LUT_STYLE_NLT
+                        || rec.get_type() == OJPH_NLT_BINARY_COMPLEMENT_PLUS_LUT =>
+                {
+                    irv_convert_to_float_nlt(line, lo, tc, num_bits, comp_width, rec);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Port of `tile::push` (external/OpenJPH/src/core/codestream/ojph_tile.cpp:338-454
+    /// @ OpenJPH 0.32.0): a line of component `comp_num`, `false` when the tile has all of
+    /// its lines.
+    pub(crate) fn push(&mut self, line: &LineBuf, comp_num: u32) -> OjphResult<bool> {
+        let c = comp_num as usize;
+        if self.cur_line[c] >= self.comp_rects[c].siz.h {
+            return Ok(false);
+        }
+        self.cur_line[c] += 1;
+
+        // converts to signed representation, employs color transform if there is a need
+        let comp_width = self.comp_rects[c].siz.w;
+        if !self.employ_color_transform || comp_num >= 3 {
+            let mut comps = std::mem::take(&mut self.comps);
+            self.convert_in(c, line, comps[c].get_line(), comp_width);
+            let r = comps[c].push_line();
+            self.comps = comps;
+            r?;
+        } else {
+            let mut lines = std::mem::take(&mut self.lines);
+            self.convert_in(c, line, &mut lines[c], comp_width);
+            let r = if comp_num == 2 {
+                let (c0, rest) = self.comps.split_at_mut(1);
+                let (c1, c2) = rest.split_at_mut(1);
+                let (y, cb, cr) = (c0[0].get_line(), c1[0].get_line(), c2[0].get_line());
+                if self.reversible[c] {
+                    // reversible color transform
+                    rct_forward(&lines[0], &lines[1], &lines[2], y, cb, cr, comp_width);
+                } else {
+                    // irreversible color transform
+                    ict_forward(
+                        lines[0].f32(),
+                        lines[1].f32(),
+                        lines[2].f32(),
+                        y.f32_mut(),
+                        cb.f32_mut(),
+                        cr.f32_mut(),
+                        comp_width,
+                    );
+                }
+                self.comps[0]
+                    .push_line()
+                    .and_then(|_| self.comps[1].push_line())
+                    .and_then(|_| self.comps[2].push_line())
+            } else {
+                Ok(())
+            };
+            self.lines = lines;
+            r?;
+        }
+        Ok(true)
+    }
+
+    /// Port of `tile::prepare_for_flush`
+    /// (external/OpenJPH/src/core/codestream/ojph_tile.cpp:579-585 @ OpenJPH 0.32.0): the packet headers; the tile's bytes.
+    pub(crate) fn prepare_for_flush(&mut self, scratch: &mut [u8]) {
+        self.num_bytes = 0;
+        for comp in &mut self.comps {
+            self.num_bytes = self.num_bytes.wrapping_add(comp.prepare_precincts(scratch));
+        }
+    }
+
+    /// The decompositions of the tile's most decomposed component.
+    fn max_decompositions(&self) -> u32 {
+        self.comps
+            .iter()
+            .map(|c| c.get_num_decompositions())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Port of `tile::fill_tlm` (external/OpenJPH/src/core/codestream/ojph_tile.cpp:588-638
+    /// @ OpenJPH 0.32.0): the TLM pairs of the tile's parts.
+    pub(crate) fn fill_tlm(&self, tlm: &mut ParamTlm) {
+        let idx = self.sot.get_tile_index();
+        let num_comps = self.num_comps as usize;
+        if self.tilepart_div == OJPH_TILEPART_NO_DIVISIONS {
+            tlm.set_next_pair(idx, self.num_bytes);
+        } else if self.tilepart_div == OJPH_TILEPART_RESOLUTIONS {
+            for r in 0..=self.max_decompositions() {
+                let mut bytes = 0u32;
+                for c in &self.comps {
+                    bytes = bytes.wrapping_add(c.get_num_bytes(r));
+                }
+                tlm.set_next_pair(idx, bytes);
+            }
+        } else if self.tilepart_div == OJPH_TILEPART_COMPONENTS {
+            if self.prog_order == prog_order::LRCP || self.prog_order == prog_order::RLCP {
+                for r in 0..=self.max_decompositions() {
+                    for c in &self.comps[..num_comps] {
+                        if r <= c.get_num_decompositions() {
+                            tlm.set_next_pair(idx, c.get_num_bytes(r));
+                        }
+                    }
+                }
+            } else if self.prog_order == prog_order::CPRL {
+                for c in &self.comps[..num_comps] {
+                    tlm.set_next_pair(idx, c.num_bytes());
+                }
+            }
+        } else {
+            for r in 0..=self.max_decompositions() {
+                for c in &self.comps[..num_comps] {
+                    if r <= c.get_num_decompositions() {
+                        tlm.set_next_pair(idx, c.get_num_bytes(r));
+                    }
+                }
+            }
+        }
+    }
+
+    /// A tile part's header: the SOT segment (`parts` its index and count, or the single
+    /// part's) and the SOD marker, with upstream's errors.
+    fn write_part_header(
+        &mut self,
+        file: &mut dyn Outfile,
+        bytes: u32,
+        parts: Option<(u8, u8)>,
+        codes: (u32, u32),
+        lines: (u32, u32),
+    ) -> OjphResult<()> {
+        let ok = match parts {
+            None => self.sot.write(file, bytes),
+            Some((tp, tn)) => self.sot.write_parts(file, bytes, tp, tn),
+        };
+        if !ok {
+            return Err(error(codes.0, FILE, lines.0, "Error writing to file", &[]));
+        }
+        // write start of data
+        if file.write(&SOD.to_be_bytes()) == 0 {
+            return Err(error(codes.1, FILE, lines.1, "Error writing to file", &[]));
+        }
+        Ok(())
+    }
+
+    /// Port of `tile::flush` (external/OpenJPH/src/core/codestream/ojph_tile.cpp:642-832
+    /// @ OpenJPH 0.32.0): the tile's parts, their packets in the progression order.
+    pub(crate) fn flush(&mut self, file: &mut dyn Outfile) -> OjphResult<()> {
+        let max_decompositions = self.max_decompositions();
+        let num_comps = self.num_comps as usize;
+        let div = self.tilepart_div;
+
+        if div == OJPH_TILEPART_NO_DIVISIONS {
+            let n = self.num_bytes;
+            self.write_part_header(file, n, None, (0x00030081, 0x00030082), (653, 658))?;
+        }
+
+        // sequence the writing of precincts according to progression order
+        let po = self.prog_order;
+        if po == prog_order::LRCP || po == prog_order::RLCP {
+            if div == OJPH_TILEPART_NO_DIVISIONS {
+                for r in 0..=max_decompositions {
+                    for c in 0..num_comps {
+                        self.comps[c].write_precincts(r, file);
+                    }
+                }
+            } else if div == OJPH_TILEPART_RESOLUTIONS {
+                for r in 0..=max_decompositions {
+                    let bytes = self
+                        .comps
+                        .iter()
+                        .fold(0u32, |b, c| b.wrapping_add(c.get_num_bytes(r)));
+                    self.write_part_header(
+                        file,
+                        bytes,
+                        Some((r as u8, (max_decompositions + 1) as u8)),
+                        (0x00030083, 0x00030084),
+                        (681, 686),
+                    )?;
+                    for c in 0..num_comps {
+                        self.comps[c].write_precincts(r, file);
+                    }
+                }
+            } else {
+                let num_tileparts = (num_comps as u32).wrapping_mul(max_decompositions + 1);
+                for r in 0..=max_decompositions {
+                    for c in 0..num_comps {
+                        if r <= self.comps[c].get_num_decompositions() {
+                            let bytes = self.comps[c].get_num_bytes(r);
+                            let tp = (c as u32 + r * num_comps as u32) as u8;
+                            self.write_part_header(
+                                file,
+                                bytes,
+                                Some((tp, num_tileparts as u8)),
+                                (0x00030085, 0x00030086),
+                                (702, 706),
+                            )?;
+                            self.comps[c].write_precincts(r, file);
+                        }
+                    }
+                }
+            }
+        } else if po == prog_order::RPCL {
+            for r in 0..=max_decompositions {
+                if div == OJPH_TILEPART_RESOLUTIONS {
+                    let bytes = self
+                        .comps
+                        .iter()
+                        .fold(0u32, |b, c| b.wrapping_add(c.get_num_bytes(r)));
+                    self.write_part_header(
+                        file,
+                        bytes,
+                        Some((r as u8, (max_decompositions + 1) as u8)),
+                        (0x00030087, 0x00030088),
+                        (722, 727),
+                    )?;
+                }
+                loop {
+                    let mut found = false;
+                    let mut comp_num = 0usize;
+                    let mut smallest = Point::new(i32::MAX as u32, i32::MAX as u32);
+                    let mut cur = Point::default();
+                    for c in 0..num_comps {
+                        if !self.comps[c].get_top_left_precinct(r, &mut cur) {
+                            continue;
+                        }
+                        found = true;
+                        if cur.y < smallest.y || (cur.y == smallest.y && cur.x < smallest.x) {
+                            smallest = cur;
+                            comp_num = c;
+                        }
+                    }
+                    if found {
+                        self.comps[comp_num].write_one_precinct(r, file);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        } else if po == prog_order::PCRL {
+            loop {
+                let mut found = false;
+                let (mut comp_num, mut res_num) = (0usize, 0u32);
+                let mut smallest = Point::new(i32::MAX as u32, i32::MAX as u32);
+                let mut cur = Point::default();
+                for c in 0..num_comps {
+                    for r in 0..=self.comps[c].get_num_decompositions() {
+                        if !self.comps[c].get_top_left_precinct(r, &mut cur) {
+                            continue;
+                        }
+                        found = true;
+                        if cur.y < smallest.y
+                            || (cur.y == smallest.y && cur.x < smallest.x)
+                            || (cur.y == smallest.y && cur.x == smallest.x && c < comp_num)
+                            || (cur.y == smallest.y
+                                && cur.x == smallest.x
+                                && c == comp_num
+                                && r < res_num)
+                        {
+                            smallest = cur;
+                            comp_num = c;
+                            res_num = r;
+                        }
+                    }
+                }
+                if found {
+                    self.comps[comp_num].write_one_precinct(res_num, file);
+                } else {
+                    break;
+                }
+            }
+        } else if po == prog_order::CPRL {
+            for c in 0..num_comps {
+                if div == OJPH_TILEPART_COMPONENTS {
+                    let bytes = self.comps[c].num_bytes();
+                    self.write_part_header(
+                        file,
+                        bytes,
+                        Some((c as u8, num_comps as u8)),
+                        (0x0003008A, 0x0003008B),
+                        (797, 802),
+                    )?;
+                }
+                loop {
+                    let mut found = false;
+                    let mut res_num = 0u32;
+                    let mut smallest = Point::new(i32::MAX as u32, i32::MAX as u32);
+                    let mut cur = Point::default();
+                    for r in 0..=max_decompositions {
+                        if !self.comps[c].get_top_left_precinct(r, &mut cur) {
+                            // res exist?
+                            continue;
+                        }
+                        found = true;
+                        if cur.y < smallest.y || (cur.y == smallest.y && cur.x < smallest.x) {
+                            smallest = cur;
+                            res_num = r;
+                        }
+                    }
+                    if found {
+                        self.comps[c].write_one_precinct(res_num, file);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }

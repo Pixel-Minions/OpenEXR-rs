@@ -14,12 +14,12 @@
 
 use crate::arch::div_ceil;
 use crate::base::{Point, Rect, Size};
-use crate::file::Infile;
+use crate::file::{Infile, Outfile};
 use crate::mem::LineBuf;
 use crate::message::{Arg, OjphResult, error, info, warn};
 use crate::params::{
-    AtkSet, CodSet, DfsSet, NltSet, OJPH_COD_DEFAULT, ParamAtk, ParamCap, ParamCod, ParamSiz,
-    ParamSot, ParamTlm, QcdSet,
+    AtkSet, CodSet, DWT_REV53, DfsSet, NltSet, OJPH_COD_DEFAULT, ParamAtk, ParamCap, ParamCod,
+    ParamSiz, ParamSot, ParamTlm, QcdSet, prog_order,
 };
 use crate::tile::{self, Tile};
 
@@ -157,6 +157,8 @@ pub struct Codestream {
     siz_dfs_linked: bool,
     /// `infile != NULL`.
     has_infile: bool,
+    /// `outfile != NULL`.
+    has_outfile: bool,
 }
 
 impl Default for Codestream {
@@ -199,6 +201,7 @@ impl Codestream {
             atk: AtkSet::new(),
             siz_dfs_linked: false,
             has_infile: false,
+            has_outfile: false,
         };
         cs.restart();
         cs
@@ -212,6 +215,7 @@ impl Codestream {
         self.comp_size = Vec::new();
         self.recon_comp_size = Vec::new();
         self.has_infile = false;
+        self.has_outfile = false;
 
         self.num_comps = 0;
         self.employ_color_transform = false;
@@ -407,6 +411,7 @@ impl Codestream {
         self.precinct_scratch = vec![0; self.precinct_scratch_needed_bytes as usize];
 
         let mut tiles = Vec::with_capacity(self.num_tiles.area() as usize);
+        let mut num_tileparts = 0u32;
         let sz = &self.siz;
         for iy in 0..self.num_tiles.h {
             let y0 = sz
@@ -441,6 +446,7 @@ impl Codestream {
                     &mut offset,
                     &mut tps,
                 )?);
+                num_tileparts = num_tileparts.wrapping_add(tps);
             }
         }
         self.tiles = tiles;
@@ -463,6 +469,11 @@ impl Codestream {
 
         self.cur_comp = 0;
         self.cur_line = 0;
+
+        // allocate tlm
+        if self.has_outfile && self.need_tlm {
+            self.tlm.init(num_tileparts)?;
+        }
         Ok(())
     }
 
@@ -956,5 +967,389 @@ impl Codestream {
 
         let l = &self.lines[*comp_num as usize];
         Ok(Some(&l.i32()[..l.size]))
+    }
+}
+
+/// Port of `comment_exchange` (external/OpenJPH/src/core/openjph/ojph_params.h:369-385
+/// @ OpenJPH 0.32.0): a COM segment's text.
+#[derive(Debug, Clone, Default)]
+pub struct CommentExchange {
+    data: Vec<u8>,
+    len: u16,
+    rcom: u16,
+}
+
+impl CommentExchange {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Port of `comment_exchange::set_string`
+    /// (external/OpenJPH/src/core/codestream/ojph_params.cpp:480-489 @ OpenJPH 0.32.0).
+    /// Upstream checks the length the object had before, not the string's.
+    pub fn set_string(&mut self, s: &str) -> OjphResult<()> {
+        let t = s.len();
+        if self.len > 65531 {
+            return Err(error(
+                0x000500C1,
+                "ojph_params.cpp",
+                484,
+                "COM marker string length cannot be larger than 65531",
+                &[],
+            ));
+        }
+        self.data = s.as_bytes().to_vec();
+        self.len = t as u16;
+        self.rcom = 1;
+        Ok(())
+    }
+}
+
+/// `OpenJPH Ver 0.32.0.`, the text of the codestream's first COM segment.
+const VERSION_STR: &str = "OpenJPH Ver 0.32.0.";
+
+impl Codestream {
+    /// `param_siz::set_num_components`.
+    pub fn set_num_components(&mut self, num_comps: u32) {
+        self.siz.set_num_components(num_comps);
+    }
+
+    /// `param_siz::set_component`.
+    pub fn set_component(
+        &mut self,
+        comp_num: u32,
+        downsampling: Point,
+        bit_depth: u32,
+        is_signed: bool,
+    ) {
+        self.siz
+            .set_comp_info(comp_num, downsampling, bit_depth, is_signed);
+    }
+
+    /// `param_siz::set_image_offset`.
+    pub fn set_image_offset(&mut self, offset: Point) {
+        self.siz.set_image_offset(offset);
+    }
+
+    /// `param_siz::set_image_extent`.
+    pub fn set_image_extent(&mut self, extent: Point) {
+        self.siz.set_image_extent(extent);
+    }
+
+    /// `param_cod::set_color_transform`.
+    pub fn set_color_transform(&mut self, color_transform: bool) {
+        self.cod.cod.sg_cod.mc_trans = u8::from(color_transform);
+    }
+
+    /// `param_cod::set_block_dims`.
+    pub fn set_block_dims(&mut self, width: u32, height: u32) -> OjphResult<()> {
+        CodSet::set_block_dims(&mut self.cod.cod, width, height)
+    }
+
+    /// `param_cod::set_num_decomposition`.
+    pub fn set_num_decomposition(&mut self, num_decompositions: u32) -> OjphResult<()> {
+        CodSet::set_num_decomposition(&mut self.cod.cod, num_decompositions)
+    }
+
+    /// `param_cod::set_progression_order`.
+    pub fn set_progression_order(&mut self, name: &str) -> OjphResult<()> {
+        self.cod.set_progression_order(name)
+    }
+
+    /// `param_cod::set_reversible (bool)`.
+    pub fn set_reversible(&mut self, reversible: bool) {
+        self.cod.cod.set_reversible(reversible);
+    }
+
+    /// `param_cod::set_reversible (ui32, bool)`: of component `comp_idx`'s COC segment.
+    pub fn set_reversible_comp(&mut self, comp_idx: u32, reversible: bool) {
+        self.cod.get_or_add_coc(comp_idx).set_reversible(reversible);
+    }
+
+    /// `param_qcd::set_qfactor (float)`.
+    pub fn set_qfactor(&mut self, qfactor: f32) -> OjphResult<()> {
+        self.qcd.set_qfactor(qfactor)
+    }
+
+    /// `param_qcd::set_irrev_quant (float)`.
+    pub fn set_irrev_quant(&mut self, delta: f32) {
+        self.qcd.qcd.set_delta(delta);
+    }
+
+    /// `param_qcd::set_irrev_quant (ui32, float)`.
+    pub fn set_irrev_quant_comp(&mut self, comp_idx: u32, delta: f32) {
+        self.qcd.set_delta_comp(comp_idx, delta);
+    }
+
+    /// `param_nlt::set_nonlinear_transform (ui32, ui8)`.
+    pub fn set_nonlinear_transform(&mut self, comp_num: u32, nl_type: u8) -> OjphResult<()> {
+        self.nlt.set_nonlinear_transform(comp_num, nl_type)
+    }
+
+    /// `param_nlt::set_nonlinear_transform` with a LUT.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_nonlinear_transform_lut(
+        &mut self,
+        comp_num: u32,
+        decoded_bit_depth: u8,
+        decoded_signedness: bool,
+        d_min: u32,
+        d_max: u32,
+        pt_val: u8,
+        num_points: u16,
+        points: &[u32],
+        nl_type: u8,
+    ) -> OjphResult<()> {
+        self.nlt.set_nonlinear_transform_lut(
+            comp_num,
+            decoded_bit_depth,
+            decoded_signedness,
+            d_min,
+            d_max,
+            pt_val,
+            num_points,
+            points,
+            nl_type,
+        )
+    }
+
+    /// Port of `codestream::set_tilepart_divisions`
+    /// (external/OpenJPH/src/core/codestream/ojph_codestream.cpp:115-124 @ OpenJPH 0.32.0), the
+    /// public one, which makes the divisions' flags.
+    pub fn set_tilepart_divisions(&mut self, at_resolutions: bool, at_components: bool) {
+        let mut value = 0;
+        if at_resolutions {
+            value |= OJPH_TILEPART_RESOLUTIONS;
+        }
+        if at_components {
+            value |= OJPH_TILEPART_COMPONENTS;
+        }
+        self.tilepart_div = value;
+    }
+
+    /// Port of `codestream::request_tlm_marker`
+    /// (external/OpenJPH/src/core/codestream/ojph_codestream_local.cpp:1153-1156 @ OpenJPH 0.32.0).
+    pub fn request_tlm_marker(&mut self, needed: bool) {
+        self.need_tlm = needed;
+    }
+
+    /// Port of `codestream::write_headers`
+    /// (external/OpenJPH/src/core/codestream/ojph_codestream_local.cpp:556-704 @ OpenJPH 0.32.0):
+    /// the segments checked and completed, the codestream's structure made, and the main header
+    /// written. `set_profile` is not ported (Core sets no profile), so the IMF and broadcast
+    /// checks are not reached.
+    pub fn write_headers(
+        &mut self,
+        file: &mut dyn Outfile,
+        comments: &[CommentExchange],
+    ) -> OjphResult<()> {
+        // set the tile size if it was not set by the user
+        let tile_size = self.siz.get_tile_size();
+        if tile_size.h == 0 && tile_size.w == 0 {
+            let img_offset = self.siz.get_image_offset();
+            let img_extent = self.siz.get_image_extent();
+            let t = Size::new(
+                img_extent.x.wrapping_add(img_offset.x),
+                img_extent.y.wrapping_add(img_offset.y),
+            );
+            self.siz.set_tile_size(t);
+        }
+        self.siz.check_validity()?;
+        self.cod.check_validity(&self.siz)?;
+        self.cod.update_atk(&mut self.atk)?;
+        self.qcd.check_validity(&self.siz, &self.cod)?;
+        self.cap.check_validity(
+            self.cod.cod.get_wavelet_kern() == DWT_REV53,
+            self.qcd.get_magb(),
+        );
+        self.nlt
+            .check_validity(&mut self.siz, &self.cod, &self.atk)?;
+
+        let po = self.cod.cod.sg_cod.prog_order;
+        if (po == prog_order::LRCP || po == prog_order::RLCP)
+            && self.tilepart_div == OJPH_TILEPART_COMPONENTS
+        {
+            self.tilepart_div |= OJPH_TILEPART_RESOLUTIONS;
+            info(
+                0x00030021,
+                FILE,
+                587,
+                "For LRCP and RLCP progression orders, tilepart divisions at the component level, means that we have a tilepart for every resolution and component.\n",
+                &[],
+            );
+        }
+        if po == prog_order::RPCL && (self.tilepart_div & OJPH_TILEPART_COMPONENTS) != 0 {
+            self.tilepart_div &= !OJPH_TILEPART_COMPONENTS;
+            warn(
+                0x00030021,
+                FILE,
+                595,
+                "For RPCL progression, having tilepart divisions at the component level means a tilepart for every precinct, which does not make sense, since we can have no more than 255 tile parts. This has been corrected by removing tilepart divisions at the component level.",
+                &[],
+            );
+        }
+        if po == prog_order::PCRL && self.tilepart_div != 0 {
+            self.tilepart_div = 0;
+            warn(
+                0x00030022,
+                FILE,
+                605,
+                "For PCRL progression, having tilepart divisions at the component level or the resolution level means a tile part for every precinct, which does not make sense, since we can have no more than 255 tile parts.  This has been corrected by removing tilepart divisions; use another progression if you want tileparts.",
+                &[],
+            );
+        }
+        if po == prog_order::CPRL && (self.tilepart_div & OJPH_TILEPART_RESOLUTIONS) != 0 {
+            self.tilepart_div &= !OJPH_TILEPART_RESOLUTIONS;
+            warn(
+                0x00030023,
+                FILE,
+                615,
+                "For CPRL progression, having tilepart divisions at the resolution level means a tile part for every precinct, which does not make sense, since we can have no more than 255 tile parts. This has been corrected by removing tilepart divisions at the resolution level.",
+                &[],
+            );
+        }
+
+        if self.planar == -1 {
+            // not initialized
+            self.planar = i32::from(self.cod.is_employing_color_transform());
+        } else if self.planar == 1 && self.cod.is_employing_color_transform() {
+            // planar is chosen
+            return Err(error(
+                0x00030021,
+                FILE,
+                631,
+                "the planar interface option cannot be used when colour transform is employed",
+                &[],
+            ));
+        }
+
+        self.has_outfile = true;
+        self.pre_alloc()?;
+        self.finalize_alloc()?;
+
+        let w = |file: &mut dyn Outfile, b: &[u8], code: u32, line: u32| -> OjphResult<()> {
+            if file.write(b) != b.len() {
+                return Err(error(code, FILE, line, "Error writing to file", &[]));
+            }
+            Ok(())
+        };
+        let ok = |r: bool, code: u32, line: u32| -> OjphResult<()> {
+            if !r {
+                return Err(error(code, FILE, line, "Error writing to file", &[]));
+            }
+            Ok(())
+        };
+        w(file, &marker::SOC.to_be_bytes(), 0x00030022, 645)?;
+        ok(self.siz.write(file), 0x00030023, 648)?;
+        ok(self.cap.write(file), 0x00030024, 651)?;
+        ok(self.cod.write(file), 0x00030025, 654)?;
+        ok(self.cod.write_coc(file, self.num_comps), 0x0003002E, 657)?;
+        ok(self.qcd.write(file), 0x00030026, 660)?;
+        ok(self.qcd.write_qcc(file, self.num_comps), 0x0003002D, 663)?;
+        ok(self.nlt.write(file), 0x00030027, 666)?;
+
+        let data_len = VERSION_STR.len();
+        w(file, &marker::COM.to_be_bytes(), 0x00030028, 676)?;
+        w(
+            file,
+            &((data_len + 4) as u16).to_be_bytes(),
+            0x0003002D,
+            679,
+        )?;
+        // 1 for General use (IS 8859-15:1999 (Latin) values)
+        w(file, &1u16.to_be_bytes(), 0x0003002E, 683)?;
+        w(file, VERSION_STR.as_bytes(), 0x0003002F, 685)?;
+
+        for c in comments {
+            w(file, &marker::COM.to_be_bytes(), 0x00030029, 692)?;
+            w(file, &c.len.wrapping_add(4).to_be_bytes(), 0x0003002A, 695)?;
+            w(file, &c.rcom.to_be_bytes(), 0x0003002B, 699)?;
+            w(file, &c.data[..usize::from(c.len)], 0x0003002C, 701)?;
+        }
+        Ok(())
+    }
+
+    /// Port of `codestream::exchange`
+    /// (external/OpenJPH/src/core/codestream/ojph_codestream_local.cpp:1187-1235 @ OpenJPH 0.32.0): with `push`, the line last handed out (upstream's `line`)
+    /// pushed into the tiles; then the next line to fill, of component `next_component`, or
+    /// `None` when every line is in.
+    pub fn exchange(
+        &mut self,
+        push: bool,
+        next_component: &mut u32,
+    ) -> OjphResult<Option<&mut [i32]>> {
+        if push {
+            let mut success = false;
+            while !success {
+                success = true;
+                for i in 0..self.num_tiles.w {
+                    let idx = (i + self.cur_tile_row * self.num_tiles.w) as usize;
+                    let c = self.cur_comp as usize;
+                    success &= self.tiles[idx].push(&self.lines[c], self.cur_comp)?;
+                    if !success {
+                        break;
+                    }
+                }
+                self.cur_tile_row += u32::from(!success);
+                if self.cur_tile_row >= self.num_tiles.h {
+                    self.cur_tile_row = 0;
+                }
+            }
+
+            if self.planar != 0 {
+                // process one component at a time
+                self.cur_line += 1;
+                if self.cur_line >= self.comp_size[self.cur_comp as usize].h {
+                    self.cur_line = 0;
+                    self.cur_tile_row = 0;
+                    self.cur_comp += 1;
+                    if self.cur_comp >= self.num_comps {
+                        *next_component = 0;
+                        return Ok(None);
+                    }
+                }
+            } else {
+                // process all component for a line
+                self.cur_comp += 1;
+                if self.cur_comp >= self.num_comps {
+                    self.cur_comp = 0;
+                    self.cur_line += 1;
+                    if self.cur_line >= self.comp_size[self.cur_comp as usize].h {
+                        *next_component = 0;
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+
+        *next_component = self.cur_comp;
+        let l = &mut self.lines[self.cur_comp as usize];
+        let n = l.size;
+        Ok(Some(&mut l.i32_mut()[..n]))
+    }
+
+    /// Port of `codestream::flush`
+    /// (external/OpenJPH/src/core/codestream/ojph_codestream_local.cpp:1159-1175 @ OpenJPH 0.32.0): the packet headers made, the TLM segment and the tiles
+    /// written, then the EOC marker.
+    pub fn flush(&mut self, file: &mut dyn Outfile) -> OjphResult<()> {
+        let mut scratch = std::mem::take(&mut self.precinct_scratch);
+        for t in &mut self.tiles {
+            t.prepare_for_flush(&mut scratch);
+        }
+        self.precinct_scratch = scratch;
+        if self.need_tlm {
+            // write tlm
+            for t in &self.tiles {
+                t.fill_tlm(&mut self.tlm);
+            }
+            self.tlm.write(file);
+        }
+        for t in &mut self.tiles {
+            t.flush(file)?;
+        }
+        if file.write(&marker::EOC.to_be_bytes()) == 0 {
+            return Err(error(0x00030071, FILE, 1174, "Error writing to file", &[]));
+        }
+        Ok(())
     }
 }

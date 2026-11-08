@@ -8,7 +8,7 @@
 
 use crate::base::{Point, Rect};
 use crate::codestream::Codestream;
-use crate::file::Infile;
+use crate::file::{Infile, Outfile};
 use crate::mem::LineBuf;
 use crate::message::OjphResult;
 use crate::resolution::{self, Resolution};
@@ -128,5 +128,61 @@ impl TileComp {
             Some(r) => r.parse_one_precinct(scratch, data_left, file),
             None => Ok(()),
         }
+    }
+}
+
+impl TileComp {
+    /// Port of `tile_comp::get_line`
+    /// (external/OpenJPH/src/core/codestream/ojph_tile_comp.cpp:92-95 @ OpenJPH 0.32.0).
+    pub(crate) fn get_line(&mut self) -> &mut LineBuf {
+        let top = self.num_decomps as usize;
+        self.res[top].get_line()
+    }
+
+    /// Port of `tile_comp::push_line`
+    /// (external/OpenJPH/src/core/codestream/ojph_tile_comp.cpp:98-101 @ OpenJPH 0.32.0).
+    pub(crate) fn push_line(&mut self) -> OjphResult<()> {
+        resolution::push_line(&mut self.res, self.num_decomps as usize)
+    }
+
+    /// Port of `tile_comp::prepare_precincts`
+    /// (external/OpenJPH/src/core/codestream/ojph_tile_comp.cpp:110-114 @ OpenJPH 0.32.0).
+    pub(crate) fn prepare_precincts(&mut self, scratch: &mut [u8]) -> u32 {
+        self.num_bytes =
+            resolution::prepare_precinct(&mut self.res, self.num_decomps as usize, scratch);
+        self.num_bytes
+    }
+
+    /// Port of `tile_comp::write_precincts`
+    /// (external/OpenJPH/src/core/codestream/ojph_tile_comp.cpp:117-129 @ OpenJPH 0.32.0): of
+    /// resolution `res_num`, none above the finest (an unsigned walk, as `parse_precincts`).
+    pub(crate) fn write_precincts(&self, res_num: u32, file: &mut dyn Outfile) {
+        if res_num <= self.num_decomps {
+            self.res[res_num as usize].write_precincts(file);
+        }
+    }
+
+    /// Port of `tile_comp::write_one_precinct`
+    /// (external/OpenJPH/src/core/codestream/ojph_tile_comp.cpp:148-159 @ OpenJPH 0.32.0): a
+    /// signed walk, as `get_top_left_precinct`.
+    pub(crate) fn write_one_precinct(&mut self, res_num: u32, file: &mut dyn Outfile) {
+        let resolution_num = self.num_decomps as i32 - res_num as i32;
+        let r = if resolution_num > 0 {
+            res_num
+        } else {
+            self.num_decomps
+        };
+        self.res[r as usize].write_one_precinct(file);
+    }
+
+    /// `tile_comp::get_num_bytes ()`.
+    pub(crate) fn num_bytes(&self) -> u32 {
+        self.num_bytes
+    }
+
+    /// Port of `tile_comp::get_num_bytes (ui32)`
+    /// (external/OpenJPH/src/core/codestream/ojph_tile_comp.cpp:195-198 @ OpenJPH 0.32.0).
+    pub(crate) fn get_num_bytes(&self, resolution_num: u32) -> u32 {
+        resolution::get_num_bytes(&self.res, self.num_decomps as usize, resolution_num)
     }
 }

@@ -214,7 +214,7 @@ fn uvlc_init_wide_table(tbl: &mut [u32]) {
 /// The rows of `table0.h` (external/OpenJPH/src/core/coding/table0.h:1-443 @ OpenJPH 0.32.0):
 /// `c_q`, `rho`, `u_off`, `e_k`, `e_1`, `cwd`, `cwd_len`.
 #[rustfmt::skip]
-const TBL0: [[u8; 7]; 444] = [
+pub(crate) const TBL0: [[u8; 7]; 444] = [
     [0, 0x1, 0x0, 0x0, 0x0, 0x06, 4],
     [0, 0x1, 0x1, 0x1, 0x1, 0x3F, 7],
     [0, 0x2, 0x0, 0x0, 0x0, 0x00, 3],
@@ -663,7 +663,7 @@ const TBL0: [[u8; 7]; 444] = [
 /// The rows of `table1.h` (external/OpenJPH/src/core/coding/table1.h:1-357 @ OpenJPH 0.32.0):
 /// `c_q`, `rho`, `u_off`, `e_k`, `e_1`, `cwd`, `cwd_len`.
 #[rustfmt::skip]
-const TBL1: [[u8; 7]; 358] = [
+pub(crate) const TBL1: [[u8; 7]; 358] = [
     [0, 0x1, 0x0, 0x0, 0x0, 0x00, 3],
     [0, 0x1, 0x1, 0x1, 0x1, 0x27, 6],
     [0, 0x2, 0x0, 0x0, 0x0, 0x06, 3],

@@ -310,6 +310,26 @@ section. An entry says:
   most 31 for its floats' 32-bit samples.
 - **Status:** matched, as x86-64 computes it (`crates/openexr-openjph/src/subband.rs`).
 
+### I-27. Core's planar HTJ2K encoder skips a component by the wrong channel's height
+
+- **Upstream:** the planar loop of `ht_apply_impl` skips codestream component `c` when
+  `encode->channels[c].height` is 0, a file channel's index used for a codestream component's
+  (`src/lib/OpenEXRCore/internal_ht.cpp:945-947` @ v3.5.3); with R, G and B reordered first,
+  the two differ, and a component could be skipped, or not, by another channel's height.
+- **Who notices:** writers of subsampled HTJ2K parts with RGB channels and a channel of no rows
+  in a chunk; the decoder checks the file channel.
+- **Status:** matched (`crates/openexr-core/src/internal_ht.rs`); listed for the owner's review.
+
+### I-28. OpenJPH checks a comment's previous length
+
+- **Upstream:** `comment_exchange::set_string` refuses a string longer than 65531 bytes by
+  testing `len`, the object's previous length, instead of the new string's
+  (`external/OpenJPH/src/core/codestream/ojph_params.cpp:480-489` @ OpenJPH 0.32.0), so a
+  longer string is taken and its length truncated to 16 bits.
+- **Who notices:** no one through OpenEXR, whose comment is short.
+- **Status:** matched (`crates/openexr-openjph/src/codestream.rs`); listed for the owner's
+  review.
+
 ## Messages and debug output
 
 ### I-7. A deep tile's unpacked size error prints the packed size
@@ -619,3 +639,26 @@ section. An entry says:
 - **The port:** writes where upstream writes while that is inside the line's storage, and
   refuses (an OpenJPH error) past it.
 - **Status:** matched where upstream stays in its memory; the port's choice past it, as U-9.
+
+### U-19. OpenJPH's block encoder reaches past its line arrays for 1024-wide codeblocks
+
+- **Upstream:** `ojph_encode_codeblock32/64` keep a row's exponents and contexts in arrays of
+  513 bytes (`e_val`, `cx_val`), two samples a byte plus one; for a codeblock 1024 samples wide
+  the first row writes the 514th byte and the next rows read it, and the 514th byte of `cx_val`
+  is read without being written
+  (`external/OpenJPH/src/core/coding/ojph_block_encoder.cpp:542-1023` @ OpenJPH 0.32.0).
+- **Who notices:** writers of codestreams with 1024-wide codeblocks; OpenEXR's are 128 wide.
+- **The port:** gives the arrays room for it, zeroed, which is what the bytes would hold if
+  nothing else wrote them.
+- **Status:** the port's choice, as U-9.
+
+### U-20. OpenJPH has no conversion for an irreversible codeblock of 64-bit samples
+
+- **Upstream:** `codeblock_fun::init` sets `tx_to_cb64` to NULL for an irreversible
+  codeblock (`external/OpenJPH/src/core/codestream/ojph_codeblock_fun.cpp:147-341`
+  @ OpenJPH 0.32.0), and `codeblock::push` calls it for one whose precision exceeds 32 bits.
+- **Who notices:** writers of irreversible codestreams of more than 30 bit planes; OpenEXR's
+  lossy components are coded in 32 bits.
+- **The port:** refuses the codeblock (an OpenJPH error), which Core reports as
+  `EXR_ERR_INCORRECT_CHUNK`.
+- **Status:** the port's choice, as U-9.

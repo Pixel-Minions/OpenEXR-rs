@@ -271,6 +271,78 @@ impl Subband {
         debug_assert!(colx == self.num_blocks.w && coly == self.num_blocks.h);
     }
 
+    /// `subband::get_line`: the line to fill, `None` for an empty subband (upstream's NULL).
+    pub(crate) fn get_line(&mut self) -> Option<&mut LineBuf> {
+        self.lines.as_mut()
+    }
+
+    /// Port of `subband::exchange_buf`
+    /// (external/OpenJPH/src/core/codestream/ojph_subband.cpp:279-289 @ OpenJPH 0.32.0): the subband's line and `l` swap their samples.
+    pub(crate) fn exchange_buf(&mut self, l: &mut LineBuf) {
+        if self.empty {
+            return;
+        }
+        let mine = self
+            .lines
+            .as_mut()
+            .expect("a subband that is not empty has its line");
+        debug_assert!(l.pre_size == mine.pre_size && l.size == mine.size && l.flags == mine.flags);
+        std::mem::swap(&mut mine.data, &mut l.data);
+    }
+
+    /// Port of `subband::push_line`
+    /// (external/OpenJPH/src/core/codestream/ojph_subband.cpp:292-333 @ OpenJPH 0.32.0): the line into the codeblocks, a row of codeblocks coded when
+    /// it is complete.
+    pub(crate) fn push_line(&mut self) -> OjphResult<()> {
+        if self.empty {
+            return Ok(());
+        }
+
+        // push to codeblocks
+        let line = self
+            .lines
+            .as_ref()
+            .expect("a subband that is not empty has its line");
+        for block in &mut self.blocks {
+            block.push(line)?;
+        }
+        self.cur_line += 1;
+        if self.cur_line >= self.cur_cb_height {
+            for block in &mut self.blocks {
+                let idx = block.coded_cb;
+                block.encode(&mut self.coded_cbs[idx])?;
+            }
+
+            self.cur_cb_row += 1;
+            if self.cur_cb_row < self.num_blocks.h {
+                self.cur_line = 0;
+
+                let tbx0 = self.band_rect.org.x;
+                let tby0 = self.band_rect.org.y;
+                let tbx1 = self.band_rect.org.x.wrapping_add(self.band_rect.siz.w);
+                let tby1 = self.band_rect.org.y.wrapping_add(self.band_rect.siz.h);
+                let nominal = Size::new(1 << self.xcb_prime, 1 << self.ycb_prime);
+
+                let x_lower_bound = (tbx0 >> self.xcb_prime) << self.xcb_prime;
+                let y_lower_bound = (tby0 >> self.ycb_prime) << self.ycb_prime;
+                let cby0 = y_lower_bound.wrapping_add(self.cur_cb_row.wrapping_mul(nominal.h));
+                let cby1 = tby1.min(cby0.wrapping_add(nominal.h));
+
+                let mut cb_size = Size::new(0, cby1.wrapping_sub(tby0.max(cby0)));
+                self.cur_cb_height = cb_size.h as i32;
+                for i in 0..self.num_blocks.w {
+                    let cbx0 = tbx0.max(x_lower_bound.wrapping_add(i.wrapping_mul(nominal.w)));
+                    let cbx1 =
+                        tbx1.min(x_lower_bound.wrapping_add((i + 1).wrapping_mul(nominal.w)));
+                    cb_size.w = cbx1.wrapping_sub(cbx0);
+                    let idx = (i + self.cur_cb_row * self.num_blocks.w) as usize;
+                    self.blocks[i as usize].recreate(cb_size, idx);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Port of `subband::pull_line`
     /// (external/OpenJPH/src/core/codestream/ojph_subband.cpp:336-380 @ OpenJPH 0.32.0): the next line, a row of codeblocks decoded when the last
     /// one is used up; `None` for an empty subband (upstream's NULL line).

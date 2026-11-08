@@ -513,13 +513,15 @@ fn headers_rewrite_as_the_wheel_wrote_them() {
 /// ones ([`LOSSY`]) are not idempotent: their encoding is checked on the original pixels, by
 /// [`images_encode_from_their_pixels_as_the_wheel_wrote_them`] and the C++ half of upstream's
 /// compression tests (`upstream_tests::compression`).
-const ENCODES: [Compression; 7] = [
+const ENCODES: [Compression; 9] = [
     Compression::NONE,
     Compression::RLE,
     Compression::ZIPS,
     Compression::ZIP,
     Compression::PIZ,
     Compression::PXR24,
+    Compression::HTJ2K256,
+    Compression::HTJ2K32,
     Compression::ZSTD,
 ];
 
@@ -690,11 +692,12 @@ fn images_encode_as_the_wheel_wrote_them() {
 
 /// The lossy compressions the port encodes: their files are compared from the pixels they
 /// were written from ([`images_encode_from_their_pixels_as_the_wheel_wrote_them`]).
-const LOSSY: [Compression; 4] = [
+const LOSSY: [Compression; 5] = [
     Compression::B44,
     Compression::B44A,
     Compression::DWAA,
     Compression::DWAB,
+    Compression::LJ2K,
 ];
 
 /// The file the port writes for `src` from the pixels `oracle/write_images.py` wrote it from:

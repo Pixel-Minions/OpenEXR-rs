@@ -199,12 +199,15 @@ fn rev_horz_ana_t<T: RevInt>(
 /// @ OpenJPH 0.32.0).
 pub(crate) fn rev_horz_ana(
     atk: &ParamAtk,
-    ldst: &mut LineBuf,
-    hdst: &mut LineBuf,
+    ldst: Option<&mut LineBuf>,
+    hdst: Option<&mut LineBuf>,
     src: &LineBuf,
     width: u32,
     even: bool,
 ) {
+    let (mut d1, mut d2) = (None, None);
+    let ldst = or_dummy(ldst, &mut d1, src);
+    let hdst = or_dummy(hdst, &mut d2, src);
     if (src.flags & LFT_32BIT) != 0 {
         let (l, lp0) = ldst.raw_i32_mut();
         let (h, hp0) = hdst.raw_i32_mut();
@@ -294,7 +297,8 @@ fn rev_horz_syn_t<T: RevInt>(
 }
 
 /// A line upstream passes as NULL: a line of one sample, which the kernels do not read (a
-/// subband of a width-1 line is empty, and only its other band is used).
+/// subband of a width-1 line is empty, and only its other band is used). `like` gives the
+/// kind of line.
 fn or_dummy<'a>(
     line: Option<&'a mut LineBuf>,
     dummy: &'a mut Option<LineBuf>,
@@ -367,12 +371,15 @@ pub(crate) fn irv_vert_times_k(k: f32, aug: &mut LineBuf, repeat: u32) {
 /// @ OpenJPH 0.32.0).
 pub(crate) fn irv_horz_ana(
     atk: &ParamAtk,
-    ldst: &mut LineBuf,
-    hdst: &mut LineBuf,
+    ldst: Option<&mut LineBuf>,
+    hdst: Option<&mut LineBuf>,
     src: &LineBuf,
     width: u32,
     mut even: bool,
 ) {
+    let (mut d1, mut d2) = (None, None);
+    let ldst = or_dummy(ldst, &mut d1, src);
+    let hdst = or_dummy(hdst, &mut d2, src);
     let src = src.f32();
     let (l, lp0) = ldst.raw_f32_mut();
     let (h, hp0) = hdst.raw_f32_mut();
@@ -552,7 +559,7 @@ mod tests {
                 src.i32_mut()[..w].copy_from_slice(&samples);
                 let mut l = LineBuf::new_i32(lw.max(1), 8);
                 let mut h = LineBuf::new_i32(hw.max(1), 8);
-                rev_horz_ana(atk, &mut l, &mut h, &src, width, even);
+                rev_horz_ana(atk, Some(&mut l), Some(&mut h), &src, width, even);
                 let mut dst = LineBuf::new_i32(w, 0);
                 rev_horz_syn(atk, &mut dst, Some(&mut l), Some(&mut h), width, even);
                 assert_eq!(
@@ -568,7 +575,7 @@ mod tests {
                 let want: Vec<i64> = src.i64()[..w].to_vec();
                 let mut l = LineBuf::new_i64(lw.max(1), 8);
                 let mut h = LineBuf::new_i64(hw.max(1), 8);
-                rev_horz_ana(atk, &mut l, &mut h, &src, width, even);
+                rev_horz_ana(atk, Some(&mut l), Some(&mut h), &src, width, even);
                 let mut dst = LineBuf::new_i64(w, 0);
                 rev_horz_syn(atk, &mut dst, Some(&mut l), Some(&mut h), width, even);
                 assert_eq!(

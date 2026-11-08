@@ -10,14 +10,15 @@
 
 use crate::base::{Point, Rect, Size};
 use crate::codestream::Codestream;
-use crate::file::Infile;
+use crate::file::{Infile, Outfile};
 use crate::mem::{LineBuf, LineData};
 use crate::message::{Arg, OjphError, OjphResult, error};
 use crate::params::{BIDIR_DWT, HORZ_DWT, NO_DWT, ParamAtk, VERT_DWT};
 use crate::precinct::Precinct;
 use crate::subband::{ResInfo, Subband};
 use crate::transform::{
-    irv_horz_syn, irv_vert_step, irv_vert_times_k, rev_horz_syn, rev_vert_step,
+    irv_horz_ana, irv_horz_syn, irv_vert_step, irv_vert_times_k, rev_horz_ana, rev_horz_syn,
+    rev_vert_step,
 };
 
 const FILE: &str = "ojph_resolution.cpp";
@@ -444,7 +445,7 @@ impl Resolution {
             if *data_left == 0 {
                 break;
             }
-            let p = self.precincts[i as usize];
+            let p = &self.precincts[i as usize];
             p.parse(
                 &mut self.bands,
                 scratch,
@@ -472,7 +473,7 @@ impl Resolution {
         if *data_left == 0 {
             return Ok(());
         }
-        let p = self.precincts[idx];
+        let p = &self.precincts[idx];
         p.parse(
             &mut self.bands,
             scratch,
@@ -703,4 +704,246 @@ pub(crate) fn pull_line(res: &mut [Resolution], r: usize) -> OjphResult<Option<&
     let l = this.ssp[aug].line;
     horz_syn!(l, true);
     Ok(Some(&mut this.lines[l]))
+}
+
+impl Resolution {
+    /// Port of `resolution::get_line`
+    /// (external/OpenJPH/src/core/codestream/ojph_resolution.cpp:530-544 @ OpenJPH 0.32.0): the line to fill next, `sig` for an even row, `aug` for an
+    /// odd one.
+    pub(crate) fn get_line(&mut self) -> &mut LineBuf {
+        let i = if self.vert_even {
+            self.num_steps as usize
+        } else {
+            self.num_steps as usize + 1
+        };
+        self.cur_line += 1;
+        self.ssp[i].active = true;
+        let l = self.ssp[i].line;
+        &mut self.lines[l]
+    }
+
+    /// Port of `resolution::write_precincts`
+    /// (external/OpenJPH/src/core/codestream/ojph_resolution.cpp:967-972 @ OpenJPH 0.32.0).
+    pub(crate) fn write_precincts(&self, file: &mut dyn Outfile) {
+        for p in &self.precincts {
+            p.write(&self.bands, file);
+        }
+    }
+
+    /// Port of `resolution::write_one_precinct`
+    /// (external/OpenJPH/src/core/codestream/ojph_resolution.cpp:987-998 @ OpenJPH 0.32.0).
+    pub(crate) fn write_one_precinct(&mut self, file: &mut dyn Outfile) {
+        let idx = self.cur_precinct_loc.x as usize
+            + self.cur_precinct_loc.y as usize * self.num_precincts.w as usize;
+        self.precincts[idx].write(&self.bands, file);
+        self.advance();
+    }
+
+    /// `resolution::get_num_bytes ()`.
+    pub(crate) fn num_bytes(&self) -> u32 {
+        self.num_bytes
+    }
+}
+
+/// Port of `resolution::prepare_precinct`
+/// (external/OpenJPH/src/core/codestream/ojph_resolution.cpp:952-964 @ OpenJPH 0.32.0): the
+/// packet headers of resolution `r` and those below it; their bytes.
+pub(crate) fn prepare_precinct(res: &mut [Resolution], r: usize, scratch: &mut [u8]) -> u32 {
+    let (lower, rest) = res.split_at_mut(r);
+    let this = &mut rest[0];
+    let mut lower_resolutions_bytes = 0u32;
+    if this.res_num != 0 {
+        lower_resolutions_bytes = prepare_precinct(lower, r - 1, scratch);
+    }
+
+    this.num_bytes = 0;
+    for p in &mut this.precincts {
+        let b = p.prepare_precinct(&this.bands, scratch, this.tag_tree_size, &this.level_index);
+        this.num_bytes = this.num_bytes.wrapping_add(b);
+    }
+    this.num_bytes.wrapping_add(lower_resolutions_bytes)
+}
+
+/// Port of `resolution::get_num_bytes (ui32)`
+/// (external/OpenJPH/src/core/codestream/ojph_resolution.cpp:1038-1047 @ OpenJPH 0.32.0), from
+/// resolution `r` down.
+pub(crate) fn get_num_bytes(res: &[Resolution], r: usize, resolution_num: u32) -> u32 {
+    let this = &res[r];
+    if this.res_num == resolution_num {
+        return this.num_bytes;
+    }
+    if resolution_num < this.res_num {
+        return get_num_bytes(res, r - 1, resolution_num);
+    }
+    0
+}
+
+/// Port of `resolution::push_line`
+/// (external/OpenJPH/src/core/codestream/ojph_resolution.cpp:547-710 @ OpenJPH 0.32.0): the line given by `get_line`, through the wavelet analysis,
+/// into the subbands and the resolution below (upstream analyses in both directions whatever
+/// the DFS segment says, as its encoder writes none).
+pub(crate) fn push_line(res: &mut [Resolution], r: usize) -> OjphResult<()> {
+    let (lower, rest) = res.split_at_mut(r);
+    let this = &mut rest[0];
+    let sig = this.num_steps as usize;
+    let aug = sig + 1;
+    if this.res_num == 0 {
+        let l = if this.vert_even {
+            this.ssp[sig].line
+        } else {
+            this.ssp[aug].line
+        };
+        this.bands[0].exchange_buf(&mut this.lines[l]);
+        return this.bands[0].push_line();
+    }
+
+    let width = this.res_rect.siz.w;
+    if width == 0 {
+        return Ok(());
+    }
+    let rev = this.reversible;
+
+    // the horizontal analysis of line `src` into the resolution below and band 1 (`low`), or
+    // into bands 2 and 3, and their pushes
+    macro_rules! horz_ana {
+        ($src:expr, $low:expr) => {{
+            let src = $src;
+            if $low {
+                let ldst = Some(lower[r - 1].get_line());
+                let hdst = this.bands[1].get_line();
+                if rev {
+                    rev_horz_ana(
+                        &this.atk,
+                        ldst,
+                        hdst,
+                        &this.lines[src],
+                        width,
+                        this.horz_even,
+                    );
+                } else {
+                    irv_horz_ana(
+                        &this.atk,
+                        ldst,
+                        hdst,
+                        &this.lines[src],
+                        width,
+                        this.horz_even,
+                    );
+                }
+                this.bands[1].push_line()?;
+                push_line(&mut *lower, r - 1)?;
+            } else {
+                let (b2, b3) = this.bands.split_at_mut(3);
+                let ldst = b2[2].get_line();
+                let hdst = b3[0].get_line();
+                if rev {
+                    rev_horz_ana(
+                        &this.atk,
+                        ldst,
+                        hdst,
+                        &this.lines[src],
+                        width,
+                        this.horz_even,
+                    );
+                } else {
+                    irv_horz_ana(
+                        &this.atk,
+                        ldst,
+                        hdst,
+                        &this.lines[src],
+                        width,
+                        this.horz_even,
+                    );
+                }
+                this.bands[2].push_line()?;
+                this.bands[3].push_line()?;
+            }
+        }};
+    }
+
+    if this.res_rect.siz.h > 1 {
+        if !this.vert_even && this.cur_line < this.res_rect.siz.h {
+            this.vert_even = !this.vert_even;
+            return Ok(());
+        }
+
+        loop {
+            // vertical transform
+            let num_steps = this.num_steps as usize;
+            for i in 0..num_steps {
+                if this.ssp[aug].active && (this.ssp[sig].active || this.ssp[i].active) {
+                    let dp = this.ssp[aug].line;
+                    let sp1 = if this.ssp[sig].active {
+                        this.ssp[sig].line
+                    } else {
+                        this.ssp[i].line
+                    };
+                    let sp2 = if this.ssp[i].active {
+                        this.ssp[i].line
+                    } else {
+                        this.ssp[sig].line
+                    };
+                    let s = *this.atk.get_step((num_steps - i - 1) as u32);
+                    let mut d = std::mem::take(&mut this.lines[dp]);
+                    if rev {
+                        rev_vert_step(&s, &this.lines[sp1], &this.lines[sp2], &mut d, width, false);
+                    } else {
+                        irv_vert_step(&s, &this.lines[sp1], &this.lines[sp2], &mut d, width, false);
+                    }
+                    this.lines[dp] = d;
+                }
+                let t = this.ssp[aug];
+                this.ssp[aug] = this.ssp[i];
+                this.ssp[i] = this.ssp[sig];
+                this.ssp[sig] = t;
+            }
+
+            if this.ssp[aug].active {
+                let l = this.ssp[aug].line;
+                if !rev {
+                    let k = this.atk.get_k();
+                    irv_vert_times_k(k, &mut this.lines[l], width);
+                }
+                horz_ana!(l, false);
+                this.ssp[aug].active = false;
+                this.rows_to_produce = this.rows_to_produce.wrapping_sub(1);
+            }
+            if this.ssp[sig].active {
+                let l = this.ssp[sig].line;
+                if !rev {
+                    let k_inv = 1.0f32 / this.atk.get_k();
+                    irv_vert_times_k(k_inv, &mut this.lines[l], width);
+                }
+                horz_ana!(l, true);
+                this.ssp[sig].active = false;
+                this.rows_to_produce = this.rows_to_produce.wrapping_sub(1);
+            }
+            this.vert_even = !this.vert_even;
+            if !(this.cur_line >= this.res_rect.siz.h && this.rows_to_produce > 0) {
+                break;
+            }
+        }
+    } else if this.vert_even {
+        // horizontal transform
+        let l = this.ssp[sig].line;
+        horz_ana!(l, true);
+    } else {
+        // vertical transform
+        let l = this.ssp[aug].line;
+        let line = &mut this.lines[l];
+        match &line.data {
+            LineData::F32(_) => line.f32_mut()[..width as usize]
+                .iter_mut()
+                .for_each(|v| *v *= 2.0),
+            LineData::I64(_) => line.i64_mut()[..width as usize]
+                .iter_mut()
+                .for_each(|v| *v <<= 1),
+            _ => line.i32_mut()[..width as usize]
+                .iter_mut()
+                .for_each(|v| *v <<= 1),
+        }
+        // horizontal transform
+        horz_ana!(l, false);
+    }
+    Ok(())
 }

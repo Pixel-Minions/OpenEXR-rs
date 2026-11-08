@@ -152,7 +152,7 @@ pub fn compress_chunk(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(),
         Compression::DWAA => crate::internal_dwa::internal_exr_apply_dwaa(encode, ctxt),
         Compression::DWAB => crate::internal_dwa::internal_exr_apply_dwab(encode, ctxt),
         Compression::HTJ2K32 | Compression::HTJ2K256 | Compression::LJ2K => {
-            Err(Error::bare(ErrorCode::FeatureNotImplemented))
+            crate::internal_ht::internal_exr_apply_ht(encode, ctxt)
         }
         Compression::ZSTD => crate::internal_zstd::internal_exr_apply_zstd(encode, ctxt),
         _ => Err(ctxt.print_error(

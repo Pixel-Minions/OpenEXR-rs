@@ -10,6 +10,7 @@ use crate::base::Size;
 use crate::bitbuffer_read::PREFIX_BUF_SIZE;
 use crate::block_decoder32::ojph_decode_codeblock32;
 use crate::block_decoder64::ojph_decode_codeblock64;
+use crate::block_encoder::{ojph_encode_codeblock32, ojph_encode_codeblock64};
 use crate::codeblock_fun::CodeblockFun;
 use crate::mem::{LFT_INTEGER, LineBuf, LineData};
 use crate::message::{OjphError, OjphResult, error, info};
@@ -105,6 +106,90 @@ impl Codeblock {
             coded_cb,
             codeblock_functions: CodeblockFun::init(reversible),
         }
+    }
+
+    /// Port of `codeblock::push` (external/OpenJPH/src/core/codestream/ojph_codeblock.cpp:115-139
+    /// @ OpenJPH 0.32.0): a line, converted to sign and magnitude, the maximum kept. With
+    /// 64-bit buffers an irreversible codeblock has no conversion (upstream's `tx_to_cb64` is
+    /// NULL, and calling it crashes); the port refuses it (docs/improvements.md, U-20).
+    pub(crate) fn push(&mut self, line: &LineBuf) -> OjphResult<()> {
+        let lo = self.line_offset as usize;
+        let dp0 = (self.cur_line * self.stride) as usize;
+        let w = self.cb_size.w;
+        if self.precision == BUF32 {
+            let mut mv = self.max_val64[0] as u32;
+            let dp = &mut self.buf32[dp0..];
+            if (line.flags & LFT_INTEGER) != 0 {
+                self.codeblock_functions.tx_to_cb32_i(
+                    &line.i32()[lo..],
+                    dp,
+                    self.k_max,
+                    w,
+                    &mut mv,
+                );
+            } else {
+                self.codeblock_functions.tx_to_cb32_f(
+                    &line.f32()[lo..],
+                    dp,
+                    self.delta_inv,
+                    w,
+                    &mut mv,
+                );
+            }
+            self.max_val64[0] = (self.max_val64[0] & !0xFFFF_FFFF) | u64::from(mv);
+        } else {
+            if !self.reversible {
+                return Err(OjphError::thrown(
+                    "an irreversible codeblock of 64-bit samples",
+                ));
+            }
+            let mut mv = self.max_val64[0];
+            let dp = &mut self.buf64[dp0..];
+            self.codeblock_functions
+                .tx_to_cb64_i(&line.i64()[lo..], dp, self.k_max, w, &mut mv);
+            self.max_val64[0] = mv;
+        }
+        self.cur_line += 1;
+        Ok(())
+    }
+
+    /// Port of `codeblock::encode`
+    /// (external/OpenJPH/src/core/codestream/ojph_codeblock.cpp:142-175 @ OpenJPH 0.32.0): the codeblock coded when a sample is significant.
+    pub(crate) fn encode(&mut self, coded_cb: &mut CodedCbHeader) -> OjphResult<()> {
+        if self.precision == BUF32 {
+            let mv = self.max_val64[0] as u32;
+            if mv >= 1u32.wrapping_shl(31u32.wrapping_sub(self.k_max)) {
+                coded_cb.missing_msbs = self.k_max - 1;
+                coded_cb.num_passes = 1;
+                ojph_encode_codeblock32(
+                    &self.buf32,
+                    self.k_max - 1,
+                    1,
+                    self.cb_size.w,
+                    self.cb_size.h,
+                    self.stride,
+                    &mut coded_cb.pass_length,
+                    &mut coded_cb.next_coded,
+                )?;
+            }
+        } else {
+            let mv = self.max_val64[0];
+            if mv >= 1u64.wrapping_shl(63u32.wrapping_sub(self.k_max)) {
+                coded_cb.missing_msbs = self.k_max - 1;
+                coded_cb.num_passes = 1;
+                ojph_encode_codeblock64(
+                    &self.buf64,
+                    self.k_max - 1,
+                    1,
+                    self.cb_size.w,
+                    self.cb_size.h,
+                    self.stride,
+                    &mut coded_cb.pass_length,
+                    &mut coded_cb.next_coded,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     /// Port of `codeblock::recreate`

@@ -1095,3 +1095,124 @@ fn b44_linear_channels_encode_as_the_wheel_does() {
         }
     }
 }
+
+/// A channel of upstream's tables, `{ "name" }`: the rest zeroed.
+fn named_channel(name: &str) -> CodingChannelInfo {
+    CodingChannelInfo {
+        channel_name: name.as_bytes().to_vec(),
+        ..Default::default()
+    }
+}
+
+/// Port of `testHTChannelMap` (src/test/OpenEXRCoreTest/compression.cpp:1714-1760) @ v3.5.3.
+#[test]
+fn test_ht_channel_map() {
+    use crate::internal_ht_common::make_channel_map;
+
+    let mut cs_to_file_ch = Vec::new();
+    let tests: [(&[&str], bool, [i32; 3]); 10] = [
+        (&["R", "G", "B"], true, [0, 1, 2]),
+        (&["r", "G", "b"], true, [0, 1, 2]),
+        (&["B", "G", "R"], true, [2, 1, 0]),
+        (&["red", "green", "blue"], true, [0, 1, 2]),
+        (&["Red", "Green", "Blue", "alpha"], true, [0, 1, 2]),
+        (&["hello.R", "hello.G", "hello.B"], true, [0, 1, 2]),
+        (
+            &["hello.R", "bye.R", "hello.G", "bye.R", "hello.B", "bye.B"],
+            true,
+            [0, 2, 4],
+        ),
+        (&["red", "green", "blue"], true, [0, 1, 2]),
+        // the following are expected to fail
+        (&["redqueen", "greens", "blueberry"], false, [0, 1, 2]),
+        (&["hello.R", "bye.G", "hello.B"], false, [0, 2, 4]),
+    ];
+
+    for (names, pass, rgb_index) in tests {
+        let channels: Vec<CodingChannelInfo> = names.iter().map(|n| named_channel(n)).collect();
+        assert_eq!(
+            make_channel_map(&channels, &mut cs_to_file_ch),
+            pass,
+            "{names:?}"
+        );
+        if pass {
+            for j in 0..3 {
+                assert_eq!(rgb_index[j], cs_to_file_ch[j].file_index, "{names:?}");
+            }
+        }
+    }
+
+    let channels_1: Vec<CodingChannelInfo> =
+        ["R", "G", "B"].iter().map(|n| named_channel(n)).collect();
+    let channels_2: Vec<CodingChannelInfo> =
+        ["R", "G", "1.B"].iter().map(|n| named_channel(n)).collect();
+
+    assert!(make_channel_map(&channels_1, &mut cs_to_file_ch));
+    assert!(!make_channel_map(&channels_2, &mut cs_to_file_ch));
+}
+
+/// Port of `testHTHeaderBounds` (src/test/OpenEXRCoreTest/compression.cpp:1778-1830) @ v3.5.3.
+#[test]
+fn test_ht_header_bounds() {
+    use crate::internal_ht_common::{HeaderMagic, make_channel_map, read_header, write_header};
+
+    const HEADER_SZ: usize = 6;
+    let read_header_throws = |buffer: &[u8]| {
+        let mut map = Vec::new();
+        let mut magic = HeaderMagic::V1;
+        read_header(buffer, &mut map, &mut magic).is_err()
+    };
+
+    let channels: Vec<CodingChannelInfo> =
+        ["R", "G", "B"].iter().map(|n| named_channel(n)).collect();
+    let mut cs_to_file_ch = Vec::new();
+    assert!(make_channel_map(&channels, &mut cs_to_file_ch));
+
+    let mut buf = [0u8; 64];
+    let hdr_sz = write_header(&mut buf, 64, &cs_to_file_ch, HeaderMagic::V1).expect("fits");
+    assert!(hdr_sz > HEADER_SZ);
+
+    let mut read_map = Vec::new();
+    let mut read_magic = HeaderMagic::V2;
+    assert_eq!(
+        read_header(&buf[..hdr_sz], &mut read_map, &mut read_magic).ok(),
+        Some(hdr_sz)
+    );
+    assert_eq!(read_map.len(), 3);
+    assert_eq!(read_magic, HeaderMagic::V1);
+
+    // HeaderMagic::V2 round-trips
+    let mut buf_v2 = [0u8; 64];
+    assert_eq!(
+        write_header(&mut buf_v2, 64, &cs_to_file_ch, HeaderMagic::V2).ok(),
+        Some(hdr_sz)
+    );
+    let mut read_map_v2 = Vec::new();
+    assert_eq!(
+        read_header(&buf_v2[..hdr_sz], &mut read_map_v2, &mut read_magic).ok(),
+        Some(hdr_sz)
+    );
+    assert_eq!(read_magic, HeaderMagic::V2);
+
+    // unknown magic numbers are rejected
+    let mut bad_magic = [0u8; 64];
+    bad_magic[..hdr_sz].copy_from_slice(&buf[..hdr_sz]);
+    bad_magic[1] = b'X';
+    assert!(read_header_throws(&bad_magic[..hdr_sz]));
+
+    assert!(read_header_throws(&buf[..hdr_sz - 1]));
+
+    let mut bad_plen = [0u8; 64];
+    bad_plen[..hdr_sz].copy_from_slice(&buf[..hdr_sz]);
+    bad_plen[2] = 0xff;
+    bad_plen[3] = 0xff;
+    bad_plen[4] = 0xff;
+    bad_plen[5] = 0xf0;
+    assert!(read_header_throws(&bad_plen));
+
+    let mut bad_nch = [0u8; 64];
+    bad_nch[..hdr_sz].copy_from_slice(&buf[..hdr_sz]);
+    bad_nch[HEADER_SZ] = 0;
+    bad_nch[HEADER_SZ + 1] = 32;
+    assert!(read_header_throws(&bad_nch[..hdr_sz]));
+}
