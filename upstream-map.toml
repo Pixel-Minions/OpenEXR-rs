@@ -100,8 +100,8 @@ note = "avx_mem_clear clears as the generic kernel"
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_avx2.cpp"
 kind = "vendored"
 status = "done"
-target = "crates/openexr-openjph/src/codeblock_fun.rs"
-note = "as ojph_codestream_sse2.cpp"
+target = "crates/openexr-openjph/src/codeblock_fun.rs, crates/openexr-openjph/src/codestream_avx2.rs"
+note = "as ojph_codestream_sse2.cpp; the 32-bit conversions compiled for AVX2 and chosen at X86_CPU_EXT_LEVEL_AVX2"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp"

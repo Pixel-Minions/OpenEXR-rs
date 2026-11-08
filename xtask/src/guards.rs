@@ -33,6 +33,8 @@ const UNSAFE_ALLOWLIST: &[&str] = &[
     "crates/openexr-openjph/src/transform_avx2.rs",
     // OpenJPH's AVX2 LUT nonlinearity conversions (SIMD kernels, PLAN.md D8).
     "crates/openexr-openjph/src/colour_avx2.rs",
+    // OpenJPH's AVX2 codeblock conversions (SIMD kernels, PLAN.md D8).
+    "crates/openexr-openjph/src/codestream_avx2.rs",
 ];
 
 /// Upstream tests that are not applicable to a Rust port, with the owner's decision (PLAN.md O8).

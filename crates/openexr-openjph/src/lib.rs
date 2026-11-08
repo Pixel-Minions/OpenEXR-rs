@@ -30,6 +30,8 @@ mod codeblock;
 mod codeblock_fun;
 #[allow(dead_code)] // used as the port grows
 mod codestream;
+#[cfg(target_arch = "x86_64")]
+mod codestream_avx2;
 #[allow(dead_code)] // used as the port grows
 mod codestream_gen;
 #[allow(dead_code)] // used as the port grows

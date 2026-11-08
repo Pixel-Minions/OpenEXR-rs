@@ -21,6 +21,7 @@ pub(crate) fn find_max_val64(addr: &[u64]) -> u64 {
 
 /// Port of `gen_rev_tx_to_cb32`
 /// (external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp:59-78 @ OpenJPH 0.32.0).
+#[inline(always)]
 pub(crate) fn rev_tx_to_cb32(
     sp: &[i32],
     dp: &mut [u32],
@@ -88,6 +89,7 @@ pub(crate) fn irv_tx_to_cb32(
 /// ojph_codestream_avx2.cpp:124-167 @ OpenJPH 0.32.0) per lane: as `gen_irv_tx_to_cb32`, the
 /// product rounded to nearest even (`cvtps2dq`, `0x80000000` out of range). Past `count` the
 /// SIMD stores write into the codeblock's padding and keep it out of `max_val`.
+#[inline(always)]
 pub(crate) fn irv_tx_to_cb32_rounded(
     sp: &[f32],
     dp: &mut [u32],
@@ -108,6 +110,7 @@ pub(crate) fn irv_tx_to_cb32_rounded(
 
 /// Port of `gen_rev_tx_from_cb32`
 /// (external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp:124-137 @ OpenJPH 0.32.0).
+#[inline(always)]
 pub(crate) fn rev_tx_from_cb32(sp: &[u32], dp: &mut [i32], k_max: u32, count: u32) {
     let shift = 31 - k_max;
     for (d, &v) in dp[..count as usize].iter_mut().zip(sp) {
@@ -132,6 +135,7 @@ pub(crate) fn rev_tx_from_cb64(sp: &[u64], dp: &mut [i64], k_max: u32, count: u3
 
 /// Port of `gen_irv_tx_from_cb32`
 /// (external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp:156-168 @ OpenJPH 0.32.0): dequantized by `delta`.
+#[inline(always)]
 pub(crate) fn irv_tx_from_cb32(sp: &[u32], dp: &mut [f32], delta: f32, count: u32) {
     for (d, &v) in dp[..count as usize].iter_mut().zip(sp) {
         let val = (v & 0x7FFF_FFFF) as f32 * delta;
