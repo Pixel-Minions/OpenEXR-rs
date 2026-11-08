@@ -122,8 +122,12 @@ pub(crate) fn vcvtph2ps(h: u16) -> f32 {
 }
 
 /// Port of `convertFloatToHalf64_f16c` (src/lib/OpenEXRCore/internal_dwa_simd.h:397-454
-/// @ v3.5.3): eight `vcvtps2ph $0` of eight floats each.
+/// @ v3.5.3): eight `vcvtps2ph $0` of eight floats each, the instructions themselves
+/// (`f16c_simd`), or their emulation.
 fn convert_float_to_half64_f16c(dst: &mut [u16; 64], src: &Block) {
+    if crate::f16c_simd::float_to_half64(dst, src) {
+        return;
+    }
     for i in 0..64 {
         dst[i] = vcvtps2ph(src[i]);
     }
@@ -146,8 +150,13 @@ fn from_half_zig_zag_scalar(src: &[u16; 64], dst: &mut Block) {
 }
 
 /// Port of `fromHalfZigZag_f16c` (src/lib/OpenEXRCore/internal_dwa_simd.h:623-803 @ v3.5.3):
-/// its shuffles reorder the block as the scalar version does, then `vcvtph2ps` converts it.
+/// its shuffles reorder the block as the scalar version does, then `vcvtph2ps` converts it:
+/// here the reordered halves through the instruction itself (`f16c_simd`), or its emulation.
 fn from_half_zig_zag_f16c(src: &[u16; 64], dst: &mut Block) {
+    let ordered: [u16; 64] = std::array::from_fn(|i| src[ZIG_ZAG[i]]);
+    if crate::f16c_simd::half_to_float64(dst, &ordered) {
+        return;
+    }
     for i in 0..64 {
         dst[i] = vcvtph2ps(src[ZIG_ZAG[i]]);
     }
@@ -477,7 +486,7 @@ fn perm2f128(src1: V8, src2: V8, imm: u32) -> V8 {
 
 /// `sAvxCoef` (src/lib/OpenEXRCore/internal_dwa_simd.h:1698-1716 @ v3.5.3): M1 then M2, each
 /// column-major.
-const AVX_COEF: [f32; 32] = [
+pub(crate) const AVX_COEF: [f32; 32] = [
     3.535536e-01,
     3.535536e-01,
     3.535536e-01,
@@ -1026,6 +1035,9 @@ impl DwaFuncs {
         match self.inverse_dct {
             InverseDct::Scalar => dct_inverse_8x8_scalar(data, zeroed_rows),
             InverseDct::Sse2 => dct_inverse_8x8_sse2(data, zeroed_rows),
+            // the instructions themselves (`internal_dwa_avx`), or their emulation
+            #[cfg(target_arch = "x86_64")]
+            InverseDct::Avx if crate::internal_dwa_avx::dct_inverse_8x8(data, zeroed_rows) => {}
             InverseDct::Avx if zeroed_rows == 7 => dct_inverse_8x8_avx_7(data),
             InverseDct::Avx => dct_inverse_8x8_avx(data, zeroed_rows),
         }
@@ -1141,6 +1153,65 @@ mod tests {
                     "zeroed {zeroed}: a NaN from an unwritten register"
                 );
             }
+        }
+    }
+
+    /// The AVX inverse DCT's emulation gives the bits of the instructions themselves
+    /// (`internal_dwa_avx`, run on the CPU), for every count of zeroed rows.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn avx_inverse_dct_is_the_cpus() {
+        assert!(
+            openexr_testkit::cpu::has_avx(),
+            "this check needs a CPU with AVX"
+        );
+        for zeroed in 0..8 {
+            for block in blocks(31 + zeroed as u64, zeroed) {
+                let mut emulated = block;
+                if zeroed == 7 {
+                    dct_inverse_8x8_avx_7(&mut emulated);
+                } else {
+                    dct_inverse_8x8_avx(&mut emulated, zeroed as i32);
+                }
+                let mut cpu = block;
+                assert!(crate::internal_dwa_avx::dct_inverse_8x8(
+                    &mut cpu,
+                    zeroed as i32
+                ));
+                let bits = |b: &Block| b.map(f32::to_bits);
+                assert_eq!(bits(&emulated), bits(&cpu), "zeroed {zeroed}");
+            }
+        }
+    }
+
+    /// The F16C kernels (`f16c_simd`, run on the CPU) give the emulations' bits.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn f16c_kernels_are_the_cpus() {
+        assert!(
+            openexr_testkit::cpu::has_f16c(),
+            "this check needs a CPU with F16C"
+        );
+        let mut rng = Rand48::new(5);
+        for _ in 0..2000 {
+            let halves: [u16; 64] = std::array::from_fn(|_| rng.nexti() as u16);
+            let floats: [f32; 64] = std::array::from_fn(|_| f32::from_bits(rng.nexti() as u32));
+
+            let mut emulated = [0f32; 64];
+            for i in 0..64 {
+                emulated[i] = vcvtph2ps(halves[i]);
+            }
+            let mut cpu = [0f32; 64];
+            assert!(crate::f16c_simd::half_to_float64(&mut cpu, &halves));
+            assert_eq!(emulated.map(f32::to_bits), cpu.map(f32::to_bits));
+
+            let mut emulated = [0u16; 64];
+            for i in 0..64 {
+                emulated[i] = vcvtps2ph(floats[i]);
+            }
+            let mut cpu = [0u16; 64];
+            assert!(crate::f16c_simd::float_to_half64(&mut cpu, &floats));
+            assert_eq!(emulated, cpu);
         }
     }
 }

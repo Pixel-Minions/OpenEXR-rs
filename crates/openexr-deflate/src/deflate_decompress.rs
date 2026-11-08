@@ -493,8 +493,33 @@ impl Decompressor {
     /// Port of `libdeflate_deflate_decompress_ex` (external/deflate/lib/deflate_decompress.c:1133-1142
     /// @ libdeflate v1.26), with the body of `decompress_template.h` (lines 44-772): decompresses
     /// the DEFLATE stream `input` into `out`. Without `actual_out_nbytes_ret`, a stream that
-    /// does not fill `out` is `ShortOutput`.
+    /// does not fill `out` is `ShortOutput`. On x86-64 the BMI2 build of the template where the
+    /// CPU has BMI2 (`decompress_bmi2`), as `arch_select_decompress_func` chooses it
+    /// (external/deflate/lib/x86/decompress_impl.h:42-55 @ libdeflate v1.26); the same results.
     pub fn deflate_decompress_ex(
+        &mut self,
+        input: &[u8],
+        out: &mut [u8],
+        mut actual_in_nbytes_ret: Option<&mut usize>,
+        mut actual_out_nbytes_ret: Option<&mut usize>,
+    ) -> LibdeflateResult {
+        #[cfg(target_arch = "x86_64")]
+        if let Some(r) = crate::decompress_bmi2::deflate_decompress_bmi2(
+            self,
+            input,
+            out,
+            actual_in_nbytes_ret.as_deref_mut(),
+            actual_out_nbytes_ret.as_deref_mut(),
+        ) {
+            return r;
+        }
+        self.decompress_template(input, out, actual_in_nbytes_ret, actual_out_nbytes_ret)
+    }
+
+    /// The body of `decompress_template.h` (lines 44-772 @ libdeflate v1.26), inlined into each
+    /// build of it: the portable one and the BMI2 one.
+    #[inline(always)]
+    pub(crate) fn decompress_template(
         &mut self,
         input: &[u8],
         out: &mut [u8],

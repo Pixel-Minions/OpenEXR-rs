@@ -639,10 +639,19 @@ fn exec_sequence(
         // (virtualStart == prefixStart)
         return Err(ErrorCode::CorruptionDetected);
     }
-    // byte by byte, as an overlapping LZ77 copy
+    // An LZ77 copy, byte after byte in effect: upstream's ZSTD_overlapCopy8 and wild copies
+    // (lines 1060-1094) give the bytes of a forward byte-by-byte copy. Here in spans that do
+    // not overlap their source: after `w` bytes, `dst[m..o_lit_end + w]` repeats with period
+    // `offset` (a multiple of which `o_lit_end + w - m` is), so the next `offset + w` bytes
+    // can come from `m`; a match not longer than its offset is one copy.
     let m = o_lit_end - sequence.offset;
-    for (i, o) in (o_lit_end..o_lit_end + sequence.match_length).enumerate() {
-        dst[o] = dst[m + i];
+    let len = sequence.match_length;
+    // (an offset of 0 copies each byte onto itself, as the byte loop did: nothing changes)
+    let mut w = if sequence.offset == 0 { len } else { 0 };
+    while w < len {
+        let n = (len - w).min(sequence.offset + w);
+        dst.copy_within(m..m + n, o_lit_end + w);
+        w += n;
     }
     Ok(sequence_length)
 }

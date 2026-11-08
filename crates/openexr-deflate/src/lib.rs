@@ -12,7 +12,11 @@
 //! check are n/a (PLAN.md O8): a decompressor is an ordinary Rust value.
 
 mod adler32;
+#[cfg(target_arch = "x86_64")]
+mod adler32_x86;
 mod bt_matchfinder;
+#[cfg(target_arch = "x86_64")]
+mod decompress_bmi2;
 mod deflate_compress;
 mod deflate_constants;
 mod deflate_decompress;

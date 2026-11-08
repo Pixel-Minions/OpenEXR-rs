@@ -35,6 +35,13 @@ const UNSAFE_ALLOWLIST: &[&str] = &[
     "crates/openexr-openjph/src/colour_avx2.rs",
     // OpenJPH's AVX2 codeblock conversions (SIMD kernels, PLAN.md D8).
     "crates/openexr-openjph/src/codestream_avx2.rs",
+    // SIMD kernels (PLAN.md O3, owner 2026-11-08: the SIMD paths).
+    "crates/openexr-core/src/internal_zip_simd.rs",
+    "crates/openexr-core/src/f16c_simd.rs",
+    "crates/openexr-core/src/internal_dwa_avx.rs",
+    "crates/openexr-core/src/internal_zstd_simd.rs",
+    "crates/openexr-deflate/src/adler32_x86.rs",
+    "crates/openexr-deflate/src/decompress_bmi2.rs",
 ];
 
 /// Upstream tests that are not applicable to a Rust port, with the owner's decision (PLAN.md O8).
