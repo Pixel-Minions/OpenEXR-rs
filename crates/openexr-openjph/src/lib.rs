@@ -34,6 +34,8 @@ mod codestream;
 mod codestream_gen;
 #[allow(dead_code)] // used as the port grows
 mod colour;
+#[cfg(target_arch = "x86_64")]
+mod colour_avx2;
 #[allow(dead_code)] // used as the port grows
 mod file;
 #[allow(dead_code)] // used as the port grows

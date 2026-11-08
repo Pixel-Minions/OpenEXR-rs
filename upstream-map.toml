@@ -469,9 +469,9 @@ note = "the ICT computes as the generic one (the same operations per lane)"
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_avx2.cpp"
 kind = "vendored"
-status = "done"
-target = "crates/openexr-openjph/src/colour.rs"
-note = "as ojph_colour_sse2.cpp (AVX2's clamps let NaN through); checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode, gate --full)"
+status = "partial"
+target = "crates/openexr-openjph/src/colour.rs, crates/openexr-openjph/src/colour_avx2.rs"
+note = "as ojph_colour_sse2.cpp (AVX2's clamps let NaN through); the LUT nonlinearity conversions (types 2 and 4) in AVX2 with gathers, chosen at X86_CPU_EXT_LEVEL_AVX2; checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_local.h"

@@ -111,10 +111,20 @@ fn irv_convert_to_integer_nlt2or4(
     // dec_points[k] is lut[k + 1]
     let lut = &rec.dec;
     let kernel = to_int_kernel();
+    // AVX2's kernel (colour_avx2.rs) does the samples of whole steps of 8, where upstream's
+    // takes it; the loops below do the rest, each lane as they would
+    #[cfg(target_arch = "x86_64")]
+    let start = if kernel == ToIntKernel::Avx2 {
+        crate::colour_avx2::irv_to_integer_nlt2or4(nlt_type == 4, sp, dp, width as usize, rec)
+    } else {
+        0
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let start = 0;
     if rec.is_signed() {
         let bias = ((1u64 << (rec.get_bit_depth() - 1)) + 1) as i32;
         let half = (1u64 << (rec.get_bit_depth() - 1)) as f32;
-        for i in 0..width as usize {
+        for i in start..width as usize {
             let mut t = sp[i] + 0.5; // convert to [0, 1]
             t = fmax(t, d_min);
             t = fmin(t, d_max);
@@ -134,7 +144,7 @@ fn irv_convert_to_integer_nlt2or4(
             dp[i] = v;
         }
     } else {
-        for i in 0..width as usize {
+        for i in start..width as usize {
             let mut t = sp[i] + 0.5; // convert to [0, 1]
             t = fmax(t, d_min);
             t = fmin(t, d_max);
@@ -186,9 +196,26 @@ fn irv_convert_to_float_nlt2or4(
     let lut = &rec.enc;
     let sp = &src_line.i32()[src_line_offset as usize..];
     let dp = dst_line.f32_mut();
+    // AVX2's kernel (colour_avx2.rs) does the samples of whole steps of 8, where upstream's
+    // takes it (from X86_CPU_EXT_LEVEL_AVX2); the loops below do the rest
+    #[cfg(target_arch = "x86_64")]
+    let start = if to_int_kernel() == ToIntKernel::Avx2 {
+        crate::colour_avx2::irv_to_float_nlt2or4(
+            nlt_type == 4,
+            sp,
+            dp,
+            bit_depth,
+            width as usize,
+            rec,
+        )
+    } else {
+        0
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let start = 0;
     if rec.is_signed() {
         let bias = ((1u64 << (rec.get_bit_depth() - 1)) + 1) as i32;
-        for i in 0..width as usize {
+        for i in start..width as usize {
             let mut v = sp[i];
             if nlt_type == 4 {
                 v = if v >= 0 {
@@ -208,7 +235,7 @@ fn irv_convert_to_float_nlt2or4(
             dp[i] = y - 0.5;
         }
     } else {
-        for i in 0..width as usize {
+        for i in start..width as usize {
             let v = sp[i];
             let mut t = v as f32 * mul; // it is in [0, 1]
             t = fmax(t, d_min);
