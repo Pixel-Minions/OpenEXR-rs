@@ -43,7 +43,9 @@ note = "build system"
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_bitbuffer_read.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/bitbuffer_read.rs"
+note = "ported; the coded data's prefix and suffix bytes are zeroed where upstream's are uninitialized"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_bitbuffer_write.h"
@@ -53,27 +55,37 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codeblock.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/codeblock.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows (U-17, U-18)"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codeblock.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/codeblock.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codeblock_fun.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/codeblock_fun.rs"
+note = "the generic kernels; the SSE2/AVX2 conversions compute the same samples, the SSSE3/AVX2 block decoders are checked on corrupt codeblocks with them; the encoder's follow"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codeblock_fun.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/codeblock_fun.rs"
+note = "as ojph_codeblock_fun.cpp"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/codestream.rs"
+note = "the reading wrapper ported (the file passed to read_headers and create); the writing one follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_avx.cpp"
@@ -88,17 +100,23 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/codestream_gen.rs"
+note = "ported"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_local.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/codestream.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_local.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/codestream.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_sse.cpp"
@@ -127,7 +145,7 @@ path = "external/OpenJPH/src/core/codestream/ojph_params.cpp"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-openjph/src/params.rs"
-note = "SIZ, CAP, COD/COC, QCD/QCC (with the gain and weight tables), NLT, SOT, TLM, DFS and ATK, read and written; comment_exchange and the public wrappers with the codestream (I-24, U-15); checked with the codestream"
+note = "SIZ, CAP, COD/COC, QCD/QCC (with the gain and weight tables), NLT, SOT, TLM, DFS and ATK, read and written, the SIZ's reconstruction sizes and the subbands' K_max and steps with DFS segments; comment_exchange and the writing wrappers follow with the encoder (I-24, U-15, U-16)"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_params_local.h"
@@ -139,52 +157,72 @@ note = "the segments' structures and inline functions ported; checked with the c
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_precinct.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/precinct.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_precinct.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/precinct.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_resolution.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/resolution.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_resolution.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/resolution.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_subband.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/subband.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows (I-26)"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_subband.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/subband.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_tile.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/tile.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_tile.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/tile.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_tile_comp.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/tile_comp.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_tile_comp.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/tile_comp.rs"
+note = "the decoding side ported, checked through Core's HTJ2K decoder against the wheel; the encoding side follows"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_common.cpp"
@@ -210,14 +248,14 @@ path = "external/OpenJPH/src/core/coding/ojph_block_decoder32.cpp"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-openjph/src/block_decoder32.rs"
-note = "ported (the readers' alignment as upstream's, warnings once per process); checked with the codestream"
+note = "ported (the readers' alignment as upstream's, warnings once per process); checked through Core's HTJ2K decoder against the wheel (U-17)"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder64.cpp"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-openjph/src/block_decoder64.rs"
-note = "ported, on the 32-bit decoder's MEL and MagRef readers (I-25); checked with the codestream"
+note = "ported (the readers' alignment as upstream's, warnings once per process); checked through Core's HTJ2K decoder against the wheel (U-17, I-25)"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_avx2.cpp"
@@ -1423,17 +1461,23 @@ target = "crates/openexr-core/src/float_vector.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_ht.cpp"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_ht.rs"
+note = "the decoder ported, bit-exact with the wheel on HTJ2K256 and HTJ2K32 files (heavy_decode); LJ2K waits on OpenJPH's irreversible SIMD kernels; the encoder follows"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_ht_common.cpp"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_ht_common.rs"
+note = "read_header ported; make_channel_map and write_header follow with the encoder"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_ht_common.h"
 kind = "src"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/internal_ht_common.rs"
+note = "the decoder's declarations, tf_to_linear and the legacy conversions ported; the NLT tables follow with the encoder"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_ht_quality.h"

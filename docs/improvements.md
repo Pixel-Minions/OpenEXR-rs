@@ -300,6 +300,16 @@ section. An entry says:
 - **Status:** matched, as x86-64 computes it (`crates/openexr-openjph/src/block_decoder64.rs`);
   listed for the owner's review.
 
+### I-26. OpenJPH shifts by 31 - K_max in 32 bits
+
+- **Upstream:** an irreversible subband's step is divided by `(float)(1u << (31 - K_max))`
+  (`external/OpenJPH/src/core/codestream/ojph_subband.cpp:117-221` @ OpenJPH 0.32.0); a
+  `K_max` over 31 shifts by 32 or more, which C leaves undefined and x86-64's `shl` takes
+  modulo 32.
+- **Who notices:** readers of crafted irreversible HTJ2K codestreams; OpenEXR's `K_max` is at
+  most 31 for its floats' 32-bit samples.
+- **Status:** matched, as x86-64 computes it (`crates/openexr-openjph/src/subband.rs`).
+
 ## Messages and debug output
 
 ### I-7. A deep tile's unpacked size error prints the packed size
@@ -569,3 +579,43 @@ section. An entry says:
 - **The port:** refuses the segment (an OpenJPH error with code 0 and no message), which
   Core reports as `EXR_ERR_CORRUPT_CHUNK`.
 - **Status:** the port's choice, as U-9.
+
+### U-16. OpenJPH follows a missing DFS segment when sizing a component
+
+- **Upstream:** `param_siz::get_recon_downsampling` looks up the DFS segment a COD or COC names
+  and uses it without checking it was found
+  (`external/OpenJPH/src/core/codestream/ojph_params.cpp:949-962` @ OpenJPH 0.32.0), so a
+  codestream naming a DFS index it lacks makes `get_recon_width`/`get_recon_height`, which Core
+  calls right after reading the headers, dereference NULL.
+- **Who notices:** readers of crafted HTJ2K chunks; OpenEXR writes no DFS segment.
+- **The port:** refuses it (an OpenJPH error), which Core reports as
+  `EXR_ERR_CORRUPT_CHUNK`. The resolutions' own DFS checks (codes 0x00070001/2 and
+  0x00070011/2) are ported as upstream's.
+- **Status:** the port's choice, as U-9.
+
+### U-17. OpenJPH's block decoders write the row after an odd-height codeblock
+
+- **Upstream:** the HT block decoders decode rows in pairs and write the second row of the last
+  pair even when the codeblock's height is odd
+  (`external/OpenJPH/src/core/coding/ojph_block_decoder32.cpp:1155-1309` @ OpenJPH 0.32.0, and
+  `ojph_block_decoder64.cpp:1203-1312`); the codeblock's buffer is `stride * nominal height`
+  (`ojph_codeblock.cpp:72-112`), so a codeblock of the nominal height with an odd one (1, with
+  precincts of 2 rows at a level) writes a row into the next allocation of the codestream.
+- **Who notices:** readers of crafted HTJ2K chunks; OpenEXR's codeblocks are 32 rows high.
+- **The port:** gives each codeblock's buffer a spare row, which takes the write; the samples
+  pulled are the same.
+- **Status:** the port's choice, as U-9.
+
+### U-18. OpenJPH addresses a 64-bit irreversible codeblock's line as 64-bit samples
+
+- **Upstream:** `codeblock::pull_line` hands the 64-bit conversion `line->i64 + line_offset`,
+  but an irreversible line holds floats, so the floats land at `2 line_offset` and the clearing
+  of a zero codeblock covers `2 cb_size.w` floats
+  (`external/OpenJPH/src/core/codestream/ojph_codeblock.cpp:230-266` @ OpenJPH 0.32.0); past
+  the first codeblock of a row it writes outside its place, and past the line's end outside
+  the line.
+- **Who notices:** readers of irreversible HTJ2K codestreams of more than 30 bit planes, which
+  OpenEXR does not write.
+- **The port:** writes where upstream writes while that is inside the line's storage, and
+  refuses (an OpenJPH error) past it.
+- **Status:** matched where upstream stays in its memory; the port's choice past it, as U-9.

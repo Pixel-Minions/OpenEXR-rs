@@ -16,6 +16,7 @@ name = "openexr_core"
 
 [dependencies]
 openexr-deflate = { workspace = true }
+openexr-openjph = { workspace = true }
 openexr-zstd = { workspace = true }
 
 [features]

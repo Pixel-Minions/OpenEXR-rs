@@ -421,23 +421,47 @@ impl ParamSiz {
     }
 
     /// Port of `param_siz::get_recon_downsampling`
-    /// (external/OpenJPH/src/core/codestream/ojph_params.cpp:949-962 @ OpenJPH 0.32.0), without DFS segments (`get_res_downsamp` follows with them).
-    pub(crate) fn get_recon_downsampling(&self, comp_num: u32) -> Point {
+    /// (external/OpenJPH/src/core/codestream/ojph_params.cpp:949-962 @ OpenJPH 0.32.0). The
+    /// segments upstream links to the SIZ are passed: `cods`, and `dfs` once linked. Where the
+    /// COD names a DFS segment that is missing, upstream dereferences NULL; the port refuses it
+    /// (docs/improvements.md, U-16).
+    pub(crate) fn get_recon_downsampling(
+        &self,
+        comp_num: u32,
+        cods: &CodSet,
+        dfs: Option<&DfsSet>,
+    ) -> OjphResult<Point> {
         let mut factor = Point::new(1 << self.skipped_resolutions, 1 << self.skipped_resolutions);
+        let cdp = cods.get_coc(comp_num);
+        if let Some(dfs) = dfs
+            && cdp.is_dfs_defined()
+        {
+            let d = dfs.get_dfs(i32::from(cdp.get_dfs_index())).ok_or(
+                crate::message::OjphError::thrown(
+                    "a COD/COC segment names a DFS segment that is missing",
+                ),
+            )?;
+            factor = d.get_res_downsamp(self.skipped_resolutions);
+        }
         let c = &self.comps[comp_num as usize];
         factor.x = factor.x.wrapping_mul(u32::from(c.xrsiz));
         factor.y = factor.y.wrapping_mul(u32::from(c.yrsiz));
-        factor
+        Ok(factor)
     }
 
     /// Port of `param_siz::get_recon_size`
     /// (external/OpenJPH/src/core/codestream/ojph_params.cpp:965-974 @ OpenJPH 0.32.0).
-    pub(crate) fn get_recon_size(&self, comp_num: u32) -> Point {
-        let factor = self.get_recon_downsampling(comp_num);
-        Point::new(
+    pub(crate) fn get_recon_size(
+        &self,
+        comp_num: u32,
+        cods: &CodSet,
+        dfs: Option<&DfsSet>,
+    ) -> OjphResult<Point> {
+        let factor = self.get_recon_downsampling(comp_num, cods, dfs)?;
+        Ok(Point::new(
             div_ceil(self.xsiz, factor.x).wrapping_sub(div_ceil(self.xosiz, factor.x)),
             div_ceil(self.ysiz, factor.y).wrapping_sub(div_ceil(self.yosiz, factor.y)),
-        )
+        ))
     }
 }
 
@@ -1342,7 +1366,7 @@ const VW_NO_WEIGHTS: [f32; 19] = [
 ];
 
 /// Port of `sqrt_energy_gains::get_gain_l`
-/// (external/OpenJPH/src/core/codestream/ojph_params.cpp:514-528 @ OpenJPH 0.32.0) and `get_gain_h`.
+/// (external/OpenJPH/src/core/codestream/ojph_params.cpp:514-527 @ OpenJPH 0.32.0) and `get_gain_h`.
 fn sqrt_energy_gain_l(num_decomp: u32, reversible: bool) -> f32 {
     if reversible {
         SQRT_ENERGY_GAIN_5X3_L[num_decomp as usize]
@@ -1360,7 +1384,7 @@ fn sqrt_energy_gain_h(num_decomp: u32, reversible: bool) -> f32 {
 }
 
 /// Port of `bibo_gains::get_bibo_gain_l`
-/// (external/OpenJPH/src/core/codestream/ojph_params.cpp:565-579 @ OpenJPH 0.32.0) and `get_bibo_gain_h`.
+/// (external/OpenJPH/src/core/codestream/ojph_params.cpp:565-578 @ OpenJPH 0.32.0) and `get_bibo_gain_h`.
 fn bibo_gain_l(num_decomp: u32, reversible: bool) -> f32 {
     if reversible {
         BIBO_GAIN_5X3_L[num_decomp as usize]
@@ -1455,7 +1479,7 @@ fn vw_get_gain(comp_type: u8) -> f32 {
 }
 
 /// Port of `visual_weights::get_delta_ref`
-/// (external/OpenJPH/src/core/codestream/ojph_params.cpp:707-741 @ OpenJPH 0.32.0): the base step of a Qfactor, and the weights' power.
+/// (external/OpenJPH/src/core/codestream/ojph_params.cpp:707-742 @ OpenJPH 0.32.0): the base step of a Qfactor, and the weights' power.
 fn vw_get_delta_ref(qfactor: f32, bit_depth: u32, power: &mut f32) -> f32 {
     const T0: f32 = 65.0;
     const T1: f32 = 97.0;
@@ -1796,6 +1820,8 @@ impl ParamQcd {
     /// step size.
     pub(crate) fn get_irrev_delta(
         &self,
+        dfs: Option<&ParamDfs>,
+        num_decompositions: u32,
         comp_num: u32,
         resolution: u32,
         subband: u32,
@@ -1809,11 +1835,7 @@ impl ParamQcd {
                 &[Arg::Int(comp_num.into())],
             ));
         }
-        let mut idx = if resolution != 0 {
-            (resolution - 1) * 3 + subband
-        } else {
-            0
-        };
+        let mut idx = Self::subband_idx(dfs, num_decompositions, resolution, subband);
         if idx >= self.num_subbands {
             crate::message::info(
                 0x00050102,
@@ -1836,14 +1858,36 @@ impl ParamQcd {
         Ok(mantissa)
     }
 
+    /// The index of a subband's step size, as `get_irrev_delta` and `get_Kmax` compute it.
+    fn subband_idx(
+        dfs: Option<&ParamDfs>,
+        num_decompositions: u32,
+        resolution: u32,
+        subband: u32,
+    ) -> u32 {
+        match dfs {
+            Some(d) if d.exists() => d.get_subband_idx(num_decompositions, resolution, subband),
+            _ => {
+                if resolution != 0 {
+                    (resolution - 1) * 3 + subband
+                } else {
+                    0
+                }
+            }
+        }
+    }
+
     /// Port of `param_qcd::get_Kmax`
-    /// (external/OpenJPH/src/core/codestream/ojph_params.cpp:1733-1766 @ OpenJPH 0.32.0), without DFS segments: the bit planes of a subband.
-    pub(crate) fn get_kmax(&self, resolution: u32, subband: u32) -> u32 {
-        let mut idx = if resolution != 0 {
-            (resolution - 1) * 3 + subband
-        } else {
-            0
-        };
+    /// (external/OpenJPH/src/core/codestream/ojph_params.cpp:1733-1766 @ OpenJPH 0.32.0): the bit
+    /// planes of a subband.
+    pub(crate) fn get_kmax(
+        &self,
+        dfs: Option<&ParamDfs>,
+        num_decompositions: u32,
+        resolution: u32,
+        subband: u32,
+    ) -> u32 {
+        let mut idx = Self::subband_idx(dfs, num_decompositions, resolution, subband);
         if idx >= self.num_subbands {
             crate::message::info(
                 0x00050111,
@@ -2804,7 +2848,10 @@ impl NltSet {
     /// storage size into its points, past their storage; the port refuses both
     /// (docs/improvements.md, U-15).
     pub(crate) fn read(&mut self, file: &mut dyn Infile) -> OjphResult<bool> {
-        let short = || crate::message::OjphError { code: 0 };
+        let short = || crate::message::OjphError {
+            code: 0,
+            what: None,
+        };
         let length = read_be16(file).ok_or_else(short)?;
         let comp = read_be16(file).ok_or_else(short)?;
         let bd = read_u8(file).ok_or_else(short)?;

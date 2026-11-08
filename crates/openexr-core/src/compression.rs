@@ -350,9 +350,13 @@ fn decompress_data(
                 Target::Image => crate::internal_zstd::internal_exr_undo_zstd,
             },
         ),
-        Compression::HTJ2K256 | Compression::HTJ2K32 | Compression::LJ2K => {
-            Err(Error::bare(ErrorCode::FeatureNotImplemented))
-        }
+        Compression::HTJ2K256 | Compression::HTJ2K32 | Compression::LJ2K => run_codec(
+            decode,
+            target,
+            packsz,
+            unpacksz,
+            crate::internal_ht::internal_exr_undo_ht,
+        ),
         _ => Err(ctxt.print_error(
             ErrorCode::InvalidArgument,
             "Compression technique 0x%02X invalid",

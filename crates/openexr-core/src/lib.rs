@@ -41,6 +41,8 @@ mod internal_dwa_helpers;
 mod internal_dwa_simd;
 mod internal_dwa_table;
 mod internal_file;
+mod internal_ht;
+mod internal_ht_common;
 mod internal_ht_quality;
 mod internal_huf;
 mod internal_piz;

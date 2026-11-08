@@ -154,7 +154,7 @@ fn low_mask(m_n: u32) -> u32 {
 }
 
 /// Port of `ojph_decode_codeblock64`
-/// (external/OpenJPH/src/core/coding/ojph_block_decoder64.cpp:766-1660 @ OpenJPH 0.32.0): a codeblock of `width` x `height` samples decoded into
+/// (external/OpenJPH/src/core/coding/ojph_block_decoder64.cpp:766-1661 @ OpenJPH 0.32.0): a codeblock of `width` x `height` samples decoded into
 /// `decoded_data` (rows `stride` apart), as sign and magnitude, the magnitude's bin center
 /// set; false when the codeblock cannot be decoded. Upstream's warnings that show once per
 /// process show once per process here too.

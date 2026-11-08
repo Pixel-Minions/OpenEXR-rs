@@ -9,11 +9,21 @@
 mod arch;
 mod base;
 #[allow(dead_code)] // used as the port grows
+mod bitbuffer_read;
+#[allow(dead_code)] // used as the port grows
 mod block_common;
 #[allow(dead_code)] // used as the port grows
 mod block_decoder32;
 #[allow(dead_code)] // used as the port grows
 mod block_decoder64;
+#[allow(dead_code)] // used as the port grows
+mod codeblock;
+#[allow(dead_code)] // used as the port grows
+mod codeblock_fun;
+#[allow(dead_code)] // used as the port grows
+mod codestream;
+#[allow(dead_code)] // used as the port grows
+mod codestream_gen;
 #[allow(dead_code)] // used as the port grows
 mod colour;
 #[allow(dead_code)] // used as the port grows
@@ -25,8 +35,19 @@ mod message;
 #[allow(dead_code)] // used as the port grows
 mod params;
 #[allow(dead_code)] // used as the port grows
+mod precinct;
+#[allow(dead_code)] // used as the port grows
+mod resolution;
+#[allow(dead_code)] // used as the port grows
+mod subband;
+#[allow(dead_code)] // used as the port grows
+mod tile;
+#[allow(dead_code)] // used as the port grows
+mod tile_comp;
+#[allow(dead_code)] // used as the port grows
 mod transform;
 
 pub use base::{Point, Rect, Size};
+pub use codestream::Codestream;
 pub use file::{Infile, MemInfile, Outfile, Seek};
 pub use message::{OjphError, OjphResult};

@@ -11,15 +11,30 @@
 
 use std::io::Write;
 
-/// OpenJPH's exception (`std::runtime_error ("ojph error")`), with the error's code.
+/// OpenJPH's exceptions: an error's `std::runtime_error ("ojph error")`, with the error's
+/// code, or a thrown `const char*` (`what`, with code 0), which the tile's parser reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OjphError {
     pub code: u32,
+    pub what: Option<&'static str>,
+}
+
+impl OjphError {
+    /// `throw "..."`.
+    pub(crate) fn thrown(what: &'static str) -> Self {
+        OjphError {
+            code: 0,
+            what: Some(what),
+        }
+    }
 }
 
 impl std::fmt::Display for OjphError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ojph error 0x{:08X}", self.code)
+        match self.what {
+            Some(w) => f.write_str(w),
+            None => write!(f, "ojph error 0x{:08X}", self.code),
+        }
     }
 }
 
@@ -117,7 +132,7 @@ pub(crate) fn error(code: u32, file: &str, line: u32, fmt: &str, args: &[Arg<'_>
         std::io::stderr(),
         "ojph error 0x{code:08X} at {file}:{line}: {text}"
     );
-    OjphError { code }
+    OjphError { code, what: None }
 }
 
 /// Port of `message_warning::operator()` (external/OpenJPH/src/core/others/ojph_message.cpp:115-128

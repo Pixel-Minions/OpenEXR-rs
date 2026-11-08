@@ -78,7 +78,7 @@ fn lift<T: RevInt>(a: T, b: T, e: u8, s1: T, s2: T, d: T, synthesis: bool) -> T 
 }
 
 /// Port of `gen_rev_vert_step32` and `gen_rev_vert_step64`
-/// (external/OpenJPH/src/core/transform/ojph_transform.cpp:208-310 @ OpenJPH 0.32.0).
+/// (external/OpenJPH/src/core/transform/ojph_transform.cpp:209-309 @ OpenJPH 0.32.0).
 fn rev_vert_step_t<T: RevInt>(
     s: &LiftingStep,
     src1: &[T],
@@ -116,7 +116,7 @@ pub(crate) fn rev_vert_step(
 }
 
 /// Port of `gen_rev_horz_ana32` and `gen_rev_horz_ana64`
-/// (external/OpenJPH/src/core/transform/ojph_transform.cpp:335-491 @ OpenJPH 0.32.0): `src`
+/// (external/OpenJPH/src/core/transform/ojph_transform.cpp:336-490 @ OpenJPH 0.32.0): `src`
 /// split into its low and high samples, then lifted. `l` and `h` are the lines' elements
 /// from their first `pre_size` one, `lp` and `hp` the indexes of their sample 0.
 #[allow(clippy::too_many_arguments)]
@@ -217,7 +217,7 @@ pub(crate) fn rev_horz_ana(
 }
 
 /// Port of `gen_rev_horz_syn32` and `gen_rev_horz_syn64`
-/// (external/OpenJPH/src/core/transform/ojph_transform.cpp:513-669 @ OpenJPH 0.32.0): the low
+/// (external/OpenJPH/src/core/transform/ojph_transform.cpp:514-668 @ OpenJPH 0.32.0): the low
 /// and high lines lifted back, in place, then interleaved into `dst`.
 #[allow(clippy::too_many_arguments)]
 fn rev_horz_syn_t<T: RevInt>(
@@ -293,16 +293,36 @@ fn rev_horz_syn_t<T: RevInt>(
     }
 }
 
+/// A line upstream passes as NULL: a line of one sample, which the kernels do not read (a
+/// subband of a width-1 line is empty, and only its other band is used).
+fn or_dummy<'a>(
+    line: Option<&'a mut LineBuf>,
+    dummy: &'a mut Option<LineBuf>,
+    like: &LineBuf,
+) -> &'a mut LineBuf {
+    match line {
+        Some(l) => l,
+        None => dummy.insert(match like.data {
+            crate::mem::LineData::I64(_) => LineBuf::new_i64(1, 1),
+            crate::mem::LineData::F32(_) => LineBuf::new_f32(1, 1),
+            _ => LineBuf::new_i32(1, 1),
+        }),
+    }
+}
+
 /// Port of `gen_rev_horz_syn` (external/OpenJPH/src/core/transform/ojph_transform.cpp:671-689
-/// @ OpenJPH 0.32.0).
+/// @ OpenJPH 0.32.0). `lsrc` or `hsrc` is `None` where upstream's is NULL.
 pub(crate) fn rev_horz_syn(
     atk: &ParamAtk,
     dst: &mut LineBuf,
-    lsrc: &mut LineBuf,
-    hsrc: &mut LineBuf,
+    lsrc: Option<&mut LineBuf>,
+    hsrc: Option<&mut LineBuf>,
     width: u32,
     even: bool,
 ) {
+    let (mut d1, mut d2) = (None, None);
+    let lsrc = or_dummy(lsrc, &mut d1, dst);
+    let hsrc = or_dummy(hsrc, &mut d2, dst);
     if (dst.flags & LFT_32BIT) != 0 {
         let (l, lp0) = lsrc.raw_i32_mut();
         let (h, hp0) = hsrc.raw_i32_mut();
@@ -431,11 +451,14 @@ pub(crate) fn irv_horz_ana(
 pub(crate) fn irv_horz_syn(
     atk: &ParamAtk,
     dst: &mut LineBuf,
-    lsrc: &mut LineBuf,
-    hsrc: &mut LineBuf,
+    lsrc: Option<&mut LineBuf>,
+    hsrc: Option<&mut LineBuf>,
     width: u32,
     even: bool,
 ) {
+    let (mut d1, mut d2) = (None, None);
+    let lsrc = or_dummy(lsrc, &mut d1, dst);
+    let hsrc = or_dummy(hsrc, &mut d2, dst);
     let dst = dst.f32_mut();
     let (l, lp0) = lsrc.raw_f32_mut();
     let (h, hp0) = hsrc.raw_f32_mut();
@@ -531,7 +554,7 @@ mod tests {
                 let mut h = LineBuf::new_i32(hw.max(1), 8);
                 rev_horz_ana(atk, &mut l, &mut h, &src, width, even);
                 let mut dst = LineBuf::new_i32(w, 0);
-                rev_horz_syn(atk, &mut dst, &mut l, &mut h, width, even);
+                rev_horz_syn(atk, &mut dst, Some(&mut l), Some(&mut h), width, even);
                 assert_eq!(
                     &dst.i32()[..w],
                     &samples[..],
@@ -547,7 +570,7 @@ mod tests {
                 let mut h = LineBuf::new_i64(hw.max(1), 8);
                 rev_horz_ana(atk, &mut l, &mut h, &src, width, even);
                 let mut dst = LineBuf::new_i64(w, 0);
-                rev_horz_syn(atk, &mut dst, &mut l, &mut h, width, even);
+                rev_horz_syn(atk, &mut dst, Some(&mut l), Some(&mut h), width, even);
                 assert_eq!(
                     &dst.i64()[..w],
                     &want[..],
