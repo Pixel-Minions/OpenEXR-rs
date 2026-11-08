@@ -461,9 +461,43 @@ cmd_recompress (int argc, char** argv)
     return 0;
 }
 
+/* exr_compress_buffer of a whole file's bytes at a level, into another file. */
+static int
+cmd_compress_buffer (int argc, char** argv)
+{
+    exr_context_t f = NULL;
+    FILE*         fp;
+    long          n;
+    uint8_t *     in, *out;
+    size_t        cap, actual = 0;
+    if (argc != 3) return fail ("compress-buffer: <level> <in> <out>", EXR_ERR_INVALID_ARGUMENT);
+    fp = fopen (argv[1], "rb");
+    if (!fp) return fail ("compress-buffer: cannot open the input", EXR_ERR_FILE_ACCESS);
+    fseek (fp, 0, SEEK_END);
+    n = ftell (fp);
+    fseek (fp, 0, SEEK_SET);
+    in = (uint8_t*) malloc ((size_t) n + 1);
+    if (fread (in, 1, (size_t) n, fp) != (size_t) n) return fail ("short read", EXR_ERR_READ_IO);
+    fclose (fp);
+    cap = exr_compress_max_buffer_size ((size_t) n);
+    out = (uint8_t*) malloc (cap);
+    CHECK (exr_start_temporary_context (&f, "<compress-buffer>", NULL));
+    CHECK (exr_compress_buffer (f, atoi (argv[0]), in, (size_t) n, out, cap, &actual));
+    exr_finish (&f);
+    fp = fopen (argv[2], "wb");
+    if (!fp) return fail ("compress-buffer: cannot open the output", EXR_ERR_FILE_ACCESS);
+    fwrite (out, 1, actual, fp);
+    fclose (fp);
+    free (in);
+    free (out);
+    return 0;
+}
+
 int
 main (int argc, char** argv)
 {
+    if (argc >= 2 && !strcmp (argv[1], "compress-buffer"))
+        return cmd_compress_buffer (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "info")) return cmd_info (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "recompress"))
         return cmd_recompress (argc - 2, argv + 2);
