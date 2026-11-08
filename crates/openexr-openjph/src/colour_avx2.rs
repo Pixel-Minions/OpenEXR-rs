@@ -1,18 +1,21 @@
 // SPDX-License-Identifier: BSD-2-Clause
 // Copyright (c) 2019, Aous Naman
 
-//! Port of the LUT nonlinearity conversions of `ojph_colour_avx2.cpp`
-//! (`local_avx2_irv_convert_to_integer_nlt2or4` and `local_avx2_irv_convert_to_float_nlt2or4`,
-//! external/OpenJPH/src/core/transform/ojph_colour_avx2.cpp:353-582 @ OpenJPH 0.32.0), which
-//! `init_colour_transform_functions` chooses at `X86_CPU_EXT_LEVEL_AVX2`, in AVX2: eight
-//! samples a step, the table read by gathers. Each lane computes as the port's per-sample
-//! loop (`colour.rs`), which finishes a line's last samples; upstream's lanes past the width
-//! write only padding.
+//! Port of `ojph_colour_avx2.cpp`
+//! (external/OpenJPH/src/core/transform/ojph_colour_avx2.cpp:1-823 @ OpenJPH 0.32.0), the
+//! kernels `init_colour_transform_functions` chooses at `X86_CPU_EXT_LEVEL_AVX2`. The LUT
+//! nonlinearity conversions (`local_avx2_irv_convert_to_integer_nlt2or4` and
+//! `local_avx2_irv_convert_to_float_nlt2or4`, lines 353-582) in AVX2: eight samples a step,
+//! the table read by gathers. Each lane computes as the port's per-sample loop (`colour.rs`),
+//! which finishes a line's last samples; upstream's lanes past the width write only padding.
+//! The other conversions and the reversible colour transform as AVX2 builds of the generic
+//! loops (below).
 
 #![allow(unsafe_code)]
 
 use std::arch::x86_64::*;
 
+use crate::mem::LineBuf;
 use crate::params::NltRec;
 
 /// The largest table index a clamped sample reaches, `(ui32) ((d_max - d_min) * inv_delta)`
@@ -203,3 +206,78 @@ pub(crate) fn irv_to_float_nlt2or4(
     // SAFETY: the CPU has AVX2
     unsafe { to_float_nlt2or4(nlt4, sp, dp, bit_depth, width, rec) }
 }
+
+/// The CPU has AVX2 (upstream's level check implies it).
+fn avx2() -> bool {
+    std::arch::is_x86_feature_detected!("avx2")
+}
+
+// The conversions and the reversible colour transform `init_colour_transform_functions`
+// chooses at `X86_CPU_EXT_LEVEL_AVX2` (`avx2_rev_convert`, `avx2_rev_convert_nlt_type3`,
+// `avx2_irv_convert_to_integer`, `avx2_irv_convert_to_float` and their type-3 variants,
+// `avx2_rct_forward`, `avx2_rct_backward`, external/OpenJPH/src/core/transform/
+// ojph_colour_avx2.cpp:70-820 @ OpenJPH 0.32.0): the generic loops (`colour.rs`), whose
+// samples upstream's lanes compute (wrapping integer adds, the 64-bit `srai` emulation exact
+// for its shift of 2, `cvtepi32_ps`, and `cvtps2dq` with AVX2's clamps), compiled for AVX2.
+macro_rules! avx2_build {
+    ($wrapper:ident, $inner:ident, $k:path, ($($p:ident: $t:ty),*)) => {
+        /// # Safety
+        /// The CPU supports AVX2.
+        #[target_feature(enable = "avx2")]
+        unsafe fn $inner($($p: $t),*) {
+            $k($($p),*);
+        }
+
+        /// The kernel's AVX2 build; false where the CPU lacks AVX2.
+        pub(crate) fn $wrapper($($p: $t),*) -> bool {
+            if !avx2() {
+                return false;
+            }
+            // SAFETY: the CPU has AVX2
+            unsafe { $inner($($p),*) };
+            true
+        }
+    };
+}
+
+avx2_build!(
+    rev_convert,
+    rev_convert_avx2,
+    crate::colour::rev_convert_gen,
+    (src_line: &LineBuf, src_line_offset: u32, dst_line: &mut LineBuf, dst_line_offset: u32, shift: i64, width: u32)
+);
+
+avx2_build!(
+    rev_convert_nlt_type3,
+    rev_convert_nlt_type3_avx2,
+    crate::colour::rev_convert_nlt_type3_gen,
+    (src_line: &LineBuf, src_line_offset: u32, dst_line: &mut LineBuf, dst_line_offset: u32, shift: i64, width: u32)
+);
+
+avx2_build!(
+    irv_convert_to_integer,
+    irv_convert_to_integer_avx2,
+    crate::colour::irv_convert_to_integer_gen,
+    (nlt_type3: bool, src_line: &LineBuf, dst_line: &mut LineBuf, dst_line_offset: u32, bit_depth: u32, is_signed: bool, width: u32)
+);
+
+avx2_build!(
+    irv_convert_to_float,
+    irv_convert_to_float_avx2,
+    crate::colour::irv_convert_to_float_gen,
+    (nlt_type3: bool, src_line: &LineBuf, src_line_offset: u32, dst_line: &mut LineBuf, bit_depth: u32, is_signed: bool, width: u32)
+);
+
+avx2_build!(
+    rct_forward,
+    rct_forward_avx2,
+    crate::colour::rct_forward_gen,
+    (r: &LineBuf, g: &LineBuf, b: &LineBuf, y: &mut LineBuf, cb: &mut LineBuf, cr: &mut LineBuf, repeat: u32)
+);
+
+avx2_build!(
+    rct_backward,
+    rct_backward_avx2,
+    crate::colour::rct_backward_gen,
+    (y: &LineBuf, cb: &LineBuf, cr: &LineBuf, r: &mut LineBuf, g: &mut LineBuf, b: &mut LineBuf, repeat: u32)
+);
