@@ -3,8 +3,9 @@
 
 //! Port of `ojph_arch.h` (external/OpenJPH/src/core/openjph/ojph_arch.h:1-498 @ OpenJPH 0.32.0)
 //! and `ojph_defs.h` (external/OpenJPH/src/core/openjph/ojph_defs.h:1-83 @ OpenJPH 0.32.0):
-//! the bit-counting helpers, rounding and alignment. The CPU detection follows with the SIMD
-//! kernels.
+//! the bit-counting helpers, rounding and alignment; and of `ojph_arch.cpp`
+//! (external/OpenJPH/src/core/others/ojph_arch.cpp:1-305 @ OpenJPH 0.32.0), the CPU's extension
+//! level, by which upstream chooses its SIMD kernels.
 
 /// `NUM_FRAC_BITS` (external/OpenJPH/src/core/openjph/ojph_defs.h:67 @ OpenJPH 0.32.0).
 pub(crate) const NUM_FRAC_BITS: i32 = 13;
@@ -93,4 +94,112 @@ pub(crate) const BYTE_ALIGNMENT: u32 = 64;
 pub(crate) fn calc_aligned_size(size: usize, elem: usize, n: usize) -> usize {
     let s = (size * elem + n - 1) & !(n - 1);
     s / elem
+}
+
+/// `X86_CPU_EXT_LEVEL_*` (external/OpenJPH/src/core/openjph/ojph_arch.h:153-166
+/// @ OpenJPH 0.32.0).
+pub(crate) mod x86_level {
+    pub(crate) const GENERIC: i32 = 0;
+    pub(crate) const MMX: i32 = 1;
+    pub(crate) const SSE: i32 = 2;
+    pub(crate) const SSE2: i32 = 3;
+    pub(crate) const SSE3: i32 = 4;
+    pub(crate) const SSSE3: i32 = 5;
+    pub(crate) const SSE41: i32 = 6;
+    pub(crate) const SSE42: i32 = 7;
+    pub(crate) const AVX: i32 = 8;
+    pub(crate) const AVX2: i32 = 9;
+    pub(crate) const AVX2FMA: i32 = 10;
+    pub(crate) const AVX512: i32 = 11;
+}
+
+/// Port of `init_cpu_ext_level` (external/OpenJPH/src/core/others/ojph_arch.cpp:84-166
+/// @ OpenJPH 0.32.0), on x86-64. Upstream reads the extended control register with `xgetbv`
+/// (`_xgetbv` under MSVC); the port asks Rust's feature detection, which reads it the same way:
+/// `avx` is detected exactly when OSXSAVE, the CPUID AVX bit and `(xcr0 & 6) == 6` are, and
+/// `avx512f`, past that, when the CPUID AVX512F bit and `(xcr0 & 0xE0) == 0xE0` are.
+#[cfg(target_arch = "x86_64")]
+fn init_cpu_ext_level() -> i32 {
+    use std::arch::x86_64::__cpuid_count;
+    use x86_level::*;
+
+    let mmx = __cpuid_count(1, 0);
+    let (ecx, edx) = (mmx.ecx, mmx.edx);
+    let mut level = GENERIC;
+    if (edx & 0x0080_0000) == 0 {
+        return level;
+    }
+    level = MMX;
+    if (edx & 0x0200_0000) == 0 {
+        return level;
+    }
+    level = SSE;
+    if (edx & 0x0400_0000) == 0 {
+        return level;
+    }
+    level = SSE2;
+    if (ecx & 0x0000_0001) == 0 {
+        return level;
+    }
+    level = SSE3;
+    if (ecx & 0x0000_0200) == 0 {
+        return level;
+    }
+    level = SSSE3;
+    if (ecx & 0x0008_0000) == 0 {
+        return level;
+    }
+    level = SSE41;
+    if (ecx & 0x0010_0000) == 0 {
+        return level;
+    }
+    level = SSE42;
+    // osxsave, ymm (xcr0) and the AVX bit
+    if !std::arch::is_x86_feature_detected!("avx") {
+        return level;
+    }
+    level = AVX;
+    let avx2 = __cpuid_count(7, 0);
+    if (avx2.ebx & 0x20) == 0 {
+        return level;
+    }
+    level = AVX2;
+    if (ecx & 0x1000) == 0 {
+        return level;
+    }
+    level = AVX2FMA;
+    // zmm (xcr0) and AVX512F
+    let zmm_f = std::arch::is_x86_feature_detected!("avx512f");
+    let cd = (avx2.ebx & 0x1000_0000) != 0;
+    let bw = (avx2.ebx & 0x4000_0000) != 0;
+    let vl = (avx2.ebx & 0x8000_0000) != 0;
+    if zmm_f && cd && bw && vl {
+        level = AVX512;
+    }
+    level
+}
+
+/// `init_cpu_ext_level` elsewhere: upstream's ARM levels choose no kernel the port has, and
+/// the port has no other target (PLAN.md D11).
+#[cfg(not(target_arch = "x86_64"))]
+fn init_cpu_ext_level() -> i32 {
+    0
+}
+
+/// Port of `get_cpu_ext_level` (external/OpenJPH/src/core/others/ojph_arch.cpp:294-303
+/// @ OpenJPH 0.32.0): the level, found once.
+pub(crate) fn get_cpu_ext_level() -> i32 {
+    static LEVEL: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    *LEVEL.get_or_init(init_cpu_ext_level)
+}
+
+/// `_mm_cvtps_epi32` of one lane, in the default rounding mode (to nearest, ties to even):
+/// out of range (or NaN), `0x80000000`.
+#[inline]
+pub(crate) fn cvt_f32_i32(f: f32) -> i32 {
+    if f >= -2147483648.0 && f < 2147483648.0 {
+        f.round_ties_even() as i32
+    } else {
+        i32::MIN
+    }
 }

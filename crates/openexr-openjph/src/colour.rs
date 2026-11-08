@@ -9,7 +9,7 @@
 //! kernels instead; the integer ones compute the same values, the float ones follow with the
 //! SIMD kernels.
 
-use crate::arch::ojph_round;
+use crate::arch::{cvt_f32_i32, get_cpu_ext_level, ojph_round, x86_level};
 use crate::mem::{LFT_32BIT, LineBuf};
 use crate::params::{NltRec, OJPH_NLT_BINARY_COMPLEMENT_PLUS_LUT, OJPH_NLT_LUT_STYLE_NLT};
 
@@ -29,6 +29,65 @@ fn fmin(a: f32, b: f32) -> f32 {
 #[inline]
 fn floor_u32(x: f32) -> u32 {
     x.floor() as u32
+}
+
+/// The kernels `init_colour_transform_functions`
+/// (external/OpenJPH/src/core/transform/ojph_colour.cpp:132-254 @ OpenJPH 0.32.0) chooses for
+/// the conversions of floats to integers: the generic ones, SSE2's
+/// (external/OpenJPH/src/core/transform/ojph_colour_sse2.cpp:91-313 @ OpenJPH 0.32.0) or
+/// AVX2's (external/OpenJPH/src/core/transform/ojph_colour_avx2.cpp:245-452 @ OpenJPH 0.32.0).
+/// The SIMD ones round with `cvtps2dq` (to nearest even, `0x80000000` out of range) where the
+/// generic ones use `ojph_round`, and AVX2's clamps let a NaN through (unordered compares)
+/// where SSE2's and the generic ones clamp it to the upper limit. Each lane computes as the
+/// port's sample; past the width upstream's lanes write into padding or into the next tile's
+/// samples, which that tile writes after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToIntKernel {
+    Generic,
+    Sse2,
+    Avx2,
+}
+
+fn to_int_kernel() -> ToIntKernel {
+    let level = get_cpu_ext_level();
+    if cfg!(target_arch = "x86_64") && level >= x86_level::AVX2 {
+        ToIntKernel::Avx2
+    } else if cfg!(target_arch = "x86_64") && level >= x86_level::SSE2 {
+        ToIntKernel::Sse2
+    } else {
+        ToIntKernel::Generic
+    }
+}
+
+impl ToIntKernel {
+    /// `ojph_round`, or `_mm_cvtps_epi32`.
+    #[inline]
+    fn round(self, t: f32) -> i32 {
+        match self {
+            ToIntKernel::Generic => ojph_round(t),
+            _ => cvt_f32_i32(t),
+        }
+    }
+
+    /// `t >= low ? v : low_lim`, or AVX2's `ojph_mm256_max_ge_epi32` (`_CMP_NLT_UQ`).
+    #[inline]
+    fn max_ge(self, v: i32, low_lim: i32, t: f32, low: f32) -> i32 {
+        let keep = match self {
+            ToIntKernel::Avx2 => !(t < low),
+            _ => t >= low,
+        };
+        if keep { v } else { low_lim }
+    }
+
+    /// `t < up ? v : up_lim`, or AVX2's `ojph_mm256_min_lt_epi32` (`_CMP_NGE_UQ`).
+    #[inline]
+    fn min_lt(self, v: i32, up_lim: i32, t: f32, up: f32) -> i32 {
+        let keep = match self {
+            ToIntKernel::Avx2 => !(t >= up),
+            _ => t < up,
+        };
+        if keep { v } else { up_lim }
+    }
 }
 
 /// Port of `local_gen_irv_convert_to_integer_nlt2or4`
@@ -51,6 +110,7 @@ fn irv_convert_to_integer_nlt2or4(
     let inv_delta = rec.inv_delta;
     // dec_points[k] is lut[k + 1]
     let lut = &rec.dec;
+    let kernel = to_int_kernel();
     if rec.is_signed() {
         let bias = ((1u64 << (rec.get_bit_depth() - 1)) + 1) as i32;
         let half = (1u64 << (rec.get_bit_depth() - 1)) as f32;
@@ -63,7 +123,7 @@ fn irv_convert_to_integer_nlt2or4(
             let t_k = lut[k as usize + 1];
             let t_kp1 = lut[k as usize + 2];
             let z = t_k + (t - d_k) * inv_delta * (t_kp1 - t_k);
-            let mut v = ojph_round(z * mul - half);
+            let mut v = kernel.round(z * mul - half);
             if nlt_type == 4 {
                 v = if v >= 0 {
                     v
@@ -83,7 +143,7 @@ fn irv_convert_to_integer_nlt2or4(
             let t_k = lut[k as usize + 1];
             let t_kp1 = lut[k as usize + 2];
             let z = t_k + (t - d_k) * inv_delta * (t_kp1 - t_k);
-            dp[i] = ojph_round(z * mul);
+            dp[i] = kernel.round(z * mul);
         }
     }
 }
@@ -301,14 +361,15 @@ fn irv_convert_to_integer_nlt0or3(
     let fl_low_lim = neg_limit as f32; // val >= lower
     let s32_up_lim = i32::MAX >> (32 - bit_depth);
     let s32_low_lim = i32::MIN >> (32 - bit_depth);
+    let kernel = to_int_kernel();
 
     if is_signed {
         let bias = ((1u64 << (bit_depth - 1)) + 1) as i32;
         for i in 0..width as usize {
             let t = sp[i] * mul;
-            let mut v = ojph_round(t);
-            v = if t >= fl_low_lim { v } else { s32_low_lim };
-            v = if t < fl_up_lim { v } else { s32_up_lim };
+            let mut v = kernel.round(t);
+            v = kernel.max_ge(v, s32_low_lim, t, fl_low_lim);
+            v = kernel.min_lt(v, s32_up_lim, t, fl_up_lim);
             if nlt_type3 {
                 v = if v >= 0 {
                     v
@@ -322,9 +383,9 @@ fn irv_convert_to_integer_nlt0or3(
         let half = (1u64 << (bit_depth - 1)) as i32;
         for i in 0..width as usize {
             let t = sp[i] * mul;
-            let mut v = ojph_round(t);
-            v = if t >= fl_low_lim { v } else { s32_low_lim };
-            v = if t < fl_up_lim { v } else { s32_up_lim };
+            let mut v = kernel.round(t);
+            v = kernel.max_ge(v, s32_low_lim, t, fl_low_lim);
+            v = kernel.min_lt(v, s32_up_lim, t, fl_up_lim);
             dp[i] = v.wrapping_add(half);
         }
     }

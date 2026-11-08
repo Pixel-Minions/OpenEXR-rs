@@ -90,12 +90,16 @@ note = "the reading wrapper ported (the file passed to read_headers and create);
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_avx.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/codeblock_fun.rs"
+note = "avx_mem_clear clears as the generic kernel"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_avx2.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/codeblock_fun.rs"
+note = "as ojph_codestream_sse2.cpp"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp"
@@ -121,12 +125,16 @@ note = "the decoding side ported, checked through Core's HTJ2K decoder against t
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_sse.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/codeblock_fun.rs"
+note = "sse_mem_clear clears as the generic kernel"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_sse2.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/codeblock_fun.rs"
+note = "the decoding conversions compute as the generic ones; the encoder's irreversible tx_to_cb32 (cvtps2dq, not ojph_trunc) and find_max_val follow with the encoder"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_vsx.cpp"
@@ -260,12 +268,16 @@ note = "ported (the readers' alignment as upstream's, warnings once per process)
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_avx2.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/block_decoder32.rs"
+note = "as ojph_block_decoder_ssse3.cpp"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_ssse3.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/block_decoder32.rs"
+note = "the generic decoder decodes the wheel's codeblocks as this one does (heavy_decode); its failures on corrupt codeblocks are to be checked (docs/deferred.md)"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_vsx.cpp"
@@ -383,7 +395,9 @@ status = "todo"
 [[file]]
 path = "external/OpenJPH/src/core/others/ojph_arch.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/arch.rs"
+note = "the x86-64 level ported, xgetbv read through Rust's feature detection; the ARM and PowerPC levels choose no kernel of a target the port has (PLAN.md D11)"
 
 [[file]]
 path = "external/OpenJPH/src/core/others/ojph_file.cpp"
@@ -434,12 +448,16 @@ note = "the function pointers follow with the codestream's kernel selection"
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_avx.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/colour.rs"
+note = "the ICT computes as the generic one (the same operations per lane)"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_avx2.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/colour.rs"
+note = "as ojph_colour_sse2.cpp (AVX2's clamps let NaN through)"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_local.h"
@@ -451,12 +469,16 @@ note = "the generic declarations and CT_CNST ported; the SIMD ones follow with t
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_sse.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/colour.rs"
+note = "the ICT computes as the generic one (the same operations per lane)"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_sse2.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/colour.rs"
+note = "the conversions to integers ported as their lanes compute them (ToIntKernel); the integer conversions and the RCT compute as the generic ones; the conversions to floats follow with the encoder"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_vsx.cpp"
@@ -487,17 +509,23 @@ note = "the function pointers follow with the codestream's kernel selection"
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/transform.rs"
+note = "the irreversible lifting computes as the generic one (the same operations per lane)"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx2.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/transform.rs"
+note = "the reversible lifting computes as the generic one"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx512.cpp"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-openjph/src/transform.rs"
+note = "the irreversible lifting computes as the generic one where it is not contracted: MSVC (the Windows wheel) does not contract; the Linux build (-mavx512f, which enables FMA, and GCC's default -ffp-contract=fast) is to be checked in the Rocky run (docs/deferred.md)"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_local.h"
@@ -509,12 +537,16 @@ note = "the generic declarations ported; the SIMD ones follow with their kernels
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_sse.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/transform.rs"
+note = "the irreversible lifting computes as the generic one (the same operations per lane)"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_sse2.cpp"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/transform.rs"
+note = "the reversible lifting computes as the generic one"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_vsx.cpp"
