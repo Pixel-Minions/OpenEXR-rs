@@ -14,6 +14,7 @@
 //!   again: the port copies each byte once, which leaves the output the same.
 
 use crate::bitstream::BitDStream;
+pub(crate) use crate::bmi2::{build_fse_table, decompress_sequences};
 use crate::entropy_common::fse_read_ncount;
 use crate::error_private::{ErrorCode, ZResult};
 use crate::huf_decompress::{
@@ -242,7 +243,8 @@ fn build_seq_table_rle(dt: &mut [SeqSymbol], base_value: u32, nb_add_bits: u8) {
 /// Port of `ZSTD_buildFSETable_body` (external/zstd/lib/decompress/zstd_decompress_block.c:484-603
 /// @ zstd v1.5.7): the decoding table of one sequence field (literal length, match length or
 /// offset) from its normalized counts.
-pub(crate) fn build_fse_table(
+#[inline(always)]
+pub(crate) fn build_fse_table_body(
     dt: &mut [SeqSymbol],
     normalized_counter: &[i16],
     max_symbol_value: u32,
@@ -659,7 +661,8 @@ fn exec_sequence(
 /// Port of `ZSTD_decompressSequences_body` (external/zstd/lib/decompress/zstd_decompress_block.c:1613-1690
 /// @ zstd v1.5.7): the block's sequences executed into `dst[op_start..op_start + max_dst_size]`;
 /// returns the bytes written.
-fn decompress_sequences(
+#[inline(always)]
+pub(crate) fn decompress_sequences_body(
     dctx: &mut DCtx,
     dst: &mut [u8],
     op_start: usize,

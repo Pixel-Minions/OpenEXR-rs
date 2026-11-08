@@ -612,6 +612,9 @@ pub(crate) fn fse_build_ctable_rle(ct: &mut FseCTable, symbol_value: u8) {
 pub(crate) struct FseCState {
     pub(crate) value: isize,
     pub(crate) state_log: u32,
+    /// Where the table's `symbolTT` starts, in words: upstream's `symbolTT` pointer, set once
+    /// by `FSE_initCState`.
+    symbol_tt: usize,
 }
 
 impl FseCState {
@@ -620,6 +623,7 @@ impl FseCState {
         FseCState {
             value: 1isize << table_log,
             state_log: table_log,
+            symbol_tt: FseCTable::symbol_tt_base(table_log),
         }
     }
 
@@ -634,13 +638,16 @@ impl FseCState {
         st
     }
 
+    #[inline(always)] // MEM_STATIC upstream, in fse.h
     pub(crate) fn encode_symbol(
         &mut self,
         bit_c: &mut BitCStream<'_>,
         ct: &FseCTable,
         symbol: u32,
     ) {
-        let (delta_find_state, delta_nb_bits) = ct.symbol_tt(symbol as usize);
+        // the symbol's entry and the next state from the pointers set at init
+        let at = self.symbol_tt + 2 * symbol as usize;
+        let (delta_find_state, delta_nb_bits) = (ct.0[at] as i32, ct.0[at + 1]);
         // (ptrdiff_t + U32: computed in 64 bits)
         let nb_bits_out = ((self.value as i64 + i64::from(delta_nb_bits)) >> 16) as u32;
         bit_c.add_bits(self.value as u64, nb_bits_out);

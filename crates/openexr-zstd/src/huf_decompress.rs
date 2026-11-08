@@ -15,6 +15,10 @@
 //! corruption (upstream's would write past its buffer).
 
 use crate::bitstream::{BitDStream, BitDStreamStatus};
+pub(crate) use crate::bmi2::{
+    decompress_1x1_using_dtable, decompress_1x2_using_dtable, decompress_4x1_using_dtable_body,
+    decompress_4x2_using_dtable_body,
+};
 use crate::entropy_common::{HUF_READ_STATS_WORKSPACE_SIZE, HUF_TABLELOG_MAX, huf_read_stats};
 use crate::error_private::{ErrorCode, ZResult};
 use crate::mem::read_le16;
@@ -245,7 +249,12 @@ fn decode_stream_x1(
 
 /// Port of `HUF_decompress1X1_usingDTable_internal_body`
 /// (external/zstd/lib/decompress/huf_decompress.c:574-596 @ zstd v1.5.7).
-fn decompress_1x1_using_dtable(dst: &mut [u8], c_src: &[u8], dtable: &HufDTable) -> ZResult<usize> {
+#[inline(always)]
+pub(crate) fn decompress_1x1_using_dtable_body(
+    dst: &mut [u8],
+    c_src: &[u8],
+    dtable: &HufDTable,
+) -> ZResult<usize> {
     let (mut bit_d, _) = BitDStream::init(c_src)?;
     let dst_size = dst.len();
     decode_stream_x1(
@@ -306,7 +315,8 @@ fn four_streams<'a>(
 
 /// Port of `HUF_decompress4X1_usingDTable_internal_body`
 /// (external/zstd/lib/decompress/huf_decompress.c:598-698 @ zstd v1.5.7).
-fn decompress_4x1_using_dtable_body(
+#[inline(always)]
+pub(crate) fn decompress_4x1_using_dtable_portable(
     dst: &mut [u8],
     c_src: &[u8],
     dtable: &HufDTable,
@@ -722,7 +732,12 @@ fn decode_stream_x2(
 
 /// Port of `HUF_decompress1X2_usingDTable_internal_body`
 /// (external/zstd/lib/decompress/huf_decompress.c:1352-1377 @ zstd v1.5.7).
-fn decompress_1x2_using_dtable(dst: &mut [u8], c_src: &[u8], dtable: &HufDTable) -> ZResult<usize> {
+#[inline(always)]
+pub(crate) fn decompress_1x2_using_dtable_body(
+    dst: &mut [u8],
+    c_src: &[u8],
+    dtable: &HufDTable,
+) -> ZResult<usize> {
     let (mut bit_d, _) = BitDStream::init(c_src)?;
     let dst_size = dst.len();
     decode_stream_x2(
@@ -742,7 +757,8 @@ fn decompress_1x2_using_dtable(dst: &mut [u8], c_src: &[u8], dtable: &HufDTable)
 /// Port of `HUF_decompress4X2_usingDTable_internal_body`
 /// (external/zstd/lib/decompress/huf_decompress.c:1383-1501 @ zstd v1.5.7), as GCC and MSVC
 /// build it.
-fn decompress_4x2_using_dtable_body(
+#[inline(always)]
+pub(crate) fn decompress_4x2_using_dtable_portable(
     dst: &mut [u8],
     c_src: &[u8],
     dtable: &HufDTable,

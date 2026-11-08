@@ -13,6 +13,8 @@
 
 mod adler32;
 #[cfg(target_arch = "x86_64")]
+mod adler32_vnni;
+#[cfg(target_arch = "x86_64")]
 mod adler32_x86;
 mod bt_matchfinder;
 #[cfg(target_arch = "x86_64")]

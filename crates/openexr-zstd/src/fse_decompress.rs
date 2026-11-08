@@ -10,6 +10,7 @@
 //! they decide which headers are refused.
 
 use crate::bitstream::{BitDStream, BitDStreamStatus};
+pub(crate) use crate::bmi2::fse_decompress_wksp;
 use crate::entropy_common::fse_read_ncount;
 use crate::error_private::{ErrorCode, ZResult};
 use crate::mem::highbit32;
@@ -254,7 +255,8 @@ fn fse_decompress_using_dtable(
 /// (external/zstd/lib/common/fse_decompress.c:243-313 @ zstd v1.5.7): an FSE header and
 /// stream decoded into `dst`, with a table log of at most `max_log` and a workspace of
 /// `wksp_size` bytes; returns the bytes decoded.
-pub(crate) fn fse_decompress_wksp(
+#[inline(always)]
+pub(crate) fn fse_decompress_wksp_body(
     dst: &mut [u8],
     c_src: &[u8],
     max_log: u32,

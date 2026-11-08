@@ -7,6 +7,7 @@
 //! build runs the same code.
 
 use crate::bitstream::BitCStream;
+pub(crate) use crate::bmi2::zstd_encode_sequences;
 use crate::error_private::{ErrorCode, ZResult};
 use crate::fse_compress::{
     FSE_NCOUNTBOUND, FseCState, FseCTable, fse_build_ctable, fse_build_ctable_rle,
@@ -309,7 +310,8 @@ pub(crate) fn zstd_build_ctable(
 /// (external/zstd/lib/compress/zstd_compress_sequences.c:290-382 @ zstd v1.5.7), on 64-bit,
 /// with `ZSTD_encodeSequences` (lines 419-442): the sequences' bit stream, from the last.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn zstd_encode_sequences(
+#[inline(always)]
+pub(crate) fn zstd_encode_sequences_body(
     dst: &mut [u8],
     ctable_match_length: &FseCTable,
     ml_code_table: &[u8],

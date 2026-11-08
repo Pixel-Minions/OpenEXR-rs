@@ -10,7 +10,7 @@ use crate::cfmt::Arg;
 use crate::context::{Context, Error};
 use crate::decoding::{Aliased, DecodePipeline, EXR_DECODE_SAMPLE_DATA_ONLY};
 use crate::encoding::{
-    EXR_TRANSCODE_BUFFER_COMPRESSED, EncodePipeline, internal_encode_alloc_aliased,
+    EXR_TRANSCODE_BUFFER_COMPRESSED, EncodePipeline, internal_encode_alloc_output,
 };
 use crate::errors::ErrorCode;
 use crate::openexr_attr::Compression;
@@ -153,7 +153,7 @@ pub fn compress_chunk(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(),
         maxbytes = encode.packed_bytes as usize;
     }
 
-    if let Err(e) = internal_encode_alloc_aliased(
+    if let Err(e) = internal_encode_alloc_output(
         ctxt,
         encode.part_index,
         EXR_TRANSCODE_BUFFER_COMPRESSED,

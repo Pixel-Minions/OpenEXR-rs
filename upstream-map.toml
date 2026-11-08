@@ -804,20 +804,22 @@ status = "todo"
 path = "external/deflate/lib/x86/adler32_impl.h"
 kind = "vendored"
 status = "partial"
-target = "crates/openexr-deflate/src/adler32_x86.rs"
-note = "arch_select_adler32_func between AVX2 and SSE2; the AVX-VNNI and AVX-512 VNNI variants (the same checksum) are not ported; checked through Core's zlib streams (heavy tier), SSE2 under SDE pending"
+target = "crates/openexr-deflate/src/adler32_x86.rs, crates/openexr-deflate/src/adler32_vnni.rs"
+note = "arch_select_adler32_func whole: AVX-512 VNNI (512- and 256-bit vectors, as libdeflate allows ZMM), AVX-VNNI, AVX2, SSE2; every variant the CPU can run checked against Core's checksums (adler32_vnni.rs heavy test); SSE2-only CPUs under SDE pending"
 
 [[file]]
 path = "external/deflate/lib/x86/adler32_template.h"
 kind = "vendored"
 status = "partial"
-target = "crates/openexr-deflate/src/adler32_x86.rs"
-note = "USE_VNNI 0 for VL 16 (SSE2) and 32 (AVX2); the VNNI form is not ported"
+target = "crates/openexr-deflate/src/adler32_x86.rs, crates/openexr-deflate/src/adler32_vnni.rs"
+note = "both forms: USE_VNNI 0 for VL 16 (SSE2) and 32 (AVX2), USE_VNNI 1 for VL 32 (AVX-VNNI, AVX-512) and 64 (AVX-512)"
 
 [[file]]
 path = "external/deflate/lib/x86/cpu_features.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/adler32_vnni.rs"
+note = "the features the ported variants are chosen by (std's detection) and allow_512bit_vectors; the rest of the table (PCLMULQDQ, VPCLMULQDQ: CRC-32, which Core never uses) n/a"
 
 [[file]]
 path = "external/deflate/lib/x86/cpu_features.h"
@@ -990,7 +992,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/common/portability_macros.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/bmi2.rs"
+note = "DYNAMIC_BMI2 (GCC builds for x86-64, not MSVC): the entropy coders' BMI2 builds chosen where the CPU has BMI1 and BMI2 (bmi2.rs); ZSTD_DISABLE_ASM as the wheels' builds set it (huf_decompress.rs); the rest are compiler and platform switches with no counterpart"
 
 [[file]]
 path = "external/zstd/lib/common/threading.c"

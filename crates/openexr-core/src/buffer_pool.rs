@@ -70,7 +70,45 @@ pub(crate) fn zeroed<T: Pooled>(n: usize) -> Result<Vec<T>, TryReserveError> {
     Ok(v)
 }
 
-/// Keeps `v` for a later [`zeroed`], within the thread's limits; otherwise frees it.
+/// `n` bytes whose contents are unspecified: a kept buffer large enough (the smallest), as it
+/// was left, or new zeros. For a buffer each user writes before it reads, as upstream's
+/// `malloc`ed output buffers are: the compressed buffer of a chunk, whose bound
+/// (`exr_compress_max_buffer_size`, with the Huffman coder's spare bytes) is far larger than
+/// what a codec writes. Heavy-tier builds fill it with a pattern instead, so that any read of
+/// a byte not written first would change an output the checks against Core and the wheel
+/// compare.
+pub(crate) fn reused(n: usize) -> Result<Vec<u8>, TryReserveError> {
+    let kept = u8::with_pool(|p| {
+        let best = p
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.capacity() >= n)
+            .min_by_key(|(_, v)| v.capacity())
+            .map(|(i, _)| i);
+        best.map(|i| p.swap_remove(i))
+    })
+    .flatten();
+    let mut v = match kept {
+        Some(v) => v,
+        None => {
+            let mut v = Vec::new();
+            v.try_reserve_exact(n)?;
+            v
+        }
+    };
+    if v.len() >= n {
+        v.truncate(n);
+    } else {
+        v.resize(n, 0);
+    }
+    if cfg!(feature = "heavy") {
+        v.fill(0xA5);
+    }
+    Ok(v)
+}
+
+/// Keeps `v` for a later [`zeroed`] or [`reused`], within the thread's limits; otherwise frees
+/// it.
 pub(crate) fn give_back<T: Pooled>(v: Vec<T>) {
     let bytes = v.capacity() * size_of::<T>();
     if bytes == 0 || bytes > MAX_BYTES {
