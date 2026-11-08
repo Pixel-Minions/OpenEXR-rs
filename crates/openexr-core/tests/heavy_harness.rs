@@ -935,3 +935,285 @@ fn files_written_by_core_alone_as_core_writes_them() {
     assert!(compared > 0);
     assert!(differing.is_empty());
 }
+
+// The pixel type conversions, every input of each, through the pack and unpack pipeline:
+// `core_harness convert` (oracle/native/core_harness.c, `cmd_convert`) and the same runs here.
+
+const CONVERT_WIDTH: usize = 65536;
+const CONVERT_TYPES: [PixelType; 3] = [PixelType::UINT, PixelType::HALF, PixelType::FLOAT];
+
+fn type_name(t: PixelType) -> &'static str {
+    if t == PixelType::HALF {
+        "HALF"
+    } else if t == PixelType::FLOAT {
+        "FLOAT"
+    } else {
+        "UINT"
+    }
+}
+
+fn type_size(t: PixelType) -> usize {
+    if t == PixelType::HALF { 2 } else { 4 }
+}
+
+/// Block `b` of a type's inputs, as their little-endian bytes: the values `b * 65536 + x`,
+/// as the harness's `fill_block`.
+fn fill_block(buf: &mut [u8], t: PixelType, b: u32) {
+    let n = type_size(t);
+    for x in 0..CONVERT_WIDTH {
+        let v = (b << 16) | x as u32;
+        buf[x * n..x * n + n].copy_from_slice(&v.to_le_bytes()[..n]);
+    }
+}
+
+const FNV_OFFSET: u64 = 14695981039346656037;
+
+/// The harness's `digest_words`: FNV-1a 64 over the bytes taken eight at a time.
+fn digest_words(h: &mut u64, p: &[u8]) {
+    for w in p.as_chunks::<8>().0 {
+        *h = (*h ^ u64::from_le_bytes(*w)).wrapping_mul(1099511628211);
+    }
+}
+
+fn digest_write(
+    enc: &mut openexr_core::encoding::EncodePipeline,
+    _: &mut Context,
+    _: &[&[u8]],
+) -> Result<(), Error> {
+    let n = enc.packed_bytes as usize;
+    let packed = enc.packed_buffer.as_deref().unwrap();
+    let h = enc
+        .encoding_user_data
+        .as_mut()
+        .unwrap()
+        .downcast_mut::<u64>()
+        .unwrap();
+    digest_words(h, &packed[..n]);
+    Ok(())
+}
+
+struct BlockRead {
+    read_fn: openexr_core::decoding::DecodeFn,
+    block: u32,
+    ty: PixelType,
+}
+
+fn block_read(
+    dec: &mut openexr_core::decoding::DecodePipeline<'_>,
+    outs: &mut [&mut [u8]],
+) -> Result<(), Error> {
+    let (read_fn, block, ty) = {
+        let s = dec
+            .decoding_user_data
+            .as_ref()
+            .unwrap()
+            .downcast_ref::<BlockRead>()
+            .unwrap();
+        (s.read_fn, s.block, s.ty)
+    };
+    read_fn(dec, outs)?;
+    assert_eq!(
+        dec.chunk.packed_size,
+        (CONVERT_WIDTH * type_size(ty)) as u64,
+        "the chunk's packed size"
+    );
+    fill_block(dec.packed_buffer.as_mut().unwrap(), ty, block);
+    Ok(())
+}
+
+fn set_user(ch: &mut openexr_core::coding::CodingChannelInfo, u: PixelType) {
+    ch.data = Some(BufferRef {
+        buffer: 0,
+        offset: 0,
+    });
+    ch.user_pixel_stride = type_size(u) as i32;
+    ch.user_line_stride = (CONVERT_WIDTH * type_size(u)) as i32;
+    ch.user_bytes_per_element = type_size(u) as i16;
+    ch.user_data_type = u.0 as u16;
+}
+
+/// The port's write context of the harness's file of type `t`, its header written.
+fn convert_file(path: &str, t: PixelType) -> Result<Context, Error> {
+    let mut f = Context::start_write(Some(path), DefaultWriteMode::WriteFileDirectly, None)?;
+    let p = f.add_part(Some(""), Storage::SCANLINE)?;
+    f.initialize_required_attr_simple(p, CONVERT_WIDTH as i32, 1, Compression::NONE)?;
+    f.add_channel(
+        p,
+        Some("A"),
+        t,
+        openexr_core::openexr_attr::PerceptualTreatment::LINEAR,
+        1,
+        1,
+    )?;
+    f.write_header()?;
+    Ok(f)
+}
+
+fn line(what: &str, t: PixelType, u: PixelType, n: u32, h: u64) -> String {
+    format!("{what} {} {} {n} {h:016x}", type_name(t), type_name(u))
+}
+
+/// The harness's encoding lines for file type `t` from user type `u`.
+fn port_encode(path: &str, t: PixelType, u: PixelType) -> Result<Vec<String>, Error> {
+    let mut f = convert_file(path, t)?;
+    let ci = f.write_scanline_chunk_info(0, 0)?;
+    let nb: u32 = if u == PixelType::HALF { 1 } else { 65536 };
+    let mut buf = vec![0u8; CONVERT_WIDTH * 4];
+    let mut enc = f.encoding_initialize(0, &ci)?;
+    set_user(&mut enc.channels[0], u);
+    f.encoding_choose_default_routines(0, &mut enc)?;
+    enc.write_fn = Some(digest_write);
+    enc.encoding_user_data = Some(Box::new(FNV_OFFSET));
+    let mut lines = Vec::new();
+    for b in 0..nb {
+        fill_block(&mut buf, u, b);
+        f.encoding_run(0, &mut enc, &[&buf[..]])?;
+        if nb == 1 || (b & 255) == 255 {
+            let h = enc
+                .encoding_user_data
+                .as_mut()
+                .unwrap()
+                .downcast_mut::<u64>()
+                .unwrap();
+            lines.push(line("encode", t, u, if nb == 1 { 0 } else { b >> 8 }, *h));
+            *h = FNV_OFFSET;
+        }
+    }
+    f.encoding_destroy(&mut enc)?;
+    Ok(lines)
+}
+
+/// The harness's decoding lines for file type `t` (Core's file at `path`) into user type `u`.
+fn port_decode(path: &str, t: PixelType, u: PixelType) -> Result<Vec<String>, Error> {
+    let f = Context::start_read(Some(path), None)?;
+    let ci = f.read_scanline_chunk_info(0, 0)?;
+    let nb: u32 = if t == PixelType::HALF { 1 } else { 65536 };
+    let mut buf = vec![0u8; CONVERT_WIDTH * type_size(u)];
+    let mut dec = f.decoding_initialize(0, &ci)?;
+    set_user(&mut dec.channels[0], u);
+    f.decoding_choose_default_routines(0, &mut dec)?;
+    dec.decoding_user_data = Some(Box::new(BlockRead {
+        read_fn: dec.read_fn.unwrap(),
+        block: 0,
+        ty: t,
+    }));
+    dec.read_fn = Some(block_read);
+    let mut lines = Vec::new();
+    let mut h = FNV_OFFSET;
+    for b in 0..nb {
+        dec.decoding_user_data
+            .as_mut()
+            .unwrap()
+            .downcast_mut::<BlockRead>()
+            .unwrap()
+            .block = b;
+        f.decoding_run(0, &mut dec, &mut [&mut buf[..]])?;
+        digest_words(&mut h, &buf);
+        if nb == 1 || (b & 255) == 255 {
+            lines.push(line("decode", t, u, if nb == 1 { 0 } else { b >> 8 }, h));
+            h = FNV_OFFSET;
+        }
+    }
+    f.decoding_destroy(&mut dec)?;
+    Ok(lines)
+}
+
+/// The harness's file of type `t`, written by the port: block 0 of its own type.
+fn port_convert_file(path: &str, t: PixelType) -> Result<(), Error> {
+    let mut f = convert_file(path, t)?;
+    let ci = f.write_scanline_chunk_info(0, 0)?;
+    let mut buf = vec![0u8; CONVERT_WIDTH * type_size(t)];
+    fill_block(&mut buf, t, 0);
+    let mut enc = f.encoding_initialize(0, &ci)?;
+    set_user(&mut enc.channels[0], t);
+    f.encoding_choose_default_routines(0, &mut enc)?;
+    f.encoding_run(0, &mut enc, &[&buf[..]])?;
+    f.encoding_destroy(&mut enc)?;
+    f.finish()
+}
+
+#[test]
+fn every_conversion_converts_as_core_does() {
+    let scratch = root().join("target/heavy-harness-convert");
+    let _ = std::fs::remove_dir_all(&scratch);
+    std::fs::create_dir_all(scratch.join("core")).unwrap();
+    std::fs::create_dir_all(scratch.join("port")).unwrap();
+    let out = Command::new(harness())
+        .arg("convert")
+        .arg(scratch.join("core"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "core_harness convert: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let core: Vec<String> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+
+    // the files: the port's, as Core's
+    for t in CONVERT_TYPES {
+        let name = format!("{}.exr", type_name(t));
+        let mine = scratch.join("port").join(&name);
+        port_convert_file(mine.to_str().unwrap(), t).unwrap();
+        assert!(
+            std::fs::read(&mine).unwrap()
+                == std::fs::read(scratch.join("core").join(&name)).unwrap(),
+            "{name}: the port's file differs from Core's"
+        );
+    }
+
+    // the runs, in the harness's order, each on its own thread
+    let mut runs = Vec::new();
+    for t in CONVERT_TYPES {
+        for what in ["encode", "decode"] {
+            for u in CONVERT_TYPES {
+                if u != t {
+                    runs.push((what, t, u));
+                }
+            }
+        }
+    }
+    let port: Vec<String> = std::thread::scope(|s| {
+        let handles: Vec<_> = runs
+            .iter()
+            .enumerate()
+            .map(|(i, &(what, t, u))| {
+                let scratch = &scratch;
+                s.spawn(move || {
+                    if what == "encode" {
+                        let p = scratch.join("port").join(format!("encode-{i}.exr"));
+                        port_encode(p.to_str().unwrap(), t, u)
+                    } else {
+                        let p = scratch.join("core").join(format!("{}.exr", type_name(t)));
+                        port_decode(p.to_str().unwrap(), t, u)
+                    }
+                    .unwrap_or_else(|e| panic!("{what} {} {}: {e:?}", type_name(t), type_name(u)))
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().unwrap())
+            .collect()
+    });
+    let _ = std::fs::remove_dir_all(&scratch);
+
+    // 8 runs over 2^32 inputs (256 digests each) and 4 over 2^16 (one each)
+    assert_eq!(core.len(), 8 * 256 + 4, "the harness's lines");
+    let differing: Vec<(&String, &String)> =
+        core.iter().zip(&port).filter(|(a, b)| a != b).collect();
+    for (a, b) in differing.iter().take(20) {
+        eprintln!("core: {a}\nport: {b}");
+    }
+    eprintln!(
+        "conversion digests compared: {}, differing: {}",
+        core.len(),
+        differing.len()
+    );
+    assert_eq!(core.len(), port.len());
+    assert!(differing.is_empty());
+}

@@ -135,6 +135,16 @@ for byte and every chunk by index, 2909 rewrites identical; left out, D-10, D-17
 found a port bug the wheel's images could not: libdeflate's `min_lens` table had two entries
 wrong (fixed).
 
+2026-11-08, with the corpus (`scripts/fetch-corpus.sh`: openexr-images at e38ffb07, 97
+images) and every ZSTD level ported, Windows: 1612 files read and printed (the corpus whole
+and damaged among them), identical but for D-4 (178) and D-6 (9); 5068 rewrites (the
+corpus's at each compression's default level), identical, with the chunks of D-10, D-17 and
+D-18 left out (3367, nearly all D-17's mip-level edge tiles of the corpus's tiled files). And
+`core_harness convert`: each of the six conversions between half, float and uint, over every
+input (2^16 halfs, 2^32 floats and uints), through Core's pack and unpack routines, as
+digests per 2^24 inputs: the port's 2052 digests equal Core's, and its three one-line files
+equal Core's byte for byte.
+
 ## Rocky Linux 9 (2026-11-08)
 
 `scripts/rocky9.sh` runs the reference container (`docker/rocky9`, image `openexr-rs-rocky9:2`:
