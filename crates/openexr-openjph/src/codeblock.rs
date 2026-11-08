@@ -161,7 +161,7 @@ impl Codeblock {
             if mv >= 1u32.wrapping_shl(31u32.wrapping_sub(self.k_max)) {
                 coded_cb.missing_msbs = self.k_max - 1;
                 coded_cb.num_passes = 1;
-                ojph_encode_codeblock32(
+                Self::encode_cb32(
                     &self.buf32,
                     self.k_max - 1,
                     1,
@@ -201,6 +201,49 @@ impl Codeblock {
         self.cur_line = 0;
         self.max_val64 = [0; 4];
         self.zero_block = false;
+    }
+
+    /// `encode_cb32` as `codeblock_fun::init` chooses it
+    /// (external/OpenJPH/src/core/codestream/ojph_codeblock_fun.cpp:225-260 @ OpenJPH 0.32.0):
+    /// the AVX-512 encoder at `X86_CPU_EXT_LEVEL_AVX512`, else the generic one (the AVX2
+    /// encoder upstream chooses from `X86_CPU_EXT_LEVEL_AVX2` is not ported yet; every
+    /// encoder codes a codeblock with the same bytes).
+    #[allow(clippy::too_many_arguments)]
+    fn encode_cb32(
+        buf: &[u32],
+        missing_msbs: u32,
+        num_passes: u32,
+        width: u32,
+        height: u32,
+        stride: u32,
+        lengths: &mut [u32; 2],
+        coded: &mut Option<Vec<u8>>,
+    ) -> OjphResult<()> {
+        #[cfg(target_arch = "x86_64")]
+        if crate::arch::get_cpu_ext_level() >= crate::arch::x86_level::AVX512
+            && let Some(r) = crate::block_encoder_avx512::encode_codeblock_avx512(
+                buf,
+                missing_msbs,
+                num_passes,
+                width,
+                height,
+                stride,
+                lengths,
+                coded,
+            )
+        {
+            return r;
+        }
+        ojph_encode_codeblock32(
+            buf,
+            missing_msbs,
+            num_passes,
+            width,
+            height,
+            stride,
+            lengths,
+            coded,
+        )
     }
 
     /// `decode_cb32` as `codeblock_fun::init` chooses it

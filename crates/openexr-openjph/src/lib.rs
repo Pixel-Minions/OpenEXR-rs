@@ -22,6 +22,8 @@ mod block_decoder64;
 mod block_decoder_avx2;
 #[allow(dead_code)] // used as the port grows
 mod block_encoder;
+#[cfg(target_arch = "x86_64")]
+mod block_encoder_avx512;
 #[allow(dead_code)] // used as the port grows
 mod codeblock;
 #[allow(dead_code)] // used as the port grows
