@@ -15,6 +15,13 @@ counts (uint32, row by row) and <p>.<i>.bin its samples, pixel after pixel.
 
 If the wheel refuses the image, manifest.tsv holds a single line `error<TAB><message>`.
 
+The binding has no conversion for the standard `deepImageState` attribute and refuses any file
+that holds one ("unsupported attribute type", PyOpenEXR.cpp:2058-2065), though the C++ library
+reads it and never uses it to decode pixels. For such a file the wheel reads a copy whose
+attribute has its type renamed to one of the same length the binding does not know
+(`xeepImageState`, kept as an opaque attribute): every other byte, offsets included, is the
+file's own.
+
 This script reports what the library does; it computes no expected values.
 """
 
@@ -35,7 +42,16 @@ def main():
     os.makedirs(out, exist_ok=True)
     lines = []
     try:
-        f = OpenEXR.File(image, separate_channels=True)
+        try:
+            f = OpenEXR.File(image, separate_channels=True)
+        except Exception as e:
+            if "unsupported attribute type: deepImageState" not in str(e):
+                raise
+            data = open(image, "rb").read()
+            renamed = os.path.join(out, "deepImageState-as-opaque.exr")
+            with open(renamed, "wb") as fh:
+                fh.write(data.replace(b"deepImageState\0deepImageState\0", b"deepImageState\0xeepImageState\0"))
+            f = OpenEXR.File(renamed, separate_channels=True)
         # the part's number in the file: the binding leaves out a part whose pixels it cannot
         # read, so a part's place in f.parts is not its number
         for part in f.parts:
