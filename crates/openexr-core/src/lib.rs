@@ -24,6 +24,7 @@ pub mod debug;
 pub mod decoding;
 pub mod encoding;
 pub mod errors;
+mod f16c_simd;
 mod file_impl;
 pub mod float_vector;
 mod imath_half;
@@ -33,6 +34,8 @@ mod internal_coding;
 mod internal_constants;
 mod internal_cpuid;
 mod internal_dwa;
+#[cfg(target_arch = "x86_64")]
+mod internal_dwa_avx;
 mod internal_dwa_channeldata;
 mod internal_dwa_classifier;
 mod internal_dwa_compressor;

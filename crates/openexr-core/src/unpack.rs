@@ -259,9 +259,20 @@ fn half_to_float_buffer_impl(out: &mut [u8], inp: &[u8]) {
 fn half_to_float_buffer_f16c(out: &mut [u8], inp: &[u8]) {
     use crate::internal_dwa_simd::vcvtph2ps;
 
+    let w = (inp.len() / 2).min(out.len() / 4);
+    // the instructions themselves (`f16c_simd`) where the CPU has them, the rest one by one
+    if let Some(done) = crate::f16c_simd::half_to_float_buffer(out, inp, w) {
+        let halves = inp.as_chunks::<2>().0;
+        let floats = out.as_chunks_mut::<4>().0;
+        for (o, i) in floats[done..w].iter_mut().zip(&halves[done..w]) {
+            *o = half_to_float(u16::from_ne_bytes(*i))
+                .to_bits()
+                .to_ne_bytes();
+        }
+        return;
+    }
     let halves = inp.as_chunks::<2>().0;
     let floats = out.as_chunks_mut::<4>().0;
-    let w = halves.len().min(floats.len());
     let simd = if w % 8 >= 4 { w - w % 8 + 4 } else { w - w % 8 };
     for (x, (o, i)) in floats[..w].iter_mut().zip(&halves[..w]).enumerate() {
         let h = u16::from_ne_bytes(*i);

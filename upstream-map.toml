@@ -1492,9 +1492,9 @@ note = "ported whole; partial with the codec; checked on Rocky Linux 9 too (gate
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_simd.h"
 kind = "src"
-status = "done"
-target = "crates/openexr-core/src/internal_dwa_simd.rs"
-note = "ported whole as exact scalar emulations; the SSE2 paths checked against the Windows wheel; the AVX inverse DCT and F16C conversions (Linux) equal the Linux wheel's and the CPU's (openexr-testkit cpu.rs); checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_simd.rs, crates/openexr-core/src/internal_dwa_avx.rs, crates/openexr-core/src/f16c_simd.rs"
+note = "ported whole: the SSE2 paths as exact emulations, checked against the Windows wheel; the AVX inverse DCT and the F16C conversions (Linux) with the instructions themselves (internal_dwa_avx.rs, f16c_simd.rs), their emulations the fallback and checked against them (and the CPU, openexr-testkit cpu.rs); the kernels' Linux run against the Linux wheel pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_table.c"
@@ -1869,8 +1869,8 @@ target = "crates/openexr-core/src/string_vector.rs"
 path = "src/lib/OpenEXRCore/unpack.c"
 kind = "src"
 status = "partial"
-target = "crates/openexr-core/src/unpack.rs"
-note = "ported whole: the image and deep unpackers, internal_exr_match_decode, and half_to_float_buffer's kernels as upstream chooses them (the F16C kernel on GCC builds); deep decoding checked against the wheel's deep files (heavy_deep); the F16C emulation awaits a CPU check (docs/deferred.md)"
+target = "crates/openexr-core/src/unpack.rs, crates/openexr-core/src/f16c_simd.rs"
+note = "ported whole: the image and deep unpackers, internal_exr_match_decode, and half_to_float_buffer's kernels as upstream chooses them (the F16C kernel on GCC builds, with the instructions themselves: f16c_simd.rs); deep decoding checked against the wheel's deep files (heavy_deep)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/validation.c"

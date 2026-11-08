@@ -27,6 +27,8 @@ const UNSAFE_ALLOWLIST: &[&str] = &[
     "crates/openexr-core/src/os_error.rs",
     // SIMD kernels (PLAN.md O3, owner 2026-11-08: the SIMD paths).
     "crates/openexr-core/src/internal_zip_simd.rs",
+    "crates/openexr-core/src/f16c_simd.rs",
+    "crates/openexr-core/src/internal_dwa_avx.rs",
     "crates/openexr-deflate/src/adler32_x86.rs",
 ];
 
