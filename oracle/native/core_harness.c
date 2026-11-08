@@ -30,6 +30,10 @@
  *   core_harness convert <dir>
  *       Every half, float and uint conversion of Core's pack and unpack routines, over every
  *       input, through the public pipeline (cmd_convert); digests on stdout.
+ *
+ *   core_harness bench <in> <reps> [<compression> [--zip N] [--zstd N] [--dwa F]]
+ *       Timing for comparing the port's speed with Core's (cmd_bench): part 0's chunks
+ *       decoded, and with a compression encoded, reps times; the best times on stdout.
  */
 
 #include <openexr.h>
@@ -737,6 +741,350 @@ cmd_convert (int argc, char** argv)
     return 0;
 }
 
+/* Timing, for comparing the port's speed with Core's (not a check: nothing here is an expected
+ * value). A clock of the platform's own: QueryPerformanceCounter, or CLOCK_MONOTONIC. */
+#ifdef _WIN32
+#    define WIN32_LEAN_AND_MEAN
+#    include <windows.h>
+static double
+bench_now (void)
+{
+    LARGE_INTEGER c, f;
+    QueryPerformanceCounter (&c);
+    QueryPerformanceFrequency (&f);
+    return (double) c.QuadPart / (double) f.QuadPart;
+}
+#else
+#    include <time.h>
+static double
+bench_now (void)
+{
+    struct timespec ts;
+    clock_gettime (CLOCK_MONOTONIC, &ts);
+    return (double) ts.tv_sec + (double) ts.tv_nsec * 1e-9;
+}
+#endif
+
+static exr_result_t
+bench_write_nothing (exr_encode_pipeline_t* enc)
+{
+    (void) enc;
+    return EXR_ERR_SUCCESS;
+}
+
+typedef struct
+{
+    exr_chunk_info_t ci;
+    planes_t         planes; /* the encoder's input (encode chunks only) */
+} bench_chunk_t;
+
+static int
+bench_push (bench_chunk_t** v, size_t* n, size_t* cap, const exr_chunk_info_t* ci)
+{
+    if (*n == *cap)
+    {
+        size_t         ncap = *cap ? *cap * 2 : 64;
+        bench_chunk_t* nv   = (bench_chunk_t*) realloc (*v, ncap * sizeof (bench_chunk_t));
+        if (!nv) return fail ("out of memory", EXR_ERR_OUT_OF_MEMORY);
+        *v   = nv;
+        *cap = ncap;
+    }
+    memset (*v + *n, 0, sizeof (bench_chunk_t));
+    (*v)[*n].ci = *ci;
+    ++*n;
+    return 0;
+}
+
+/* Every chunk of part 0 in the order recompress writes them, read side (in) or write side
+ * (out, when not NULL). */
+static int
+bench_chunks (
+    exr_const_context_t in, exr_context_t out, bench_chunk_t** v, size_t* n)
+{
+    size_t        cap = 0;
+    exr_storage_t st;
+    *v = NULL;
+    *n = 0;
+    CHECK (exr_get_storage (in, 0, &st));
+    if (st == EXR_STORAGE_SCANLINE)
+    {
+        exr_attr_box2i_t dw;
+        int32_t          lpc;
+        CHECK (exr_get_data_window (in, 0, &dw));
+        CHECK (exr_get_scanlines_per_chunk (out ? out : in, 0, &lpc));
+        for (int64_t y = dw.min.y; y <= dw.max.y; y += lpc)
+        {
+            exr_chunk_info_t ci;
+            int              r;
+            if (out)
+                CHECK (exr_write_scanline_chunk_info (out, 0, (int) y, &ci));
+            else
+                CHECK (exr_read_scanline_chunk_info (in, 0, (int) y, &ci));
+            if ((r = bench_push (v, n, &cap, &ci))) return r;
+        }
+        return 0;
+    }
+    if (st != EXR_STORAGE_TILED) return fail ("bench: deep parts are not supported", EXR_ERR_INVALID_ARGUMENT);
+    {
+        int32_t               levelsx, levelsy;
+        uint32_t              tw, th;
+        exr_tile_level_mode_t mode;
+        exr_tile_round_mode_t round;
+        CHECK (exr_get_tile_descriptor (in, 0, &tw, &th, &mode, &round));
+        CHECK (exr_get_tile_levels (in, 0, &levelsx, &levelsy));
+        for (int ly = 0; ly < levelsy; ++ly)
+        {
+            for (int lx = 0; lx < levelsx; ++lx)
+            {
+                int32_t cx, cy;
+                if (mode != EXR_TILE_RIPMAP_LEVELS && lx != ly) continue;
+                CHECK (exr_get_tile_counts (in, 0, lx, ly, &cx, &cy));
+                for (int ty = 0; ty < cy; ++ty)
+                {
+                    for (int tx = 0; tx < cx; ++tx)
+                    {
+                        exr_chunk_info_t ci;
+                        int              r;
+                        if (out)
+                            CHECK (exr_write_tile_chunk_info (out, 0, tx, ty, lx, ly, &ci));
+                        else
+                            CHECK (exr_read_tile_chunk_info (in, 0, tx, ty, lx, ly, &ci));
+                        if ((r = bench_push (v, n, &cap, &ci))) return r;
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+/* One chunk decoded into planar buffers of the channels' own types, at planes. */
+static int
+bench_decode (exr_const_context_t in, const exr_chunk_info_t* ci, planes_t* planes, int alloc)
+{
+    exr_decode_pipeline_t dec = EXR_DECODE_PIPELINE_INITIALIZER;
+    int                   r;
+    CHECK (exr_decoding_initialize (in, 0, ci, &dec));
+    if (alloc && (r = plan_channels (dec.channels, dec.channel_count, planes))) return r;
+    {
+        size_t off = 0;
+        for (int16_t c = 0; c < dec.channel_count; ++c)
+        {
+            exr_coding_channel_info_t* ch = dec.channels + c;
+            ch->decode_to_ptr          = planes->data + off;
+            ch->user_pixel_stride      = ch->bytes_per_element;
+            ch->user_line_stride       = ch->width * ch->bytes_per_element;
+            ch->user_bytes_per_element = ch->bytes_per_element;
+            ch->user_data_type         = ch->data_type;
+            off += (size_t) ch->width * (size_t) ch->height * (size_t) ch->bytes_per_element;
+        }
+    }
+    CHECK (exr_decoding_choose_default_routines (in, 0, &dec));
+    CHECK (exr_decoding_run (in, 0, &dec));
+    CHECK (exr_decoding_destroy (in, &dec));
+    return 0;
+}
+
+/* core_harness bench <in> <reps> [<compression> [--zip N] [--zstd N] [--dwa F]]
+ * Part 0 of <in>: every chunk decoded (into planar buffers of the channels' own types) reps
+ * times; with a compression, every chunk of the rewrite recompress makes encoded reps times,
+ * from planes filled beforehand, with a write_fn that writes nothing. Prints the best time
+ * of each, in seconds. Single-threaded. */
+static int
+cmd_bench (int argc, char** argv)
+{
+    exr_context_t  in = NULL, out = NULL;
+    bench_chunk_t* rd = NULL;
+    bench_chunk_t* wr = NULL;
+    size_t         nrd = 0, nwr = 0, maxsz = 0;
+    planes_t       scratch;
+    int            reps, r;
+    double         best = 1e30;
+
+    if (argc < 2) return fail ("bench: <in> <reps> [<compression> ...]", EXR_ERR_INVALID_ARGUMENT);
+    reps = atoi (argv[1]);
+    CHECK (exr_start_read (&in, argv[0], NULL));
+    if ((r = bench_chunks (in, NULL, &rd, &nrd))) return r;
+    for (size_t i = 0; i < nrd; ++i)
+        if (rd[i].ci.unpacked_size > maxsz) maxsz = (size_t) rd[i].ci.unpacked_size;
+    scratch.data = (uint8_t*) calloc (maxsz + 1, 1);
+    if (!scratch.data) return fail ("out of memory", EXR_ERR_OUT_OF_MEMORY);
+    for (int k = 0; k < reps; ++k)
+    {
+        double t0 = bench_now (), t;
+        for (size_t i = 0; i < nrd; ++i)
+            if ((r = bench_decode (in, &rd[i].ci, &scratch, 0))) return r;
+        t = bench_now () - t0;
+        if (t < best) best = t;
+    }
+    printf ("decode %zu %.9f\n", nrd, best);
+
+    if (argc >= 3)
+    {
+        exr_compression_t comp = (exr_compression_t) atoi (argv[2]);
+        exr_storage_t     st;
+        char              tmp[4096];
+        CHECK (exr_get_storage (in, 0, &st));
+        snprintf (tmp, sizeof (tmp), "%s.bench-out", argv[0]);
+        CHECK (exr_start_write (&out, tmp, EXR_WRITE_FILE_DIRECTLY, NULL));
+        {
+            int idx = -1;
+            CHECK (exr_add_part (out, NULL, st, &idx));
+            CHECK (exr_copy_unset_attributes (out, idx, in, 0));
+            CHECK (exr_set_compression (out, idx, comp));
+            /* no chunk is written, so none in order: RANDOM_Y lets each encode (chunk.c:2415) */
+            CHECK (exr_set_lineorder (out, idx, EXR_LINEORDER_RANDOM_Y));
+            for (int i = 3; i + 1 < argc; i += 2)
+            {
+                if (!strcmp (argv[i], "--zip"))
+                    CHECK (exr_set_zip_compression_level (out, idx, atoi (argv[i + 1])));
+                else if (!strcmp (argv[i], "--zstd"))
+                    CHECK (exr_set_zstd_compression_level (out, idx, atoi (argv[i + 1])));
+                else if (!strcmp (argv[i], "--dwa"))
+                    CHECK (exr_set_dwa_compression_level (out, idx, (float) atof (argv[i + 1])));
+                else
+                    return fail ("bench: unknown option", EXR_ERR_INVALID_ARGUMENT);
+            }
+        }
+        CHECK (exr_write_header (out));
+        if ((r = bench_chunks (in, out, &wr, &nwr))) return r;
+
+        /* the encoders' inputs, filled beforehand */
+        if (st == EXR_STORAGE_SCANLINE)
+        {
+            /* the whole part decoded, then each write chunk's rows copied out */
+            const exr_attr_chlist_t* chans = NULL;
+            exr_attr_box2i_t         dw;
+            uint8_t*                 whole[256];
+            int64_t                  widths[256];
+            int                      bpe[256];
+            CHECK (exr_get_data_window (in, 0, &dw));
+            CHECK (exr_get_channels (in, 0, &chans));
+            if (chans->num_channels > 256) return fail ("too many channels", EXR_ERR_INVALID_ARGUMENT);
+            for (int c = 0; c < chans->num_channels; ++c)
+            {
+                const exr_attr_chlist_entry_t* e = chans->entries + c;
+                int64_t h = sampled (dw.min.y, (int64_t) dw.max.y + 1, e->y_sampling);
+                widths[c] = sampled (dw.min.x, (int64_t) dw.max.x + 1, e->x_sampling);
+                bpe[c]    = e->pixel_type == EXR_PIXEL_HALF ? 2 : 4;
+                whole[c]  = (uint8_t*) calloc ((size_t) (widths[c] * h * bpe[c]) + 1, 1);
+                if (!whole[c]) return fail ("out of memory", EXR_ERR_OUT_OF_MEMORY);
+            }
+            for (size_t i = 0; i < nrd; ++i)
+            {
+                exr_decode_pipeline_t dec = EXR_DECODE_PIPELINE_INITIALIZER;
+                CHECK (exr_decoding_initialize (in, 0, &rd[i].ci, &dec));
+                for (int16_t c = 0; c < dec.channel_count; ++c)
+                {
+                    exr_coding_channel_info_t*     ch = dec.channels + c;
+                    const exr_attr_chlist_entry_t* e  = chans->entries + c;
+                    int64_t row = sampled (dw.min.y, rd[i].ci.start_y, e->y_sampling);
+                    ch->decode_to_ptr          = whole[c] + row * widths[c] * bpe[c];
+                    ch->user_pixel_stride      = ch->bytes_per_element;
+                    ch->user_line_stride       = (int32_t) (widths[c] * bpe[c]);
+                    ch->user_bytes_per_element = ch->bytes_per_element;
+                    ch->user_data_type         = ch->data_type;
+                }
+                CHECK (exr_decoding_choose_default_routines (in, 0, &dec));
+                CHECK (exr_decoding_run (in, 0, &dec));
+                CHECK (exr_decoding_destroy (in, &dec));
+            }
+            for (size_t i = 0; i < nwr; ++i)
+            {
+                exr_encode_pipeline_t enc = EXR_ENCODE_PIPELINE_INITIALIZER;
+                size_t                off = 0;
+                CHECK (exr_encoding_initialize (out, 0, &wr[i].ci, &enc));
+                if ((r = plan_channels (enc.channels, enc.channel_count, &wr[i].planes))) return r;
+                for (int16_t c = 0; c < enc.channel_count; ++c)
+                {
+                    const exr_coding_channel_info_t* ch = enc.channels + c;
+                    const exr_attr_chlist_entry_t*   e  = chans->entries + c;
+                    int64_t row = sampled (dw.min.y, wr[i].ci.start_y, e->y_sampling);
+                    size_t  n   = (size_t) ch->width * (size_t) ch->height * (size_t) bpe[c];
+                    memcpy (wr[i].planes.data + off, whole[c] + row * widths[c] * bpe[c], n);
+                    off += n;
+                }
+                CHECK (exr_encoding_destroy (out, &enc));
+            }
+            for (int c = 0; c < chans->num_channels; ++c)
+                free (whole[c]);
+        }
+        else
+        {
+            /* each tile decoded, its rows copied into planes of the write side's sizes (they
+             * differ at a level's edge: I-21) */
+            for (size_t i = 0; i < nwr; ++i)
+            {
+                exr_decode_pipeline_t dec = EXR_DECODE_PIPELINE_INITIALIZER;
+                exr_encode_pipeline_t enc = EXR_ENCODE_PIPELINE_INITIALIZER;
+                size_t                doff = 0, eoff = 0;
+                if ((r = bench_decode (in, &rd[i].ci, &scratch, 0))) return r;
+                CHECK (exr_decoding_initialize (in, 0, &rd[i].ci, &dec));
+                CHECK (exr_encoding_initialize (out, 0, &wr[i].ci, &enc));
+                if ((r = plan_channels (enc.channels, enc.channel_count, &wr[i].planes))) return r;
+                for (int16_t c = 0; c < enc.channel_count; ++c)
+                {
+                    const exr_coding_channel_info_t* d = dec.channels + c;
+                    const exr_coding_channel_info_t* e = enc.channels + c;
+                    int32_t rows = d->height < e->height ? d->height : e->height;
+                    int32_t cols = d->width < e->width ? d->width : e->width;
+                    for (int32_t y = 0; y < rows; ++y)
+                        memcpy (
+                            wr[i].planes.data + eoff +
+                                (size_t) y * (size_t) e->width * e->bytes_per_element,
+                            scratch.data + doff +
+                                (size_t) y * (size_t) d->width * d->bytes_per_element,
+                            (size_t) cols * d->bytes_per_element);
+                    doff += (size_t) d->width * (size_t) d->height * d->bytes_per_element;
+                    eoff += (size_t) e->width * (size_t) e->height * e->bytes_per_element;
+                }
+                CHECK (exr_encoding_destroy (out, &enc));
+                CHECK (exr_decoding_destroy (in, &dec));
+            }
+        }
+
+        best = 1e30;
+        for (int k = 0; k < reps; ++k)
+        {
+            double t0 = bench_now (), t;
+            for (size_t i = 0; i < nwr; ++i)
+            {
+                exr_encode_pipeline_t enc = EXR_ENCODE_PIPELINE_INITIALIZER;
+                size_t                off = 0;
+                CHECK (exr_encoding_initialize (out, 0, &wr[i].ci, &enc));
+                for (int16_t c = 0; c < enc.channel_count; ++c)
+                {
+                    exr_coding_channel_info_t* ch = enc.channels + c;
+                    ch->encode_from_ptr        = wr[i].planes.data + off;
+                    ch->user_pixel_stride      = ch->bytes_per_element;
+                    ch->user_line_stride       = ch->width * ch->bytes_per_element;
+                    ch->user_bytes_per_element = ch->bytes_per_element;
+                    ch->user_data_type         = ch->data_type;
+                    off += (size_t) ch->width * (size_t) ch->height *
+                           (size_t) ch->bytes_per_element;
+                }
+                CHECK (exr_encoding_choose_default_routines (out, 0, &enc));
+                enc.write_fn = bench_write_nothing;
+                CHECK (exr_encoding_run (out, 0, &enc));
+                CHECK (exr_encoding_destroy (out, &enc));
+            }
+            t = bench_now () - t0;
+            if (t < best) best = t;
+        }
+        printf ("encode %zu %.9f\n", nwr, best);
+        for (size_t i = 0; i < nwr; ++i)
+            free (wr[i].planes.data);
+        free (wr);
+        exr_finish (&out);
+        remove (tmp);
+    }
+    free (scratch.data);
+    free (rd);
+    CHECK (exr_finish (&in));
+    fflush (stdout);
+    return 0;
+}
+
 int
 main (int argc, char** argv)
 {
@@ -744,6 +1092,7 @@ main (int argc, char** argv)
         return cmd_compress_buffer (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "info")) return cmd_info (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "convert")) return cmd_convert (argc - 2, argv + 2);
+    if (argc >= 2 && !strcmp (argv[1], "bench")) return cmd_bench (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "recompress"))
         return cmd_recompress (argc - 2, argv + 2);
     fprintf (
@@ -751,6 +1100,7 @@ main (int argc, char** argv)
         "usage: core_harness info <file> [--strict] [--verbose]\n"
         "       core_harness recompress <in> <out> <compression> [--zip N] [--zstd N] [--dwa F]\n"
         "       core_harness compress-buffer <level> <in> <out>\n"
-        "       core_harness convert <dir>\n");
+        "       core_harness convert <dir>\n"
+        "       core_harness bench <in> <reps> [<compression> [--zip N] [--zstd N] [--dwa F]]\n");
     return 2;
 }
