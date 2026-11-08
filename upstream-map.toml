@@ -311,8 +311,8 @@ note = "ported"
 path = "external/OpenJPH/src/core/coding/ojph_block_encoder_avx2.cpp"
 kind = "vendored"
 status = "partial"
-target = "crates/openexr-openjph/src/block_encoder.rs"
-note = "writes the generic encoder's bytes, to check on an AVX2 machine (SDE; this one chooses AVX-512)"
+target = "crates/openexr-openjph/src/block_encoder_avx2.rs"
+note = "ported whole, in AVX2, chosen from X86_CPU_EXT_LEVEL_AVX2 below AVX-512 as upstream chooses it; encodes as the wheel's (heavy_decode's encode checks and heavy_harness, run with it forced); its unchecked MEL, VLC and MagSgn writes are refused past their buffers (unreachable); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_encoder_avx2_apple.h"
