@@ -1685,15 +1685,15 @@ note = "both ways: flat and deep parts decode as the wheel does, and the wheel's
 path = "src/lib/OpenEXRCore/internal_zstd_delta.c"
 kind = "src"
 status = "done"
-target = "crates/openexr-core/src/internal_zstd_delta.rs"
-note = "the scalar deltas ported (GCC's AVX2 decode computes the same sums, O3); both ways checked with Core's ZSTD codec (heavy tier)"
+target = "crates/openexr-core/src/internal_zstd_delta.rs, crates/openexr-core/src/internal_zstd_simd.rs"
+note = "the scalar deltas, and the AVX2 decode GCC's builds take (internal_zstd_simd.rs, where the CPU has AVX2: the same sums); both ways checked with Core's ZSTD codec and the wheel (heavy tier)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd_shuffle.c"
 kind = "src"
 status = "done"
-target = "crates/openexr-core/src/internal_zstd_shuffle.rs"
-note = "the scalar shuffles ported (GCC's AVX2 unshuffle moves the same bytes, O3); both ways checked with Core's ZSTD codec (heavy tier)"
+target = "crates/openexr-core/src/internal_zstd_shuffle.rs, crates/openexr-core/src/internal_zstd_simd.rs"
+note = "the scalar shuffles, and the AVX2 unshuffle GCC's builds take (internal_zstd_simd.rs, where the CPU has AVX2: the same bytes; the AVX-512 ones are commented out upstream); both ways checked with Core's ZSTD codec and the wheel (heavy tier)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/memory.c"

@@ -50,6 +50,11 @@ pub(crate) fn shuffle_encode_2(input: &[u8], out: &mut [u8]) {
 /// `shuffle_decode_2_scalar` (src/lib/OpenEXRCore/internal_zstd_shuffle.c:275-311 @ v3.5.3):
 /// the planes of `shuf` back into elements of `el_bytes` (4, or else 2) in `dst`.
 pub(crate) fn shuffle_decode_bytes(dst: &mut [u8], shuf: &[u8], el_bytes: u64) {
+    // the AVX2 kernels where the CPU has AVX2, as GCC's builds take them (`internal_zstd_simd`)
+    #[cfg(target_arch = "x86_64")]
+    if crate::internal_zstd_simd::shuffle_decode_bytes(dst, shuf, el_bytes) {
+        return;
+    }
     if el_bytes == 4 {
         let elements = shuf.len() / 4;
         let (p0, rest) = shuf.split_at(elements);

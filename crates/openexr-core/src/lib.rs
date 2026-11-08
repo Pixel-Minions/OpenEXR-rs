@@ -59,6 +59,8 @@ mod internal_zip_simd;
 mod internal_zstd;
 mod internal_zstd_delta;
 mod internal_zstd_shuffle;
+#[cfg(target_arch = "x86_64")]
+mod internal_zstd_simd;
 pub mod opaque;
 pub mod openexr_attr;
 mod os_error;
