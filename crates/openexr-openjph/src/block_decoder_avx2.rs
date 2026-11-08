@@ -1365,6 +1365,32 @@ unsafe fn decode_cb_spp_mrp(
     }
 }
 
+/// `scratch[i]` without a bounds check: step 1's indices stay inside the quad rows of a
+/// codeblock of at most 4096 samples, as upstream's do (checked in debug builds).
+#[inline(always)]
+fn sget(scratch: &[u16], i: usize) -> u16 {
+    debug_assert!(i < scratch.len());
+    // SAFETY: see above
+    unsafe { *scratch.get_unchecked(i) }
+}
+
+/// `scratch[i] = v` without a bounds check (see [`sget`]).
+#[inline(always)]
+fn sset(scratch: &mut [u16], i: usize, v: u16) {
+    debug_assert!(i < scratch.len());
+    // SAFETY: see sget
+    unsafe { *scratch.get_unchecked_mut(i) = v }
+}
+
+/// A table entry without a bounds check: every index is masked below its table's size
+/// (`c_q < 0x400 - 0x7F`, `uvlc_mode <= 0x100`, and so on, as upstream's).
+#[inline(always)]
+fn tget<T: Copy>(tbl: &[T], i: usize) -> T {
+    debug_assert!(i < tbl.len());
+    // SAFETY: see above
+    unsafe { *tbl.get_unchecked(i) }
+}
+
 /// Port of `decode_cb_step1_vlc`
 /// (external/OpenJPH/src/core/coding/ojph_block_decoder_avx2.cpp:1568-1817 @ OpenJPH 0.32.0):
 /// the VLC and MEL segments decoded into `scratch`, two entries (inf, u_q) per quad.
@@ -1420,7 +1446,7 @@ unsafe fn decode_cb_step1_vlc(
         };
 
         // decode VLC using the context c_q and the head of VLC bitstream
-        let mut t0 = t.vlc_tbl0[(c_q + (vlc_val as u32 & 0x7F)) as usize];
+        let mut t0 = tget(&t.vlc_tbl0, (c_q + (vlc_val as u32 & 0x7F)) as usize);
 
         // if context is zero, use one MEL event
         if c_q == 0 {
@@ -1436,7 +1462,7 @@ unsafe fn decode_cb_step1_vlc(
                 run = mel.get_run(); // get another run
             }
         }
-        scratch[sp] = t0;
+        sset(scratch, sp, t0);
         x += 2;
 
         // prepare context for the next quad; eqn. 1 in ITU T.814
@@ -1447,7 +1473,7 @@ unsafe fn decode_cb_step1_vlc(
 
         // second quad
         // decode VLC using the context c_q and the head of VLC bitstream
-        let mut t1 = t.vlc_tbl0[(c_q + (vlc_val as u32 & 0x7F)) as usize];
+        let mut t1 = tget(&t.vlc_tbl0, (c_q + (vlc_val as u32 & 0x7F)) as usize);
 
         // if context is zero, use one MEL event
         if c_q == 0 && x < width {
@@ -1463,7 +1489,7 @@ unsafe fn decode_cb_step1_vlc(
             }
         }
         t1 = if x < width { t1 } else { 0 };
-        scratch[sp + 2] = t1;
+        sset(scratch, sp + 2, t1);
         x += 2;
 
         // prepare context for the next quad, eqn. 1 in ITU T.814
@@ -1488,7 +1514,10 @@ unsafe fn decode_cb_step1_vlc(
         }
 
         // decode uvlc_mode to get u for both quads
-        let mut uvlc_entry = u32::from(t.uvlc_tbl0[(uvlc_mode + (vlc_val as u32 & 0x3F)) as usize]);
+        let mut uvlc_entry = u32::from(tget(
+            &t.uvlc_tbl0,
+            (uvlc_mode + (vlc_val as u32 & 0x3F)) as usize,
+        ));
         // remove total prefix length
         dconsume(&mut vlc_val, &mut vlc_bits, uvlc_entry & 0x7);
         uvlc_entry >>= 3;
@@ -1501,13 +1530,13 @@ unsafe fn decode_cb_step1_vlc(
         len = uvlc_entry & 0x7; // quad 0 suffix length
         uvlc_entry >>= 3;
         let mut u_q = (1 + (uvlc_entry & 7) + (tmp & !(0xFFu32 << len))) as u16; // kappa = 1
-        scratch[sp + 1] = u_q;
+        sset(scratch, sp + 1, u_q);
         u_q = (1 + (uvlc_entry >> 3) + (tmp >> len)) as u16; // kappa == 1
-        scratch[sp + 3] = u_q;
+        sset(scratch, sp + 3, u_q);
         sp += 4;
     }
-    scratch[sp] = 0;
-    scratch[sp + 1] = 0;
+    sset(scratch, sp, 0);
+    sset(scratch, sp + 1, 0);
 
     // non initial quad rows
     let mut y = 2;
@@ -1518,8 +1547,8 @@ unsafe fn decode_cb_step1_vlc(
         let mut x = 0u32;
         while x < width {
             // sigma_q (n, ne, nf)
-            c_q |= (u32::from(scratch[sp - sstr]) & 0xA0) << 2;
-            c_q |= (u32::from(scratch[sp + 2 - sstr]) & 0x20) << 4;
+            c_q |= (u32::from(sget(scratch, sp - sstr)) & 0xA0) << 2;
+            c_q |= (u32::from(sget(scratch, sp + 2 - sstr)) & 0x20) << 4;
 
             // first quad
             // SAFETY: vlc_buf holds vlc_limit + 72 bytes
@@ -1534,7 +1563,7 @@ unsafe fn decode_cb_step1_vlc(
             };
 
             // decode VLC using the context c_q and the head of VLC bitstream
-            let mut t0 = t.vlc_tbl1[(c_q + (vlc_val as u32 & 0x7F)) as usize];
+            let mut t0 = tget(&t.vlc_tbl1, (c_q + (vlc_val as u32 & 0x7F)) as usize);
 
             // if context is zero, use one MEL event
             if c_q == 0 {
@@ -1550,24 +1579,24 @@ unsafe fn decode_cb_step1_vlc(
                     run = mel.get_run(); // get another run
                 }
             }
-            scratch[sp] = t0;
+            sset(scratch, sp, t0);
             x += 2;
 
             // prepare context for the next quad; eqn. 2 in ITU T.814
             // sigma_q (w, sw)
             c_q = ((u32::from(t0) & 0x40) << 2) | ((u32::from(t0) & 0x80) << 1);
             // sigma_q (nw)
-            c_q |= u32::from(scratch[sp - sstr]) & 0x80;
+            c_q |= u32::from(sget(scratch, sp - sstr)) & 0x80;
             // sigma_q (n, ne, nf)
-            c_q |= (u32::from(scratch[sp + 2 - sstr]) & 0xA0) << 2;
-            c_q |= (u32::from(scratch[sp + 4 - sstr]) & 0x20) << 4;
+            c_q |= (u32::from(sget(scratch, sp + 2 - sstr)) & 0xA0) << 2;
+            c_q |= (u32::from(sget(scratch, sp + 4 - sstr)) & 0x20) << 4;
 
             // remove data from vlc stream (0 bits are removed if vlc is unused)
             dconsume(&mut vlc_val, &mut vlc_bits, u32::from(t0) & 0x7);
 
             // second quad
             // decode VLC using the context c_q and the head of VLC bitstream
-            let mut t1 = t.vlc_tbl1[(c_q + (vlc_val as u32 & 0x7F)) as usize];
+            let mut t1 = tget(&t.vlc_tbl1, (c_q + (vlc_val as u32 & 0x7F)) as usize);
 
             // if context is zero, use one MEL event
             if c_q == 0 && x < width {
@@ -1583,30 +1612,35 @@ unsafe fn decode_cb_step1_vlc(
                 }
             }
             t1 = if x < width { t1 } else { 0 };
-            scratch[sp + 2] = t1;
+            sset(scratch, sp + 2, t1);
             x += 2;
 
             // partial c_q, will be completed when we process the next quad
             // sigma_q (w, sw)
             c_q = ((u32::from(t1) & 0x40) << 2) | ((u32::from(t1) & 0x80) << 1);
             // sigma_q (nw)
-            c_q |= u32::from(scratch[sp + 2 - sstr]) & 0x80;
+            c_q |= u32::from(sget(scratch, sp + 2 - sstr)) & 0x80;
 
             // remove data from vlc stream, if qinf is not used, cwdlen is 0
             dconsume(&mut vlc_val, &mut vlc_bits, u32::from(t1) & 0x7);
 
             // decode u using wide UVLC table
             let mut uvlc_mode = ((u32::from(t0) >> 3) & 1) | (((u32::from(t1) >> 3) & 1) << 1);
-            let mut uvlc_entry =
-                t.uvlc_tbl1_wide[((uvlc_mode << 10) | (vlc_val as u32 & 0x3FF)) as usize];
+            let mut uvlc_entry = tget(
+                &t.uvlc_tbl1_wide,
+                ((uvlc_mode << 10) | (vlc_val as u32 & 0x3FF)) as usize,
+            );
             let total_bits = uvlc_entry & 0x1F;
             if total_bits < 0x1F {
-                scratch[sp + 1] = ((uvlc_entry >> 5) & 0xFF) as u16;
-                scratch[sp + 3] = ((uvlc_entry >> 13) & 0xFF) as u16;
+                sset(scratch, sp + 1, ((uvlc_entry >> 5) & 0xFF) as u16);
+                sset(scratch, sp + 3, ((uvlc_entry >> 13) & 0xFF) as u16);
                 dconsume(&mut vlc_val, &mut vlc_bits, total_bits);
             } else {
                 uvlc_mode = ((u32::from(t0) & 0x8) << 3) | ((u32::from(t1) & 0x8) << 4);
-                uvlc_entry = u32::from(t.uvlc_tbl1[(uvlc_mode + (vlc_val as u32 & 0x3F)) as usize]);
+                uvlc_entry = u32::from(tget(
+                    &t.uvlc_tbl1,
+                    (uvlc_mode + (vlc_val as u32 & 0x3F)) as usize,
+                ));
                 dconsume(&mut vlc_val, &mut vlc_bits, uvlc_entry & 0x7);
                 uvlc_entry >>= 3;
                 let mut len = uvlc_entry & 0xF;
@@ -1615,13 +1649,17 @@ unsafe fn decode_cb_step1_vlc(
                 uvlc_entry >>= 4;
                 len = uvlc_entry & 0x7;
                 uvlc_entry >>= 3;
-                scratch[sp + 1] = ((uvlc_entry & 7) + (tmp & !(0xFFu32 << len))) as u16;
-                scratch[sp + 3] = ((uvlc_entry >> 3) + (tmp >> len)) as u16;
+                sset(
+                    scratch,
+                    sp + 1,
+                    ((uvlc_entry & 7) + (tmp & !(0xFFu32 << len))) as u16,
+                );
+                sset(scratch, sp + 3, ((uvlc_entry >> 3) + (tmp >> len)) as u16);
             }
             sp += 4;
         }
-        scratch[sp] = 0;
-        scratch[sp + 1] = 0;
+        sset(scratch, sp, 0);
+        sset(scratch, sp + 1, 0);
         y += 2;
     }
 }
@@ -1633,6 +1671,12 @@ static TRUNCATE_SPP_MRP: AtomicBool = AtomicBool::new(false);
 /// The scratch array's entries: upstream's `8 * 513`, and 32 more, which nothing reads that
 /// upstream does not (the 32-bit path's loads of 16 entries end at most at upstream's end).
 const SCRATCH: usize = 8 * 513 + 32;
+
+thread_local! {
+    /// The decoder's scratch array (see [`ojph_decode_codeblock_avx2`]).
+    static SCRATCH_TLS: std::cell::RefCell<[u16; SCRATCH]> =
+        const { std::cell::RefCell::new([0; SCRATCH]) };
+}
 
 /// Port of `ojph_decode_codeblock_avx2`
 /// (external/OpenJPH/src/core/coding/ojph_block_decoder_avx2.cpp:1819-1972 @ OpenJPH 0.32.0):
@@ -1753,16 +1797,64 @@ pub(crate) unsafe fn ojph_decode_codeblock_avx2(
     // We need an extra two entries (one inf and one u_q) beyond the last column.
     let sstr = ((width + 2) + 7) & !7; // multiples of 8
 
-    // (upstream zeroes the quad rows it uses and one more; the whole array is zeroed here,
-    // the same values where read)
-    let mut scratch = [0u16; SCRATCH];
+    // upstream's scratch is a stack array of which it zeroes the quad rows it uses and one
+    // more; here a thread's array, with the same entries zeroed (nothing outside them is read)
+    SCRATCH_TLS.with_borrow_mut(|scratch| {
+        let quad_rows = ((height + 1) >> 1) as usize;
+        let scratch_zero = ((quad_rows + 1) * sstr as usize).min(8 * 513);
+        scratch[..scratch_zero].fill(0);
+        // SAFETY: AVX2 (this function's), and the checks above
+        unsafe {
+            decode_with_scratch(
+                scratch,
+                coded_data,
+                decoded_data,
+                missing_msbs,
+                num_passes,
+                lengths1,
+                lengths2,
+                width,
+                height,
+                stride,
+                stripe_causal,
+                p,
+                lcup,
+                scup,
+                sstr,
+            )
+        }
+    })
+}
 
+/// The rest of [`ojph_decode_codeblock_avx2`], with its scratch array.
+///
+/// # Safety
+/// As [`ojph_decode_codeblock_avx2`], whose checks it follows.
+#[target_feature(enable = "avx2")]
+#[allow(clippy::too_many_arguments)]
+unsafe fn decode_with_scratch(
+    scratch: &mut [u16; SCRATCH],
+    coded_data: &[u8],
+    decoded_data: &mut [u32],
+    missing_msbs: u32,
+    num_passes: u32,
+    lengths1: u32,
+    lengths2: u32,
+    width: u32,
+    height: u32,
+    stride: u32,
+    stripe_causal: bool,
+    p: u32,
+    lcup: i32,
+    scup: i32,
+    sstr: u32,
+) -> Option<bool> {
     let mmsbp2 = missing_msbs + 2;
 
     // step 1: decode VLC and MEL segments into scratch
     // SAFETY: AVX2, and the checks above
     unsafe {
-        decode_cb_step1_vlc(&mut scratch, coded_data, lcup, scup, width, height, sstr);
+        decode_cb_step1_vlc(scratch, coded_data, lcup, scup, width, height, sstr);
 
         // step2 we decode magsgn
         let ok = if mmsbp2 >= 16 {

@@ -29,6 +29,8 @@ const UNSAFE_ALLOWLIST: &[&str] = &[
     "crates/openexr-openjph/src/block_decoder_avx2.rs",
     // OpenJPH's AVX-512 block encoder (a SIMD kernel, PLAN.md D8).
     "crates/openexr-openjph/src/block_encoder_avx512.rs",
+    // OpenJPH's AVX2 reversible wavelet kernels (SIMD kernels, PLAN.md D8).
+    "crates/openexr-openjph/src/transform_avx2.rs",
 ];
 
 /// Upstream tests that are not applicable to a Rust port, with the owner's decision (PLAN.md O8).

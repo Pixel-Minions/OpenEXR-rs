@@ -54,6 +54,8 @@ mod tile;
 mod tile_comp;
 #[allow(dead_code)] // used as the port grows
 mod transform;
+#[cfg(target_arch = "x86_64")]
+mod transform_avx2;
 
 pub use base::{Point, Rect, Size};
 pub use codestream::{Codestream, CommentExchange};
