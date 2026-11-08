@@ -48,8 +48,9 @@ end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
      them and list it as an `I-` entry. If neither fits, stop and report it.
    - Translating a vendored library? Add its notice to `THIRD-PARTY-NOTICES.md` in the same chunk.
 2. **Expected values come only from the oracle, upstream's tests, or the platform itself.**
-   - The oracle is the real OpenEXR 3.5.3 (`oracle/`; a source-built Core harness only if the
-     owner approves PLAN.md O1, and only where it matches the wheel).
+   - The oracle is the real OpenEXR 3.5.3 (`oracle/`; and a source-built Core harness, owner
+     2026-11-07, PLAN.md O1, used only for what the wheel can't reach and only where it matches
+     the wheel).
    - Upstream tests are copied verbatim, with a citation.
    - The platform C runtime is the reference for `printf` and libm behavior, and the CPU for
      instruction semantics.
@@ -98,8 +99,9 @@ end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
   Upstream's `check_for_x86_simd` never reports AVX or F16C under MSVC (the inline-assembly probe
   fails, so `xgetbv` reads as 0): on Windows the port must take the same non-AVX paths.
   `unsafe` only in the files of `xtask guards`' allowlist (PLAN.md D8, owner 2026-11-07): SIMD
-  kernels, the test-only C runtime reference `openexr-testkit/src/crt.rs`, and `os_error.rs`
-  (the OS error text of the default file streams, O7). Nothing else.
+  kernels, the test-only C runtime and CPU references `openexr-testkit/src/crt.rs` and
+  `openexr-testkit/src/cpu.rs` (every SIMD emulation is checked against the CPU's instruction),
+  and `os_error.rs` (the OS error text of the default file streams, O7). Nothing else.
 - **What Rust can't have** (PLAN.md O8): allocator hooks, out-of-memory test paths, C struct
   versioning and NULL-pointer calls are n/a, each with its reason; port the rest of the test.
 - **Platform differences.** Where the Windows and Linux wheels differ (DWA today:

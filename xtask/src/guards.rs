@@ -21,6 +21,8 @@ use std::process::Command;
 const UNSAFE_ALLOWLIST: &[&str] = &[
     // The C runtime reference for `printf` (CLAUDE.md rule 2); test-only.
     "crates/openexr-testkit/src/crt.rs",
+    // The CPU reference for the SIMD emulations (owner, 2026-11-07); test-only.
+    "crates/openexr-testkit/src/cpu.rs",
     // The OS error text of the default file streams (PLAN.md O7).
     "crates/openexr-core/src/os_error.rs",
 ];

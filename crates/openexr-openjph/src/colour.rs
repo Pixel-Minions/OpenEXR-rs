@@ -582,6 +582,49 @@ pub(crate) fn ict_backward(
 mod tests {
     use super::*;
 
+    /// AVX2's clamps keep a lane as `vcmpps` with `_CMP_NLT_UQ` (`max_ge`) and `_CMP_NGE_UQ`
+    /// (`min_lt`) decide, NaN included, on the CPU.
+    #[test]
+    fn avx2_clamps_compare_as_the_cpu() {
+        let special = [
+            0.0f32,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            f32::MIN_POSITIVE,
+            f32::MAX,
+            f32::MIN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            -f32::NAN,
+            f32::from_bits(0x7f80_0001),
+            f32::from_bits(0x0000_0001),
+        ];
+        let (mut a, mut b) = (Vec::new(), Vec::new());
+        for &x in &special {
+            for &y in &special {
+                a.push(x);
+                b.push(y);
+            }
+        }
+        let (nlt, nge) = openexr_testkit::cpu::vcmpps_nlt_nge_uq(&a, &b);
+        for i in 0..a.len() {
+            let (t, lim) = (a[i], b[i]);
+            assert_eq!(
+                ToIntKernel::Avx2.max_ge(1, 0, t, lim) == 1,
+                nlt[i],
+                "max_ge {t:?} {lim:?}"
+            );
+            assert_eq!(
+                ToIntKernel::Avx2.min_lt(1, 0, t, lim) == 1,
+                nge[i],
+                "min_lt {t:?} {lim:?}"
+            );
+        }
+    }
+
     fn line32(v: &[i32]) -> LineBuf {
         let mut l = LineBuf::new_i32(v.len(), 0);
         l.i32_mut()[..v.len()].copy_from_slice(v);

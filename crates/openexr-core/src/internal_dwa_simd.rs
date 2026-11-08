@@ -1055,6 +1055,59 @@ mod tests {
     use super::*;
     use openexr_testkit::rand48::Rand48;
 
+    /// `vcvtph2ps` of every half, as the CPU converts it.
+    #[test]
+    fn vcvtph2ps_is_the_cpus() {
+        let all: Vec<u16> = (0..=u16::MAX).collect();
+        let cpu = openexr_testkit::cpu::vcvtph2ps(&all);
+        for (&h, c) in all.iter().zip(cpu) {
+            assert_eq!(vcvtph2ps(h).to_bits(), c.to_bits(), "half {h:#06x}");
+        }
+    }
+
+    /// The emulation of `vcvtps2ph` against the CPU's, over `input`.
+    fn check_vcvtps2ph(input: &[f32]) {
+        let cpu = openexr_testkit::cpu::vcvtps2ph(input);
+        for (&f, c) in input.iter().zip(cpu) {
+            assert_eq!(vcvtps2ph(f), c, "float {:#010x}", f.to_bits());
+        }
+    }
+
+    /// `vcvtps2ph $0` as the CPU converts: floats whose bits step through all 2^32 by 997,
+    /// and every tie between two adjacent halves with the floats on either side of it. Every
+    /// float in the heavy tier.
+    #[test]
+    fn vcvtps2ph_is_the_cpus() {
+        let mut input: Vec<f32> = (0..=u32::MAX).step_by(997).map(f32::from_bits).collect();
+        for h in 0..0x7bffu16 {
+            for sign in [0, 0x8000] {
+                let (a, b) = (half_to_float(sign | h), half_to_float(sign | (h + 1)));
+                let tie = (a + b) / 2.0;
+                input.extend([
+                    tie,
+                    f32::from_bits(tie.to_bits() - 1),
+                    f32::from_bits(tie.to_bits() + 1),
+                ]);
+            }
+        }
+        check_vcvtps2ph(&input);
+    }
+
+    /// `vcvtps2ph $0` of every float, as the CPU converts it.
+    #[cfg(feature = "heavy")]
+    #[test]
+    fn vcvtps2ph_is_the_cpus_everywhere() {
+        let step = 1u64 << 24;
+        let mut start = 0u64;
+        while start <= u64::from(u32::MAX) {
+            let block: Vec<f32> = (start..start + step)
+                .map(|b| f32::from_bits(b as u32))
+                .collect();
+            check_vcvtps2ph(&block);
+            start += step;
+        }
+    }
+
     /// Blocks of random halves (as the decoder makes them), with the last rows zeroed.
     fn blocks(seed: u64, zeroed_rows: usize) -> Vec<Block> {
         let mut rng = Rand48::new(seed);

@@ -179,7 +179,7 @@ Carried over from OpenColorIO-rs, adjusted to OpenEXR:
 | **D3** | Target | OpenEXR 3.5.3 exactly | Decided |
 | **D4** | Equivalence | Byte-exact as in §3; waivers only with the owner's sign-off | Carried over |
 | **D7** | Toolchain | Owner item O5 (§14) | Open |
-| **D8** | `unsafe` | Denied across the workspace; allowed only in the files of the allowlist `xtask guards` enforces: SIMD kernels, the test-only C runtime reference (`openexr-testkit/src/crt.rs`), and the one module that asks the OS for its error text (`os_error.rs`) | **Decided** (owner, 2026-11-07, O7-O9) |
+| **D8** | `unsafe` | Denied across the workspace; allowed only in the files of the allowlist `xtask guards` enforces: SIMD kernels, the test-only C runtime reference (`openexr-testkit/src/crt.rs`) and CPU reference (`openexr-testkit/src/cpu.rs`), and the one module that asks the OS for its error text (`os_error.rs`) | **Decided** (owner, 2026-11-07, O7-O9) |
 | **D9** | License | BSD-3-Clause with upstream's notice; vendored libraries keep their own (MIT, BSD, BSD-2) in `THIRD-PARTY-NOTICES.md`; DWA carries upstream's `PATENTS` terms | Required |
 | **D11** | Platforms | Windows x86-64 and Linux x86-64 (Rocky Linux 9.8, glibc 2.34); ARM and macOS later | Carried over |
 | **D12** | Output across platforms | Do what OpenEXR does on each platform and CPU | Carried over |
@@ -422,16 +422,16 @@ Each has a recommendation. Status on 2026-11-07:
 
 | Item | Status |
 |---|---|
-| O1 Oracle | Open; needed for the heavy tier (§8) |
+| O1 Oracle | **Decided** (owner, 2026-11-07): B, the wheel plus a source-built Core harness, accepted only where it reproduces the wheel |
 | O2 Vendored libraries | **Decided** (owner, 2026-11-07): A, port libdeflate, zstd and OpenJPH exactly, each as its own crate, in the stage that needs it |
-| O3 SIMD | Open; needed for Phase 5 |
+| O3 SIMD | **Decided** (owner, 2026-11-07): A, every SIMD path upstream takes reproduced exactly in safe code and chosen as upstream chooses it; real SIMD kernels come later, after profiling |
 | O4 Layout and naming | Recommendation in use since the owner started the port (2026-11-07); open to change until anything is published |
 | O5 Rust version | Recommendation in use since the owner started the port (2026-11-07); open to change |
 | O6 DWA patents | **Decided** (owner, 2026-11-07): credit DreamWorks |
 | O7 OS error text | **Decided** (owner, 2026-11-07): exact, through `FormatMessageA`/`strerror` |
 | O8 What Rust can't have | **Decided** (owner, 2026-11-07): n/a, each with its reason |
-| O9 `unsafe` in the test kit | **Decided** (owner, 2026-11-07): kept |
-| Upstream bugs found in Phases 2-4 (I-5 to I-12) | **Decided** (owner, 2026-11-07): fixed as deviations D-1 to D-8 (`docs/deviations.md`), with waivers W-1 to W-7 (`docs/waivers.md`); I-13 as D-9 with W-8; I-14 to I-16 (the header writer) as D-10 to D-12 with W-9 to W-11; I-17, I-18 (the chunk writes) as D-13, D-14 with W-12, W-13; I-19, I-20 (the encode pipeline) as D-15, D-16 with W-14, W-15; I-21 (tile chunk info) as D-17 with W-16 |
+| O9 `unsafe` in the test kit | **Decided** (owner, 2026-11-07): kept; and a CPU probe (`openexr-testkit/src/cpu.rs`), test-only, for the SIMD emulations |
+| Upstream bugs found in Phases 2-4 (I-5 to I-12) | **Decided** (owner, 2026-11-07): fixed as deviations D-1 to D-8 (`docs/deviations.md`), with waivers W-1 to W-7 (`docs/waivers.md`); I-13 as D-9 with W-8; I-14 to I-16 (the header writer) as D-10 to D-12 with W-9 to W-11; I-17, I-18 (the chunk writes) as D-13, D-14 with W-12, W-13; I-19, I-20 (the encode pipeline) as D-15, D-16 with W-14, W-15; I-21 (tile chunk info) as D-17 with W-16; I-29, I-30 (the deep sample table, the temporary file's rename) as D-19, D-20, and U-21 (Core's write locks, not copied): accepted on review (owner, 2026-11-07) |
 
 ### O1 — Oracle
 
@@ -445,6 +445,9 @@ Each has a recommendation. Status on 2026-11-07:
   OpenColorIO-rs's `oracle/native`. The wheel stays the authority: the harness is accepted only
   where it reproduces the wheel byte for byte (every corpus file decoded, every codec and level
   compressed, on both platforms), and is used only for what the wheel can't reach.
+
+**Decided (owner, 2026-11-07): B.** The harness is used only for what the wheel can't reach, and
+accepted only where it reproduces the wheel byte for byte.
 
 **Recommendation: B.** Parts of Core (`write_header.c`, `pack.c`, most of `encoding.c`, the API
 error paths, `debug.c`) can't be checked against the wheel at all, and its first consumer will write
@@ -482,6 +485,12 @@ encoded bytes.
 - **B. Scalar first, SIMD later.** Everything lands scalar; the SIMD paths come in a later
   phase. Until then, Linux results on AVX/F16C machines differ from the Linux wheel (measured:
   2 of 65,536 DWA values on this CPU), under a temporary waiver.
+
+**Decided (owner, 2026-11-07): A.** Each path upstream takes is reproduced exactly, in safe code
+(emulated lane by lane), and chosen as upstream chooses it; the emulations are checked against
+the CPU's own instructions (`openexr-testkit/src/cpu.rs`, O9). Real SIMD kernels, for speed,
+come after profiling: each proven equal to its emulation and added to the `unsafe` allowlist
+by review.
 
 **Recommendation: A, in the order of B.** Every codec lands scalar-exact first (which is also
 the Windows wheel's DWA behaviour), and its SIMD paths land in the same phase, before the
@@ -551,7 +560,11 @@ The ratchet counts ported tests plus listed n/a tests, out of 73.
 
 **Decided (owner, 2026-11-07): kept.** `crates/openexr-testkit/src/crt.rs` calls the platform's
 `snprintf`, the reference for `printf` (CLAUDE.md rule 2); test-only, never a library
-dependency, each call's format checked first.
+dependency, each call's format checked first. With it (owner, 2026-11-07),
+`crates/openexr-testkit/src/cpu.rs` calls the CPU's instructions (`std::arch`), the reference
+for the SIMD emulations (CLAUDE.md rule 2, "the CPU for instruction semantics"); each wrapper
+checks the CPU has the instruction set and moves values through arrays of the instruction's
+width.
 
 ---
 

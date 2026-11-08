@@ -203,3 +203,67 @@ pub(crate) fn cvt_f32_i32(f: f32) -> i32 {
         i32::MIN
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Floats whose bits step through all 2^32 by `step`, with the values around the edges of
+    /// the 32-bit range and every half-integer tie near zero.
+    fn floats(step: usize) -> Vec<f32> {
+        let mut v: Vec<f32> = (0..=u32::MAX).step_by(step).map(f32::from_bits).collect();
+        for edge in [2147483648.0f32, -2147483648.0] {
+            let b = edge.to_bits();
+            v.extend((b - 64..b + 64).map(f32::from_bits));
+        }
+        v.extend((-4096..4096).map(|i| i as f32 + 0.5));
+        v
+    }
+
+    /// `cvtps2dq` (`_mm_cvtps_epi32`) as the CPU rounds, `0x80000000` out of range and for NaN.
+    #[test]
+    fn cvt_f32_i32_is_the_cpus() {
+        let input = floats(997);
+        let cpu = openexr_testkit::cpu::cvtps2dq(&input);
+        for (&f, c) in input.iter().zip(cpu) {
+            assert_eq!(cvt_f32_i32(f), c, "float {:#010x}", f.to_bits());
+        }
+    }
+
+    /// `cvttss2si` as the CPU truncates, `0x80000000` out of range and for NaN.
+    #[test]
+    fn cvtt_f32_i32_is_the_cpus() {
+        for f in floats(997) {
+            assert_eq!(
+                cvtt_f32_i32(f),
+                openexr_testkit::cpu::cvttss2si(f),
+                "float {:#010x}",
+                f.to_bits()
+            );
+        }
+    }
+
+    /// Both conversions of every float, as the CPU converts it.
+    #[cfg(feature = "heavy")]
+    #[test]
+    fn conversions_are_the_cpus_everywhere() {
+        let step = 1u64 << 24;
+        let mut start = 0u64;
+        while start <= u64::from(u32::MAX) {
+            let block: Vec<f32> = (start..start + step)
+                .map(|b| f32::from_bits(b as u32))
+                .collect();
+            let cpu = openexr_testkit::cpu::cvtps2dq(&block);
+            for (&f, c) in block.iter().zip(cpu) {
+                assert_eq!(cvt_f32_i32(f), c, "float {:#010x}", f.to_bits());
+                assert_eq!(
+                    cvtt_f32_i32(f),
+                    openexr_testkit::cpu::cvttss2si(f),
+                    "float {:#010x}",
+                    f.to_bits()
+                );
+            }
+            start += step;
+        }
+    }
+}
