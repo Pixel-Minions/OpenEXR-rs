@@ -41,6 +41,7 @@ const UNSAFE_ALLOWLIST: &[&str] = &[
     "crates/openexr-core/src/internal_dwa_avx.rs",
     "crates/openexr-core/src/internal_zstd_simd.rs",
     "crates/openexr-deflate/src/adler32_x86.rs",
+    "crates/openexr-deflate/src/adler32_vnni.rs",
     "crates/openexr-deflate/src/decompress_bmi2.rs",
 ];
 

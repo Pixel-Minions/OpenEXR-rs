@@ -7,7 +7,7 @@
 //! (external/deflate/lib/x86/adler32_impl.h:106-131 @ libdeflate v1.26).
 //!
 //! Every variant computes the Adler-32 checksum itself, so the variant only changes the speed;
-//! the AVX-VNNI and AVX-512 VNNI ones the wheel may take on newer CPUs are left out. The
+//! the AVX-VNNI and AVX-512 VNNI ones are in `adler32_vnni.rs`. The
 //! pointer alignment step for long inputs (the template's lines 245-253) only aligns loads and
 //! is left out as well.
 //!
@@ -28,8 +28,11 @@ use std::arch::x86_64::{
 use crate::adler32::{MAX_CHUNK_LEN, adler32_chunk};
 
 /// The checksum of `p` continuing `adler`, by the vector variant `arch_select_adler32_func`
-/// chooses among these (AVX2, else SSE2).
+/// chooses: a VNNI one (`adler32_vnni`) where the CPU has VNNI, else AVX2, else SSE2.
 pub(crate) fn adler32(adler: u32, p: &[u8]) -> u32 {
+    if let Some(v) = crate::adler32_vnni::adler32(adler, p) {
+        return v;
+    }
     if std::arch::is_x86_feature_detected!("avx2") {
         // SAFETY: the CPU has AVX2.
         unsafe { adler32_avx2(adler, p) }
@@ -191,4 +194,17 @@ fn adler32_avx2(adler: u32, mut p: &[u8]) -> u32 {
         adler32_chunk(&mut s1, &mut s2, chunk);
     }
     (s2 << 16) | s1
+}
+
+/// The AVX2 and SSE2 variants' sums of `data` this CPU can compute, for the heavy test.
+#[cfg(all(test, feature = "heavy"))]
+pub(crate) fn variants(data: &[u8]) -> Vec<(&'static str, u32)> {
+    let mut v = Vec::new();
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: the CPU has AVX2.
+        v.push(("avx2", unsafe { adler32_avx2(1, data) }));
+    }
+    // SAFETY: SSE2 is part of x86-64.
+    v.push(("sse2", unsafe { adler32_sse2(1, data) }));
+    v
 }
