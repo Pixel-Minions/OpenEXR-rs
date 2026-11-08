@@ -749,14 +749,15 @@ section. An entry says:
 - **Status:** the port's choice (`internal_structs.h`'s locks are Rust borrows,
   `upstream-map.toml`).
 
-### U-22. OpenJPH's AVX-512 block encoder writes its MEL and VLC buffers unchecked
+### U-22. OpenJPH's AVX-512 and AVX2 block encoders write their buffers unchecked
 
 - **Upstream:** the AVX-512 block encoder's `mel_emit_bit` and `vlc_encode`
-  (`external/OpenJPH/src/core/coding/ojph_block_encoder_avx512.cpp` @ OpenJPH 0.32.0) store into
-  their buffers without a bound check; the buffers are sized "more than enough" (192 and 2880
-  bytes for 4096 samples), so no codeblock reaches the end.
-- **Who notices:** no one with a valid codeblock: no OpenEXR codeblock comes near the sizes.
-- **The port:** refuses a store past either buffer with the generic encoder's messages
-  (0x00020001, 0x00020002) (`crates/openexr-openjph/src/block_encoder_avx512.rs`).
+  (`external/OpenJPH/src/core/coding/ojph_block_encoder_avx512.cpp`), and the AVX2 encoder's
+  `mel_emit_bits`, `vlc_drain` and `ms_drain` (`ojph_block_encoder_avx2.cpp`) @ OpenJPH 0.32.0,
+  store into their buffers with no bound check; the buffers are sized "more than enough" (MEL
+  192, VLC 2880, MagSgn 17477 bytes for 4096 samples), so no codeblock reaches the end.
+- **Who notices:** no one with a valid codeblock; no OpenEXR codeblock comes near the sizes.
+- **The port:** refuses a store past any of them with the generic encoder's messages
+  (0x00020001 MEL, 0x00020002 VLC, 0x00020005 MagSgn) (`block_encoder_avx512.rs`,
+  `block_encoder_avx2.rs`).
 - **Status:** the port's choice, as U-9.
-
