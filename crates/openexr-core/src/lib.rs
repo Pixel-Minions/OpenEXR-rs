@@ -52,6 +52,7 @@ mod internal_rle;
 mod internal_util;
 mod internal_xdr;
 mod internal_zip;
+mod internal_zip_simd;
 mod internal_zstd;
 mod internal_zstd_delta;
 mod internal_zstd_shuffle;

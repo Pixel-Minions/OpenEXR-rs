@@ -25,6 +25,9 @@ const UNSAFE_ALLOWLIST: &[&str] = &[
     "crates/openexr-testkit/src/cpu.rs",
     // The OS error text of the default file streams (PLAN.md O7).
     "crates/openexr-core/src/os_error.rs",
+    // SIMD kernels (PLAN.md O3, owner 2026-11-08: the SIMD paths).
+    "crates/openexr-core/src/internal_zip_simd.rs",
+    "crates/openexr-deflate/src/adler32_x86.rs",
 ];
 
 /// Upstream tests that are not applicable to a Rust port, with the owner's decision (PLAN.md O8).

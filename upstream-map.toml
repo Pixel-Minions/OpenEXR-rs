@@ -638,7 +638,7 @@ path = "external/deflate/lib/adler32.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-deflate/src/adler32.rs"
-note = "adler32_generic; the x86 vector versions give the same sums (performance, PLAN.md O3)"
+note = "adler32_generic, and libdeflate_adler32's dispatch to the x86 vector versions (adler32_x86.rs) on x86-64"
 
 [[file]]
 path = "external/deflate/lib/arm/adler32_impl.h"
@@ -803,12 +803,16 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/x86/adler32_impl.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/adler32_x86.rs"
+note = "arch_select_adler32_func between AVX2 and SSE2; the AVX-VNNI and AVX-512 VNNI variants (the same checksum) are not ported; checked through Core's zlib streams (heavy tier), SSE2 under SDE pending"
 
 [[file]]
 path = "external/deflate/lib/x86/adler32_template.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/adler32_x86.rs"
+note = "USE_VNNI 0 for VL 16 (SSE2) and 32 (AVX2); the VNNI form is not ported"
 
 [[file]]
 path = "external/deflate/lib/x86/cpu_features.c"
@@ -1666,8 +1670,8 @@ target = "crates/openexr-core/src/internal_xdr.rs"
 path = "src/lib/OpenEXRCore/internal_zip.c"
 kind = "src"
 status = "done"
-target = "crates/openexr-core/src/internal_zip.rs"
-note = "ported whole (scalar reconstruct and interleave; the SSE2/SSE4.1/NEON kernels give the same bytes, performance work in docs/deferred.md); decodes as the wheel does and encodes its files byte for byte (heavy tier, gate --full)"
+target = "crates/openexr-core/src/internal_zip.rs, crates/openexr-core/src/internal_zip_simd.rs"
+note = "ported whole: the SSE4.1 reconstruct and SSE2 interleave (internal_zip_simd.rs, where the CPU has them; MSVC's build always, GCC's interleave only), the scalar ones elsewhere (the NEON kernels are for ARM, D11); decodes as the wheel does and encodes its files byte for byte (heavy tier, gate --full)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd.c"
