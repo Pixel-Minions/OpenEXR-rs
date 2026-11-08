@@ -22,3 +22,7 @@ workspace = true
 [[test]]
 name = "heavy_zlib_streams"
 required-features = ["heavy"]
+
+[[test]]
+name = "heavy_compress_levels"
+required-features = ["heavy"]

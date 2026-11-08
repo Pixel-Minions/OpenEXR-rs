@@ -5,11 +5,10 @@
 //! v1.26): the DEFLATE compressor, for x86-64 (a 64-bit bit buffer, unaligned word access,
 //! no bit-reversal instruction).
 //!
-//! So far: the Huffman code construction, the block flushing (uncompressed, static and dynamic
+//! The Huffman code construction, the block flushing (uncompressed, static and dynamic
 //! blocks), the block splitting heuristic, and the compressors of levels 0 (uncompressed), 1
-//! (fastest, on `ht_matchfinder`), 2 to 4 (greedy) and 5 to 9 (lazy and lazy2, on
-//! `hc_matchfinder`). The near-optimal compressor (10 to 12) follows; [`Compressor::new`]
-//! gives none for those levels until then.
+//! (fastest, on `ht_matchfinder`), 2 to 4 (greedy), 5 to 9 (lazy and lazy2, on
+//! `hc_matchfinder`) and 10 to 12 (near-optimal, on `bt_matchfinder`): every level.
 //!
 //! Upstream overlays the precode and the full length codewords in a union (`c->o`), and the
 //! parsers' data in another (`c->p`); they are separate fields here. Upstream reads none of
@@ -18,9 +17,14 @@
 //! upstream keeps into it, or into the output, is an index. Custom allocators are n/a
 //! (PLAN.md O8).
 
+use crate::bt_matchfinder::{BT_MATCHFINDER_REQUIRED_NBYTES, BtMatchfinder, LzMatch};
 use crate::deflate_constants::*;
 use crate::hc_matchfinder::HcMatchfinder;
 use crate::ht_matchfinder::{HT_MATCHFINDER_REQUIRED_NBYTES, HtMatchfinder};
+use crate::matchfinder_common::MATCHFINDER_WINDOW_SIZE;
+
+/// `MATCHFINDER_WINDOW_SIZE`, as an index.
+const WINDOW_SIZE: usize = MATCHFINDER_WINDOW_SIZE as usize;
 
 /// Port of `MIN_BLOCK_LENGTH` (external/deflate/lib/deflate_compress.c:66 @ libdeflate v1.26):
 /// the minimum block length, in uncompressed bytes, except for the final block if needed.
@@ -218,6 +222,7 @@ enum Strategy {
     Lazy,
     Lazy2,
     Fastest,
+    NearOptimal,
 }
 
 /// Port of `struct libdeflate_compressor` (external/deflate/lib/deflate_compress.c:454-662
@@ -251,6 +256,15 @@ pub struct Compressor {
     /// The parsers' matches and literals chosen for the current block (`c->p.g.sequences`,
     /// `c->p.f.sequences`).
     sequences: Vec<Sequence>,
+    /// The near-optimal parser's data (`c->p.n`).
+    n: Option<Box<NearOptimal>>,
+}
+
+/// What a block is output from: upstream's `sequences`, or, when they are NULL, the
+/// near-optimal parser's minimum-cost path (`c->p.n.optimum_nodes`).
+enum Items<'a> {
+    Sequences(&'a [Sequence]),
+    Optimum(&'a NearOptimal),
 }
 
 impl std::fmt::Debug for Compressor {
@@ -990,8 +1004,7 @@ impl Compressor {
     /// Port of `libdeflate_alloc_compressor` and `libdeflate_alloc_compressor_ex`
     /// (external/deflate/lib/deflate_compress.c:3872-4028 @ libdeflate v1.26): a compressor
     /// for `compression_level`, from 0 (no compression) to 12, or -1 for the default (6);
-    /// `None` for another level. The levels whose compressors are not ported yet give `None`
-    /// too, for now (10 to 12).
+    /// `None` for another level.
     pub fn new(compression_level: i32) -> Option<Compressor> {
         // Note: For similarity with zlib's API, -1 is accepted as an alias for the default
         // compression level.
@@ -1036,6 +1049,7 @@ impl Compressor {
             hc_mf: None,
             ht_mf: None,
             sequences: Vec::new(),
+            n: None,
         };
 
         let (strategy, depth, nice) = match compression_level {
@@ -1053,7 +1067,19 @@ impl Compressor {
             7 => (Strategy::Lazy, 100, 130),
             8 => (Strategy::Lazy2, 300, DEFLATE_MAX_MATCH_LEN as u32),
             9 => (Strategy::Lazy2, 600, DEFLATE_MAX_MATCH_LEN as u32),
-            _ => return None,
+            10 => {
+                c.n = Some(NearOptimal::new(2, 32, 32, 0));
+                (Strategy::NearOptimal, 35, 75)
+            }
+            11 => {
+                c.n = Some(NearOptimal::new(4, 16, 16, 1000));
+                (Strategy::NearOptimal, 100, 150)
+            }
+            // 12 (and upstream's default:, which the range check above leaves unreachable)
+            _ => {
+                c.n = Some(NearOptimal::new(10, 1, 1, 10000));
+                (Strategy::NearOptimal, 300, DEFLATE_MAX_MATCH_LEN as u32)
+            }
         };
         c.strategy = strategy;
         c.max_search_depth = depth;
@@ -1197,7 +1223,7 @@ impl Compressor {
     /// Port of `deflate_flush_block` (external/deflate/lib/deflate_compress.c:1706-2038
     /// @ libdeflate v1.26): outputs the block `data[block_begin..block_begin + block_length]`
     /// with the cheapest of the uncompressed, static and dynamic block types (on a tie,
-    /// uncompressed, then static), from its `sequences`; or sets the overflow flag when the
+    /// uncompressed, then static), from its `items`; or sets the overflow flag when the
     /// block won't fit.
     fn deflate_flush_block(
         &mut self,
@@ -1205,7 +1231,7 @@ impl Compressor {
         data: &[u8],
         block_begin: usize,
         block_length: u32,
-        sequences: &[Sequence],
+        items: Items<'_>,
         is_final_block: bool,
     ) {
         let mut in_next = block_begin;
@@ -1384,6 +1410,45 @@ impl Compressor {
         Self::deflate_compute_full_len_codewords(&mut self.length, codes);
         let length = &*self.length;
 
+        let sequences = match items {
+            Items::Optimum(n) => {
+                // Output the literals and matches from the minimum-cost path
+                let end_node = block_length as usize;
+                let mut cur_node = 0usize;
+                loop {
+                    let item = n.optimum_nodes[cur_node].item;
+                    let length_ = item & OPTIMUM_LEN_MASK;
+                    let offset = item >> OPTIMUM_OFFSET_SHIFT;
+
+                    if length_ == 1 {
+                        // Literal
+                        os.add_bits(
+                            codes.codewords_litlen[offset as usize],
+                            u32::from(codes.lens[offset as usize]),
+                        );
+                        os.flush_bits(out_fast_end);
+                    } else {
+                        // Match
+                        write_match(
+                            os,
+                            out_fast_end,
+                            length,
+                            codes,
+                            length_,
+                            offset,
+                            u32::from(n.offset_slot_full[offset as usize]),
+                        );
+                    }
+                    cur_node += length_ as usize;
+                    if cur_node == end_node {
+                        break;
+                    }
+                }
+                &[][..]
+            }
+            Items::Sequences(s) => s,
+        };
+
         // Output the literals and matches from the sequences list.
         let lit = |os: &mut OutputBitstream<'_>, in_next: &mut usize| {
             let l = data[*in_next] as usize;
@@ -1460,7 +1525,7 @@ impl Compressor {
             data,
             block_begin,
             block_length,
-            &sequences[..=num_sequences],
+            Items::Sequences(&sequences[..=num_sequences]),
             is_final_block,
         );
         self.sequences = sequences;
@@ -1911,6 +1976,7 @@ impl Compressor {
             Strategy::Lazy => self.deflate_compress_lazy_generic(input, &mut os, false),
             Strategy::Lazy2 => self.deflate_compress_lazy_generic(input, &mut os, true),
             Strategy::Fastest => self.deflate_compress_fastest(input, &mut os),
+            Strategy::NearOptimal => self.deflate_compress_near_optimal(input, &mut os),
         }
 
         // Return 0 if the output buffer is too small.
@@ -1928,6 +1994,1062 @@ impl Compressor {
 
         // Return the compressed size in bytes.
         os.next
+    }
+}
+
+// The near-optimal parser (external/deflate/lib/deflate_compress.c:121-160, 168-180, 382-436,
+// 538-658, 2836-3870 @ libdeflate v1.26, `SUPPORT_NEAR_OPTIMAL_PARSING`).
+
+/// Port of `BIT_COST` (external/deflate/lib/deflate_compress.c:140 @ libdeflate v1.26): a
+/// scaling factor that lets the near-optimal compressor consider fractional bit costs.
+const BIT_COST: u32 = 16;
+
+/// Port of `LITERAL_NOSTAT_BITS` (external/deflate/lib/deflate_compress.c:149 @ libdeflate
+/// v1.26): the bits assumed for a literal unused in the previous optimization pass.
+const LITERAL_NOSTAT_BITS: u32 = 13;
+/// Port of `LENGTH_NOSTAT_BITS` (external/deflate/lib/deflate_compress.c:150 @ libdeflate
+/// v1.26).
+const LENGTH_NOSTAT_BITS: u32 = 13;
+/// Port of `OFFSET_NOSTAT_BITS` (external/deflate/lib/deflate_compress.c:151 @ libdeflate
+/// v1.26).
+const OFFSET_NOSTAT_BITS: u32 = 10;
+
+/// Port of `MATCH_CACHE_LENGTH` (external/deflate/lib/deflate_compress.c:158 @ libdeflate
+/// v1.26): (slightly less than) the most matches the near-optimal compressor caches per block.
+const MATCH_CACHE_LENGTH: usize = SOFT_MAX_BLOCK_LENGTH * 5;
+
+/// Port of `MAX_MATCHES_PER_POS` (external/deflate/lib/deflate_compress.c:177-178
+/// @ libdeflate v1.26): the most matches the binary trees matchfinder finds at a position.
+const MAX_MATCHES_PER_POS: usize = DEFLATE_MAX_MATCH_LEN - DEFLATE_MIN_MATCH_LEN + 1;
+
+/// Port of `MAX_BLOCK_LENGTH` (external/deflate/lib/deflate_compress.c:188-190 @ libdeflate
+/// v1.26): the largest block length ever used.
+const MAX_BLOCK_LENGTH: usize = {
+    let a = SOFT_MAX_BLOCK_LENGTH + MIN_BLOCK_LENGTH - 1;
+    let b = SOFT_MAX_BLOCK_LENGTH + 1 + DEFLATE_MAX_MATCH_LEN;
+    if a > b { a } else { b }
+};
+
+/// `DEFLATE_MAX_MATCH_OFFSET` (external/deflate/lib/deflate_constants.h:18 @ libdeflate
+/// v1.26).
+const DEFLATE_MAX_MATCH_OFFSET: usize = 32768;
+
+/// Port of `OPTIMUM_OFFSET_SHIFT` (external/deflate/lib/deflate_compress.c:430 @ libdeflate
+/// v1.26).
+const OPTIMUM_OFFSET_SHIFT: u32 = 9;
+/// Port of `OPTIMUM_LEN_MASK` (external/deflate/lib/deflate_compress.c:431 @ libdeflate v1.26).
+const OPTIMUM_LEN_MASK: u32 = (1 << OPTIMUM_OFFSET_SHIFT) - 1;
+
+/// Port of `struct deflate_costs` (external/deflate/lib/deflate_compress.c:385-395
+/// @ libdeflate v1.26): the costs for the near-optimal parsing algorithm, of each literal,
+/// each match length, and a match offset of each offset slot.
+#[derive(Clone)]
+struct Costs {
+    literal: [u32; DEFLATE_NUM_LITERALS],
+    length: [u32; DEFLATE_MAX_MATCH_LEN + 1],
+    offset_slot: [u32; DEFLATE_NUM_OFFSET_SYMS],
+}
+
+/// Port of `struct deflate_optimum_node` (external/deflate/lib/deflate_compress.c:417-434
+/// @ libdeflate v1.26): a position of the block, as a node of the graph of literal and match
+/// choices: the minimum cost to reach the end of the block from it, and the item (literal or
+/// match) that begins that path. The low bits of `item` are the length (1 for a literal), the
+/// high bits the literal byte or the match offset.
+#[derive(Clone, Copy, Default)]
+struct OptimumNode {
+    cost_to_end: u32,
+    item: u32,
+}
+
+/// Port of the near-optimal parser's data (`c->p.n`,
+/// external/deflate/lib/deflate_compress.c:538-658 @ libdeflate v1.26).
+struct NearOptimal {
+    /// Binary tree matchfinder.
+    bt_mf: BtMatchfinder,
+    /// Cached matches for the current block: for each position, the matches found at it,
+    /// sorted by strictly increasing length, then an entry whose `length` is their number and
+    /// whose `offset` is the literal at the position. Its slots beyond [`MATCH_CACHE_LENGTH`]
+    /// absorb the worst case overflow.
+    match_cache: Vec<LzMatch>,
+    /// One node per position, for the minimum-cost path algorithm, and the end-of-block one.
+    optimum_nodes: Vec<OptimumNode>,
+    /// The current cost model being used.
+    costs: Costs,
+    /// Saved cost model.
+    costs_saved: Costs,
+    /// The offset slot of each match offset (the full map, not the condensed one).
+    offset_slot_full: Vec<u8>,
+    /// Literal/match statistics saved from the previous block.
+    prev_observations: [u32; NUM_OBSERVATION_TYPES],
+    prev_num_observations: u32,
+    /// Approximate match length frequencies based on a greedy parse, gathered during
+    /// matchfinding, for setting the initial symbol costs.
+    new_match_len_freqs: [u32; DEFLATE_MAX_MATCH_LEN + 1],
+    match_len_freqs: [u32; DEFLATE_MAX_MATCH_LEN + 1],
+    /// The maximum number of optimization passes (min-cost path searches) per block.
+    max_optim_passes: u32,
+    /// An optimization pass that improves the cost by fewer bits than this stops the passes.
+    min_improvement_to_continue: u32,
+    /// The bits a non-final pass's path must save to be regenerated and used.
+    min_bits_to_use_nonfinal_path: u32,
+    /// The largest block (uncompressed bytes) whose optimal static Huffman block is searched.
+    max_len_to_optimize_static_block: u32,
+}
+
+impl NearOptimal {
+    fn new(
+        max_optim_passes: u32,
+        min_improvement_to_continue: u32,
+        min_bits_to_use_nonfinal_path: u32,
+        max_len_to_optimize_static_block: u32,
+    ) -> Box<NearOptimal> {
+        let costs = Costs {
+            literal: [0; DEFLATE_NUM_LITERALS],
+            length: [0; DEFLATE_MAX_MATCH_LEN + 1],
+            offset_slot: [0; DEFLATE_NUM_OFFSET_SYMS],
+        };
+        let mut n = Box::new(NearOptimal {
+            bt_mf: BtMatchfinder::new(),
+            match_cache: vec![
+                LzMatch::default();
+                MATCH_CACHE_LENGTH + MAX_MATCHES_PER_POS + DEFLATE_MAX_MATCH_LEN - 1
+            ],
+            optimum_nodes: vec![OptimumNode::default(); MAX_BLOCK_LENGTH + 1],
+            costs: costs.clone(),
+            costs_saved: costs,
+            offset_slot_full: vec![0; DEFLATE_MAX_MATCH_OFFSET + 1],
+            prev_observations: [0; NUM_OBSERVATION_TYPES],
+            prev_num_observations: 0,
+            new_match_len_freqs: [0; DEFLATE_MAX_MATCH_LEN + 1],
+            match_len_freqs: [0; DEFLATE_MAX_MATCH_LEN + 1],
+            max_optim_passes,
+            min_improvement_to_continue,
+            min_bits_to_use_nonfinal_path,
+            max_len_to_optimize_static_block,
+        });
+        n.deflate_init_offset_slot_full();
+        n
+    }
+
+    /// Port of `deflate_init_offset_slot_full` (external/deflate/lib/deflate_compress.c:3852-3868
+    /// @ libdeflate v1.26).
+    fn deflate_init_offset_slot_full(&mut self) {
+        for offset_slot in 0..DEFLATE_OFFSET_SLOT_BASE.len() {
+            let mut offset = DEFLATE_OFFSET_SLOT_BASE[offset_slot];
+            let offset_end = offset + (1 << DEFLATE_EXTRA_OFFSET_BITS[offset_slot]);
+            loop {
+                self.offset_slot_full[offset as usize] = offset_slot as u8;
+                offset += 1;
+                if offset == offset_end {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Port of `deflate_set_costs_from_codes` (external/deflate/lib/deflate_compress.c:2924-2957
+    /// @ libdeflate v1.26): the current cost model from the codeword lengths `lens` (the
+    /// litlen lengths, then the offset ones at [`LENS_OFFSET`]).
+    fn deflate_set_costs_from_codes(&mut self, lens: &[u8]) {
+        // Literals
+        for i in 0..DEFLATE_NUM_LITERALS {
+            let bits = if lens[i] != 0 {
+                u32::from(lens[i])
+            } else {
+                LITERAL_NOSTAT_BITS
+            };
+            self.costs.literal[i] = bits * BIT_COST;
+        }
+
+        // Lengths
+        for i in DEFLATE_MIN_MATCH_LEN..=DEFLATE_MAX_MATCH_LEN {
+            let length_slot = DEFLATE_LENGTH_SLOT[i] as usize;
+            let litlen_sym = DEFLATE_FIRST_LEN_SYM + length_slot;
+            let mut bits = if lens[litlen_sym] != 0 {
+                u32::from(lens[litlen_sym])
+            } else {
+                LENGTH_NOSTAT_BITS
+            };
+            bits += u32::from(DEFLATE_EXTRA_LENGTH_BITS[length_slot]);
+            self.costs.length[i] = bits * BIT_COST;
+        }
+
+        // Offset slots
+        for i in 0..DEFLATE_OFFSET_SLOT_BASE.len() {
+            let mut bits = if lens[LENS_OFFSET + i] != 0 {
+                u32::from(lens[LENS_OFFSET + i])
+            } else {
+                OFFSET_NOSTAT_BITS
+            };
+            bits += u32::from(DEFLATE_EXTRA_OFFSET_BITS[i]);
+            self.costs.offset_slot[i] = bits * BIT_COST;
+        }
+    }
+
+    /// Port of `deflate_set_default_costs` (external/deflate/lib/deflate_compress.c:3186-3205
+    /// @ libdeflate v1.26): the default symbol costs, for the first block's first
+    /// optimization pass.
+    fn deflate_set_default_costs(&mut self, lit_cost: u32, len_sym_cost: u32) {
+        // Literals
+        self.costs.literal.fill(lit_cost);
+
+        // Lengths
+        for i in DEFLATE_MIN_MATCH_LEN..=DEFLATE_MAX_MATCH_LEN {
+            self.costs.length[i] = deflate_default_length_cost(i, len_sym_cost);
+        }
+
+        // Offset slots
+        for i in 0..DEFLATE_OFFSET_SLOT_BASE.len() {
+            self.costs.offset_slot[i] = deflate_default_offset_slot_cost(i);
+        }
+    }
+
+    /// Port of `deflate_adjust_costs_impl` (external/deflate/lib/deflate_compress.c:3222-3245
+    /// @ libdeflate v1.26).
+    fn deflate_adjust_costs_impl(&mut self, lit_cost: u32, len_sym_cost: u32, change_amount: i32) {
+        // Literals
+        for c in &mut self.costs.literal {
+            deflate_adjust_cost(c, lit_cost, change_amount);
+        }
+
+        // Lengths
+        for i in DEFLATE_MIN_MATCH_LEN..=DEFLATE_MAX_MATCH_LEN {
+            deflate_adjust_cost(
+                &mut self.costs.length[i],
+                deflate_default_length_cost(i, len_sym_cost),
+                change_amount,
+            );
+        }
+
+        // Offset slots
+        for i in 0..DEFLATE_OFFSET_SLOT_BASE.len() {
+            deflate_adjust_cost(
+                &mut self.costs.offset_slot[i],
+                deflate_default_offset_slot_cost(i),
+                change_amount,
+            );
+        }
+    }
+
+    /// Port of `deflate_adjust_costs` (external/deflate/lib/deflate_compress.c:3256-3296
+    /// @ libdeflate v1.26): mixes the current costs with the default ones when a new block
+    /// begins, the more of the defaults the more the block's statistics (`split_stats`)
+    /// differ from the previous block's.
+    fn deflate_adjust_costs(
+        &mut self,
+        split_stats: &BlockSplitStats,
+        lit_cost: u32,
+        len_sym_cost: u32,
+    ) {
+        let mut total_delta: u64 = 0;
+
+        // Decide how different the current block is from the previous block, using the block
+        // splitting statistics from the current and previous blocks. The more different the
+        // current block is, the more we prefer the default costs rather than the previous
+        // block's costs.
+        for i in 0..NUM_OBSERVATION_TYPES {
+            let prev =
+                u64::from(self.prev_observations[i]) * u64::from(split_stats.num_observations);
+            let cur =
+                u64::from(split_stats.observations[i]) * u64::from(self.prev_num_observations);
+            total_delta = total_delta.wrapping_add(prev.abs_diff(cur));
+        }
+        let cutoff =
+            (u64::from(self.prev_num_observations) * u64::from(split_stats.num_observations) * 200)
+                / 512;
+
+        if total_delta > 3 * cutoff {
+            // Big change in the data; just use the default costs.
+            self.deflate_set_default_costs(lit_cost, len_sym_cost);
+        } else if 4 * total_delta > 9 * cutoff {
+            self.deflate_adjust_costs_impl(lit_cost, len_sym_cost, 3);
+        } else if 2 * total_delta > 3 * cutoff {
+            self.deflate_adjust_costs_impl(lit_cost, len_sym_cost, 2);
+        } else if 2 * total_delta > cutoff {
+            self.deflate_adjust_costs_impl(lit_cost, len_sym_cost, 1);
+        } else {
+            self.deflate_adjust_costs_impl(lit_cost, len_sym_cost, 0);
+        }
+    }
+}
+
+/// Port of `default_litlen_costs` (external/deflate/lib/deflate_compress.c:2986-3102
+/// @ libdeflate v1.26): the default cost of a literal symbol (by the number of distinct used
+/// literals, 0 to 256) and of a length symbol, for an estimated match probability of 0.25, 0.5
+/// and 0.75. (Copied from the source by script; the unit test reads it back from there.)
+#[rustfmt::skip]
+const DEFAULT_LITLEN_COSTS: [([u8; 257], u8); 3] = [
+    // match_prob = 0.25
+    ([
+        6, 6, 22, 32, 38, 43, 48, 51,
+        54, 57, 59, 61, 64, 65, 67, 69,
+        70, 72, 73, 74, 75, 76, 77, 79,
+        80, 80, 81, 82, 83, 84, 85, 85,
+        86, 87, 88, 88, 89, 89, 90, 91,
+        91, 92, 92, 93, 93, 94, 95, 95,
+        96, 96, 96, 97, 97, 98, 98, 99,
+        99, 99, 100, 100, 101, 101, 101, 102,
+        102, 102, 103, 103, 104, 104, 104, 105,
+        105, 105, 105, 106, 106, 106, 107, 107,
+        107, 108, 108, 108, 108, 109, 109, 109,
+        109, 110, 110, 110, 111, 111, 111, 111,
+        112, 112, 112, 112, 112, 113, 113, 113,
+        113, 114, 114, 114, 114, 114, 115, 115,
+        115, 115, 115, 116, 116, 116, 116, 116,
+        117, 117, 117, 117, 117, 118, 118, 118,
+        118, 118, 118, 119, 119, 119, 119, 119,
+        120, 120, 120, 120, 120, 120, 121, 121,
+        121, 121, 121, 121, 121, 122, 122, 122,
+        122, 122, 122, 123, 123, 123, 123, 123,
+        123, 123, 124, 124, 124, 124, 124, 124,
+        124, 125, 125, 125, 125, 125, 125, 125,
+        125, 126, 126, 126, 126, 126, 126, 126,
+        127, 127, 127, 127, 127, 127, 127, 127,
+        128, 128, 128, 128, 128, 128, 128, 128,
+        128, 129, 129, 129, 129, 129, 129, 129,
+        129, 129, 130, 130, 130, 130, 130, 130,
+        130, 130, 130, 131, 131, 131, 131, 131,
+        131, 131, 131, 131, 131, 132, 132, 132,
+        132, 132, 132, 132, 132, 132, 132, 133,
+        133, 133, 133, 133, 133, 133, 133, 133,
+        133, 134, 134, 134, 134, 134, 134, 134,
+        134,
+    ], 109),
+    // match_prob = 0.5
+    ([
+        16, 16, 32, 41, 48, 53, 57, 60,
+        64, 66, 69, 71, 73, 75, 76, 78,
+        80, 81, 82, 83, 85, 86, 87, 88,
+        89, 90, 91, 92, 92, 93, 94, 95,
+        96, 96, 97, 98, 98, 99, 99, 100,
+        101, 101, 102, 102, 103, 103, 104, 104,
+        105, 105, 106, 106, 107, 107, 108, 108,
+        108, 109, 109, 110, 110, 110, 111, 111,
+        112, 112, 112, 113, 113, 113, 114, 114,
+        114, 115, 115, 115, 115, 116, 116, 116,
+        117, 117, 117, 118, 118, 118, 118, 119,
+        119, 119, 119, 120, 120, 120, 120, 121,
+        121, 121, 121, 122, 122, 122, 122, 122,
+        123, 123, 123, 123, 124, 124, 124, 124,
+        124, 125, 125, 125, 125, 125, 126, 126,
+        126, 126, 126, 127, 127, 127, 127, 127,
+        128, 128, 128, 128, 128, 128, 129, 129,
+        129, 129, 129, 129, 130, 130, 130, 130,
+        130, 130, 131, 131, 131, 131, 131, 131,
+        131, 132, 132, 132, 132, 132, 132, 133,
+        133, 133, 133, 133, 133, 133, 134, 134,
+        134, 134, 134, 134, 134, 134, 135, 135,
+        135, 135, 135, 135, 135, 135, 136, 136,
+        136, 136, 136, 136, 136, 136, 137, 137,
+        137, 137, 137, 137, 137, 137, 138, 138,
+        138, 138, 138, 138, 138, 138, 138, 139,
+        139, 139, 139, 139, 139, 139, 139, 139,
+        140, 140, 140, 140, 140, 140, 140, 140,
+        140, 141, 141, 141, 141, 141, 141, 141,
+        141, 141, 141, 142, 142, 142, 142, 142,
+        142, 142, 142, 142, 142, 142, 143, 143,
+        143, 143, 143, 143, 143, 143, 143, 143,
+        144,
+    ], 93),
+    // match_prob = 0.75
+    ([
+        32, 32, 48, 57, 64, 69, 73, 76,
+        80, 82, 85, 87, 89, 91, 92, 94,
+        96, 97, 98, 99, 101, 102, 103, 104,
+        105, 106, 107, 108, 108, 109, 110, 111,
+        112, 112, 113, 114, 114, 115, 115, 116,
+        117, 117, 118, 118, 119, 119, 120, 120,
+        121, 121, 122, 122, 123, 123, 124, 124,
+        124, 125, 125, 126, 126, 126, 127, 127,
+        128, 128, 128, 129, 129, 129, 130, 130,
+        130, 131, 131, 131, 131, 132, 132, 132,
+        133, 133, 133, 134, 134, 134, 134, 135,
+        135, 135, 135, 136, 136, 136, 136, 137,
+        137, 137, 137, 138, 138, 138, 138, 138,
+        139, 139, 139, 139, 140, 140, 140, 140,
+        140, 141, 141, 141, 141, 141, 142, 142,
+        142, 142, 142, 143, 143, 143, 143, 143,
+        144, 144, 144, 144, 144, 144, 145, 145,
+        145, 145, 145, 145, 146, 146, 146, 146,
+        146, 146, 147, 147, 147, 147, 147, 147,
+        147, 148, 148, 148, 148, 148, 148, 149,
+        149, 149, 149, 149, 149, 149, 150, 150,
+        150, 150, 150, 150, 150, 150, 151, 151,
+        151, 151, 151, 151, 151, 151, 152, 152,
+        152, 152, 152, 152, 152, 152, 153, 153,
+        153, 153, 153, 153, 153, 153, 154, 154,
+        154, 154, 154, 154, 154, 154, 154, 155,
+        155, 155, 155, 155, 155, 155, 155, 155,
+        156, 156, 156, 156, 156, 156, 156, 156,
+        156, 157, 157, 157, 157, 157, 157, 157,
+        157, 157, 157, 158, 158, 158, 158, 158,
+        158, 158, 158, 158, 158, 158, 159, 159,
+        159, 159, 159, 159, 159, 159, 159, 159,
+        160,
+    ], 84),
+];
+/// Port of `deflate_default_length_cost` (external/deflate/lib/deflate_compress.c:3162-3169
+/// @ libdeflate v1.26).
+#[inline]
+fn deflate_default_length_cost(len: usize, len_sym_cost: u32) -> u32 {
+    let slot = DEFLATE_LENGTH_SLOT[len] as usize;
+    let num_extra_bits = u32::from(DEFLATE_EXTRA_LENGTH_BITS[slot]);
+    len_sym_cost + (num_extra_bits * BIT_COST)
+}
+
+/// Port of `deflate_default_offset_slot_cost` (external/deflate/lib/deflate_compress.c:3171-3183
+/// @ libdeflate v1.26).
+#[inline]
+fn deflate_default_offset_slot_cost(slot: usize) -> u32 {
+    let num_extra_bits = u32::from(DEFLATE_EXTRA_OFFSET_BITS[slot]);
+    // Assume that all offset symbols are equally probable. The resulting cost is
+    // 'int(-log2(1/30) * BIT_COST)', where 30 is the number of potentially-used offset
+    // symbols.
+    let offset_sym_cost = 4 * BIT_COST + (907 * BIT_COST) / 1000;
+    offset_sym_cost + (num_extra_bits * BIT_COST)
+}
+
+/// Port of `deflate_adjust_cost` (external/deflate/lib/deflate_compress.c:3207-3220
+/// @ libdeflate v1.26).
+#[inline]
+fn deflate_adjust_cost(cost_p: &mut u32, default_cost: u32, change_amount: i32) {
+    let c = *cost_p;
+    *cost_p = if change_amount == 0 {
+        // Block is very similar to previous; prefer previous costs.
+        default_cost.wrapping_add(c.wrapping_mul(3)) / 4
+    } else if change_amount == 1 {
+        default_cost.wrapping_add(c) / 2
+    } else if change_amount == 2 {
+        default_cost.wrapping_mul(5).wrapping_add(c.wrapping_mul(3)) / 8
+    } else {
+        // Block differs greatly from previous; prefer default costs.
+        default_cost.wrapping_mul(3).wrapping_add(c) / 4
+    };
+}
+
+impl Compressor {
+    /// Port of `deflate_tally_item_list` (external/deflate/lib/deflate_compress.c:2843-2868
+    /// @ libdeflate v1.26): the symbol frequencies of the minimum-cost path's literals and
+    /// matches, and of the end-of-block symbol.
+    fn deflate_tally_item_list(&mut self, n: &NearOptimal, block_length: u32) {
+        let end_node = block_length as usize;
+        let mut cur_node = 0usize;
+        loop {
+            let item = n.optimum_nodes[cur_node].item;
+            let length = item & OPTIMUM_LEN_MASK;
+            let offset = item >> OPTIMUM_OFFSET_SHIFT;
+
+            if length == 1 {
+                // Literal
+                self.freqs.litlen[offset as usize] += 1;
+            } else {
+                // Match
+                self.freqs.litlen
+                    [DEFLATE_FIRST_LEN_SYM + DEFLATE_LENGTH_SLOT[length as usize] as usize] += 1;
+                self.freqs.offset[n.offset_slot_full[offset as usize] as usize] += 1;
+            }
+            cur_node += length as usize;
+            if cur_node == end_node {
+                break;
+            }
+        }
+
+        // Tally the end-of-block symbol.
+        self.freqs.litlen[DEFLATE_END_OF_BLOCK] += 1;
+    }
+
+    /// Port of `deflate_choose_all_literals` (external/deflate/lib/deflate_compress.c:2870-2882
+    /// @ libdeflate v1.26): the frequencies and codes of the block as literals only.
+    fn deflate_choose_all_literals(&mut self, block: &[u8]) {
+        self.deflate_reset_symbol_frequencies();
+        for &b in block {
+            self.freqs.litlen[b as usize] += 1;
+        }
+        self.freqs.litlen[DEFLATE_END_OF_BLOCK] += 1;
+
+        deflate_make_huffman_codes(&self.freqs, &mut self.codes);
+    }
+
+    /// Port of `deflate_compute_true_cost` (external/deflate/lib/deflate_compress.c:2889-2921
+    /// @ libdeflate v1.26): the exact cost, in bits, of the matches and literals of the
+    /// frequencies as a dynamic Huffman block, with the codes already built.
+    fn deflate_compute_true_cost(&mut self) -> u32 {
+        let mut cost: u32 = 0;
+
+        self.deflate_precompute_huffman_header();
+
+        let p = &*self.precode;
+        self.codes.lens[p.num_litlen_syms..DEFLATE_NUM_LITLEN_SYMS].fill(0);
+
+        cost = cost.wrapping_add(5 + 5 + 4 + (3 * p.num_explicit_lens as u32));
+        for sym in 0..DEFLATE_NUM_PRECODE_SYMS {
+            cost =
+                cost.wrapping_add(p.freqs[sym].wrapping_mul(
+                    u32::from(p.lens[sym]) + u32::from(DEFLATE_EXTRA_PRECODE_BITS[sym]),
+                ));
+        }
+
+        let lens = &self.codes.lens;
+        let f = &self.freqs;
+        for sym in 0..DEFLATE_FIRST_LEN_SYM {
+            cost = cost.wrapping_add(f.litlen[sym].wrapping_mul(u32::from(lens[sym])));
+        }
+
+        for sym in DEFLATE_FIRST_LEN_SYM..DEFLATE_FIRST_LEN_SYM + DEFLATE_EXTRA_LENGTH_BITS.len() {
+            cost = cost.wrapping_add(f.litlen[sym].wrapping_mul(
+                u32::from(lens[sym])
+                    + u32::from(DEFLATE_EXTRA_LENGTH_BITS[sym - DEFLATE_FIRST_LEN_SYM]),
+            ));
+        }
+
+        for sym in 0..DEFLATE_EXTRA_OFFSET_BITS.len() {
+            cost = cost.wrapping_add(f.offset[sym].wrapping_mul(
+                u32::from(lens[LENS_OFFSET + sym]) + u32::from(DEFLATE_EXTRA_OFFSET_BITS[sym]),
+            ));
+        }
+        cost
+    }
+
+    /// Port of `deflate_choose_default_litlen_costs`
+    /// (external/deflate/lib/deflate_compress.c:3108-3160 @ libdeflate v1.26): the default costs of
+    /// a literal and of a length symbol, from the number of distinct literals of the block and the
+    /// match frequency of a greedy parse.
+    fn deflate_choose_default_litlen_costs(&mut self, n: &NearOptimal, block: &[u8]) -> (u32, u32) {
+        let mut num_used_literals: u32 = 0;
+        let mut literal_freq = block.len() as u32;
+
+        // Calculate the number of distinct literals that exist in the data.
+        self.freqs.litlen[..DEFLATE_NUM_LITERALS].fill(0);
+        let cutoff = literal_freq >> 11; // Ignore literals used very rarely.
+        for &b in block {
+            self.freqs.litlen[b as usize] += 1;
+        }
+        for i in 0..DEFLATE_NUM_LITERALS {
+            if self.freqs.litlen[i] > cutoff {
+                num_used_literals += 1;
+            }
+        }
+        if num_used_literals == 0 {
+            num_used_literals = 1;
+        }
+
+        // Estimate the relative frequency of literals and matches in the optimal parsing
+        // solution. We don't know the optimal solution, so this can only be a very rough
+        // estimate. Therefore, we basically use the match frequency from a greedy parse. We
+        // also apply the min_len heuristic used by the greedy and lazy parsers, to avoid
+        // counting too many matches when literals are cheaper than short matches.
+        let mut match_freq: u32 = 0;
+        let mut i = choose_min_match_len(num_used_literals, self.max_search_depth);
+        while (i as usize) < n.match_len_freqs.len() {
+            match_freq = match_freq.wrapping_add(n.match_len_freqs[i as usize]);
+            literal_freq = literal_freq.wrapping_sub(i.wrapping_mul(n.match_len_freqs[i as usize]));
+            i += 1;
+        }
+        if (literal_freq as i32) < 0 {
+            // shouldn't happen
+            literal_freq = 0;
+        }
+
+        let i = if match_freq > literal_freq {
+            2 // many matches
+        } else if match_freq.wrapping_mul(4) > literal_freq {
+            1 // neutral
+        } else {
+            0 // few matches
+        };
+
+        // BIT_COST == 16
+        let (used_lits_to_lit_cost, len_sym_cost) = &DEFAULT_LITLEN_COSTS[i];
+        (
+            u32::from(used_lits_to_lit_cost[num_used_literals as usize]),
+            u32::from(*len_sym_cost),
+        )
+    }
+
+    /// Port of `deflate_set_initial_costs` (external/deflate/lib/deflate_compress.c:3298-3311
+    /// @ libdeflate v1.26).
+    fn deflate_set_initial_costs(
+        &mut self,
+        n: &mut NearOptimal,
+        block: &[u8],
+        is_first_block: bool,
+    ) {
+        let (lit_cost, len_sym_cost) = self.deflate_choose_default_litlen_costs(n, block);
+        if is_first_block {
+            n.deflate_set_default_costs(lit_cost, len_sym_cost);
+        } else {
+            n.deflate_adjust_costs(&self.split_stats, lit_cost, len_sym_cost);
+        }
+    }
+
+    /// Port of `deflate_find_min_cost_path` (external/deflate/lib/deflate_compress.c:3327-3399
+    /// @ libdeflate v1.26): the minimum-cost path through the block's graph of literal and
+    /// match choices under the cost model, from the end node back to the first (`cache_ptr`
+    /// is the end of the block's cached matches); then the frequencies and codes of the path.
+    fn deflate_find_min_cost_path(
+        &mut self,
+        n: &mut NearOptimal,
+        block_length: u32,
+        mut cache_ptr: usize,
+    ) {
+        let end_node = block_length as usize;
+        let mut cur_node = end_node;
+
+        n.optimum_nodes[cur_node].cost_to_end = 0;
+        loop {
+            cur_node -= 1;
+            cache_ptr -= 1;
+
+            let num_matches = usize::from(n.match_cache[cache_ptr].length);
+            let literal = u32::from(n.match_cache[cache_ptr].offset);
+
+            // It's always possible to choose a literal.
+            let mut best_cost_to_end = n.costs.literal[literal as usize]
+                .wrapping_add(n.optimum_nodes[cur_node + 1].cost_to_end);
+            n.optimum_nodes[cur_node].item = (literal << OPTIMUM_OFFSET_SHIFT) | 1;
+
+            // Also consider matches if there are any.
+            if num_matches != 0 {
+                // Consider each length from the minimum (DEFLATE_MIN_MATCH_LEN) to the length
+                // of the longest match found at this position. For each length, we consider
+                // only the smallest offset for which that length is available. Although this
+                // is not guaranteed to be optimal due to the possibility of a larger offset
+                // costing less than a smaller offset to code, this is a very useful heuristic.
+                let mut m = cache_ptr - num_matches;
+                let mut len = DEFLATE_MIN_MATCH_LEN as u32;
+                loop {
+                    let offset = u32::from(n.match_cache[m].offset);
+                    let offset_slot = n.offset_slot_full[offset as usize] as usize;
+                    let offset_cost = n.costs.offset_slot[offset_slot];
+                    let match_length = u32::from(n.match_cache[m].length);
+                    loop {
+                        let cost_to_end = offset_cost
+                            .wrapping_add(n.costs.length[len as usize])
+                            .wrapping_add(n.optimum_nodes[cur_node + len as usize].cost_to_end);
+                        if cost_to_end < best_cost_to_end {
+                            best_cost_to_end = cost_to_end;
+                            n.optimum_nodes[cur_node].item = len | (offset << OPTIMUM_OFFSET_SHIFT);
+                        }
+                        len += 1;
+                        if len > match_length {
+                            break;
+                        }
+                    }
+                    m += 1;
+                    if m == cache_ptr {
+                        break;
+                    }
+                }
+                cache_ptr -= num_matches;
+            }
+            n.optimum_nodes[cur_node].cost_to_end = best_cost_to_end;
+            if cur_node == 0 {
+                break;
+            }
+        }
+
+        self.deflate_reset_symbol_frequencies();
+        self.deflate_tally_item_list(n, block_length);
+        deflate_make_huffman_codes(&self.freqs, &mut self.codes);
+    }
+
+    /// Port of `deflate_optimize_and_flush_block`
+    /// (external/deflate/lib/deflate_compress.c:3416-3530 @ libdeflate v1.26): chooses the block's
+    /// literals and matches (the minimum-cost path over several passes, each pass's costs from the
+    /// previous pass's codes; or only literals; or the optimal static block's path), then outputs
+    /// the block. `used_only_literals` says whether only literals were best.
+    #[allow(clippy::too_many_arguments)]
+    fn deflate_optimize_and_flush_block(
+        &mut self,
+        n: &mut NearOptimal,
+        os: &mut OutputBitstream<'_>,
+        data: &[u8],
+        block_begin: usize,
+        block_length: u32,
+        cache_ptr: usize,
+        is_first_block: bool,
+        is_final_block: bool,
+        used_only_literals: &mut bool,
+    ) {
+        let block = &data[block_begin..block_begin + block_length as usize];
+        let mut num_passes_remaining = n.max_optim_passes;
+        let mut best_true_cost = u32::MAX;
+        let mut true_cost;
+        let mut static_cost = u32::MAX;
+        let mut seq: Option<Sequence> = None;
+
+        // On some data, using only literals (no matches) ends up being better than what the
+        // iterative optimization algorithm produces. Therefore, consider using only literals.
+        self.deflate_choose_all_literals(block);
+        let only_lits_cost = self.deflate_compute_true_cost();
+
+        // Force the block to really end at the desired length, even if some matches extend
+        // beyond it.
+        let last =
+            ((block_length - 1) as usize + DEFLATE_MAX_MATCH_LEN).min(n.optimum_nodes.len() - 1);
+        for node in &mut n.optimum_nodes[block_length as usize..=last] {
+            node.cost_to_end = 0x80000000;
+        }
+
+        // Sometimes a static Huffman block ends up being cheapest, particularly if the block
+        // is small. So, if the block is sufficiently small, find the optimal static block
+        // solution and remember its cost.
+        if block_length <= n.max_len_to_optimize_static_block {
+            // Save c->p.n.costs temporarily.
+            n.costs_saved = n.costs.clone();
+
+            n.deflate_set_costs_from_codes(&self.static_codes.lens);
+            self.deflate_find_min_cost_path(n, block_length, cache_ptr);
+            static_cost = n.optimum_nodes[0].cost_to_end / BIT_COST;
+            static_cost = static_cost.wrapping_add(7); // for the end-of-block symbol
+
+            // Restore c->p.n.costs.
+            n.costs = n.costs_saved.clone();
+        }
+
+        // Initialize c->p.n.costs with default costs.
+        self.deflate_set_initial_costs(n, block, is_first_block);
+
+        loop {
+            // Find the minimum-cost path for this pass. Also set c->freqs and c->codes to
+            // match the path.
+            self.deflate_find_min_cost_path(n, block_length, cache_ptr);
+
+            // Compute the exact cost of the block if the path were to be used. Note that this
+            // differs from c->p.n.optimum_nodes[0].cost_to_end in that true_cost uses the
+            // actual Huffman codes instead of c->p.n.costs.
+            true_cost = self.deflate_compute_true_cost();
+
+            // If the cost didn't improve much from the previous pass, then doing more passes
+            // probably won't be helpful, so stop early.
+            if true_cost.wrapping_add(n.min_improvement_to_continue) > best_true_cost {
+                break;
+            }
+
+            best_true_cost = true_cost;
+
+            // Save the cost model that gave 'best_true_cost'.
+            n.costs_saved = n.costs.clone();
+
+            // Update the cost model from the Huffman codes.
+            n.deflate_set_costs_from_codes(&self.codes.lens);
+
+            num_passes_remaining -= 1;
+            if num_passes_remaining == 0 {
+                break;
+            }
+        }
+
+        *used_only_literals = false;
+        if only_lits_cost.min(static_cost) < best_true_cost {
+            if only_lits_cost < static_cost {
+                // Using only literals ended up being best!
+                self.deflate_choose_all_literals(block);
+                n.deflate_set_costs_from_codes(&self.codes.lens);
+                seq = Some(Sequence {
+                    litrunlen_and_length: block_length,
+                    ..Sequence::default()
+                });
+                *used_only_literals = true;
+            } else {
+                // Static block ended up being best!
+                n.deflate_set_costs_from_codes(&self.static_codes.lens);
+                self.deflate_find_min_cost_path(n, block_length, cache_ptr);
+            }
+        } else if true_cost >= best_true_cost.wrapping_add(n.min_bits_to_use_nonfinal_path) {
+            // The best solution was actually from a non-final optimization pass, so recover
+            // and use the min-cost path from that pass.
+            n.costs = n.costs_saved.clone();
+            self.deflate_find_min_cost_path(n, block_length, cache_ptr);
+            n.deflate_set_costs_from_codes(&self.codes.lens);
+        }
+        let items = match &seq {
+            Some(s) => Items::Sequences(std::slice::from_ref(s)),
+            None => Items::Optimum(&*n),
+        };
+        self.deflate_flush_block(os, data, block_begin, block_length, items, is_final_block);
+    }
+
+    /// Port of `deflate_near_optimal_init_stats`
+    /// (external/deflate/lib/deflate_compress.c:3532-3539 @ libdeflate v1.26).
+    fn deflate_near_optimal_init_stats(&mut self, n: &mut NearOptimal) {
+        self.split_stats.init();
+        n.new_match_len_freqs.fill(0);
+        n.match_len_freqs.fill(0);
+    }
+
+    /// Port of `deflate_near_optimal_merge_stats`
+    /// (external/deflate/lib/deflate_compress.c:3541-3551 @ libdeflate v1.26).
+    fn deflate_near_optimal_merge_stats(&mut self, n: &mut NearOptimal) {
+        self.split_stats.merge_new_observations();
+        for i in 0..n.match_len_freqs.len() {
+            n.match_len_freqs[i] = n.match_len_freqs[i].wrapping_add(n.new_match_len_freqs[i]);
+            n.new_match_len_freqs[i] = 0;
+        }
+    }
+
+    /// Port of `deflate_near_optimal_save_stats` (external/deflate/lib/deflate_compress.c:3558-3566
+    /// @ libdeflate v1.26): the previous block's literal/match statistics, for
+    /// `deflate_adjust_costs`.
+    fn deflate_near_optimal_save_stats(&self, n: &mut NearOptimal) {
+        n.prev_observations = self.split_stats.observations;
+        n.prev_num_observations = self.split_stats.num_observations;
+    }
+
+    /// Port of `deflate_near_optimal_clear_old_stats`
+    /// (external/deflate/lib/deflate_compress.c:3568-3577 @ libdeflate v1.26).
+    fn deflate_near_optimal_clear_old_stats(&mut self, n: &mut NearOptimal) {
+        self.split_stats.observations = [0; NUM_OBSERVATION_TYPES];
+        self.split_stats.num_observations = 0;
+        n.match_len_freqs.fill(0);
+    }
+
+    /// Port of `deflate_compress_near_optimal`
+    /// (external/deflate/lib/deflate_compress.c:3592-3849 @ libdeflate v1.26): the "near-optimal"
+    /// DEFLATE compressor (levels 10 to 12), the optimal representation of each block by a
+    /// minimum-cost path search over the graph of its literal and match choices, under an
+    /// iterated cost model.
+    fn deflate_compress_near_optimal(&mut self, data: &[u8], os: &mut OutputBitstream<'_>) {
+        let in_end = data.len();
+        let mut in_next = 0usize;
+        let mut in_block_begin = in_next;
+        let mut in_cur_base = in_next;
+        let mut in_next_slide = in_next + (in_end - in_next).min(WINDOW_SIZE);
+        let mut max_len = DEFLATE_MAX_MATCH_LEN as u32;
+        let mut nice_len = self.nice_match_length.min(max_len);
+        let mut n = self.n.take().expect("the near-optimal parser's data");
+        let mut cache_ptr = 0usize;
+        let mut next_hashes = [0u32; 2];
+        let mut prev_block_used_only_literals = false;
+        let depth = self.max_search_depth;
+
+        n.bt_mf.init();
+        self.deflate_near_optimal_init_stats(&mut n);
+
+        loop {
+            // Starting a new DEFLATE block
+            let in_max_block_end =
+                choose_max_block_end(in_block_begin, in_end, SOFT_MAX_BLOCK_LENGTH);
+            let mut prev_end_block_check: Option<usize> = None;
+            let mut change_detected = false;
+            let mut next_observation = in_next;
+
+            // Use the minimum match length heuristic to improve the literal/match statistics
+            // gathered during matchfinding. However, the actual near-optimal parse won't
+            // respect min_len, as it can accurately assess the costs of different matches.
+            //
+            // If the "use only literals" strategy happened to be the best strategy on the
+            // previous block, then probably the min_match_len heuristic is still not
+            // aggressive enough for the data, so force gathering literal stats only.
+            let min_len = if prev_block_used_only_literals {
+                DEFLATE_MAX_MATCH_LEN as u32 + 1
+            } else {
+                calculate_min_match_len(&data[in_block_begin..in_max_block_end], depth)
+            };
+
+            // Find matches until we decide to end the block. We end the block if any of the
+            // following is true:
+            //
+            // (1) Maximum block length has been reached
+            // (2) Match catch may overflow.
+            // (3) Block split heuristic says to split now.
+            loop {
+                let mut remaining = in_end - in_next;
+
+                // Slide the window forward if needed.
+                if in_next == in_next_slide {
+                    n.bt_mf.slide_window();
+                    in_cur_base = in_next;
+                    in_next_slide = in_next + remaining.min(WINDOW_SIZE);
+                }
+
+                // Find matches with the current position using the binary tree matchfinder
+                // and save them in match_cache.
+                let matches = cache_ptr;
+                let mut best_len: u32 = 0;
+                adjust_max_and_nice_len(&mut max_len, &mut nice_len, remaining);
+                if max_len >= BT_MATCHFINDER_REQUIRED_NBYTES {
+                    let NearOptimal {
+                        bt_mf, match_cache, ..
+                    } = &mut *n;
+                    cache_ptr = bt_mf.get_matches(
+                        data,
+                        in_cur_base,
+                        (in_next - in_cur_base) as i32,
+                        max_len,
+                        nice_len,
+                        depth,
+                        &mut next_hashes,
+                        match_cache,
+                        matches,
+                    );
+                    if cache_ptr > matches {
+                        best_len = u32::from(n.match_cache[cache_ptr - 1].length);
+                    }
+                }
+                if in_next >= next_observation {
+                    if best_len >= min_len {
+                        self.split_stats.observe_match(best_len);
+                        next_observation = in_next + best_len as usize;
+                        n.new_match_len_freqs[best_len as usize] += 1;
+                    } else {
+                        self.split_stats.observe_literal(data[in_next]);
+                        next_observation = in_next + 1;
+                    }
+                }
+
+                n.match_cache[cache_ptr] = LzMatch {
+                    length: (cache_ptr - matches) as u16,
+                    offset: u16::from(data[in_next]),
+                };
+                in_next += 1;
+                cache_ptr += 1;
+
+                // If there was a very long match found, don't cache any matches for the bytes
+                // covered by that match. This avoids degenerate behavior when compressing
+                // highly redundant data, where the number of matches can be very large.
+                //
+                // This heuristic doesn't actually hurt the compression ratio very much. If
+                // there's a long match, then the data must be highly compressible, so it
+                // doesn't matter much what we do.
+                if best_len >= DEFLATE_MIN_MATCH_LEN as u32 && best_len >= nice_len {
+                    best_len -= 1;
+                    loop {
+                        remaining = in_end - in_next;
+                        if in_next == in_next_slide {
+                            n.bt_mf.slide_window();
+                            in_cur_base = in_next;
+                            in_next_slide = in_next + remaining.min(WINDOW_SIZE);
+                        }
+                        adjust_max_and_nice_len(&mut max_len, &mut nice_len, remaining);
+                        if max_len >= BT_MATCHFINDER_REQUIRED_NBYTES {
+                            n.bt_mf.skip_byte(
+                                data,
+                                in_cur_base,
+                                (in_next - in_cur_base) as i32,
+                                nice_len,
+                                depth,
+                                &mut next_hashes,
+                            );
+                        }
+                        n.match_cache[cache_ptr] = LzMatch {
+                            length: 0,
+                            offset: u16::from(data[in_next]),
+                        };
+                        in_next += 1;
+                        cache_ptr += 1;
+                        best_len -= 1;
+                        if best_len == 0 {
+                            break;
+                        }
+                    }
+                }
+                // Maximum block length or end of input reached?
+                if in_next >= in_max_block_end {
+                    break;
+                }
+                // Match cache overflowed?
+                if cache_ptr >= MATCH_CACHE_LENGTH {
+                    break;
+                }
+                // Not ready to try to end the block (again)?
+                if !self
+                    .split_stats
+                    .ready_to_check_block(in_block_begin, in_next, in_end)
+                {
+                    continue;
+                }
+                // Check if it would be worthwhile to end the block.
+                if self
+                    .split_stats
+                    .do_end_block_check((in_next - in_block_begin) as u32)
+                {
+                    change_detected = true;
+                    break;
+                }
+                // Ending the block doesn't seem worthwhile here.
+                self.deflate_near_optimal_merge_stats(&mut n);
+                prev_end_block_check = Some(in_next);
+            }
+            // All the matches for this block have been cached. Now choose the precise end of
+            // the block and the sequence of items to output to represent it, then flush the
+            // block.
+            if let (true, Some(in_block_end)) = (change_detected, prev_end_block_check) {
+                // The block is being ended because a recent chunk of data differs from the
+                // rest of the block. We could end the block at 'in_next' like the greedy and
+                // lazy compressors do, but that's not ideal since it would include the
+                // differing chunk in the block. The near-optimal compressor has time to do a
+                // better job. Therefore, we rewind to just before the chunk, and output a
+                // block that only goes up to there.
+                //
+                // We then set things up to correctly start the next block, considering that
+                // some work has already been done on it (some matches found and stats
+                // gathered).
+                let orig_cache_ptr = cache_ptr;
+                let block_length = (in_block_end - in_block_begin) as u32;
+                let is_first = in_block_begin == 0;
+                let is_final = false;
+                let mut num_bytes_to_rewind = in_next - in_block_end;
+
+                // Rewind the match cache.
+                loop {
+                    cache_ptr -= 1;
+                    cache_ptr -= usize::from(n.match_cache[cache_ptr].length);
+                    num_bytes_to_rewind -= 1;
+                    if num_bytes_to_rewind == 0 {
+                        break;
+                    }
+                }
+                let cache_len_rewound = orig_cache_ptr - cache_ptr;
+
+                self.deflate_optimize_and_flush_block(
+                    &mut n,
+                    os,
+                    data,
+                    in_block_begin,
+                    block_length,
+                    cache_ptr,
+                    is_first,
+                    is_final,
+                    &mut prev_block_used_only_literals,
+                );
+                n.match_cache.copy_within(cache_ptr..orig_cache_ptr, 0);
+                cache_ptr = cache_len_rewound;
+                self.deflate_near_optimal_save_stats(&mut n);
+                // Clear the stats for the just-flushed block, leaving just the stats for the
+                // beginning of the next block.
+                self.deflate_near_optimal_clear_old_stats(&mut n);
+                in_block_begin = in_block_end;
+            } else {
+                // The block is being ended for a reason other than a differing data chunk
+                // being detected. Don't rewind at all; just end the block at the current
+                // position.
+                let block_length = (in_next - in_block_begin) as u32;
+                let is_first = in_block_begin == 0;
+                let is_final = in_next == in_end;
+
+                self.deflate_near_optimal_merge_stats(&mut n);
+                self.deflate_optimize_and_flush_block(
+                    &mut n,
+                    os,
+                    data,
+                    in_block_begin,
+                    block_length,
+                    cache_ptr,
+                    is_first,
+                    is_final,
+                    &mut prev_block_used_only_literals,
+                );
+                cache_ptr = 0;
+                self.deflate_near_optimal_save_stats(&mut n);
+                self.deflate_near_optimal_init_stats(&mut n);
+                in_block_begin = in_next;
+            }
+            if in_next == in_end || os.overflow {
+                break;
+            }
+        }
+        self.n = Some(n);
     }
 }
 
@@ -2013,6 +3135,47 @@ mod tests {
             }
         }
         values
+    }
+
+    /// `default_litlen_costs` as upstream writes it
+    /// (external/deflate/lib/deflate_compress.c:2986-3102 @ libdeflate v1.26), read from the
+    /// source: each table's 257 literal costs and its length symbol cost.
+    fn upstream_default_litlen_costs() -> Vec<(Vec<u8>, u8)> {
+        let src = include_str!("../../../upstream/openexr/external/deflate/lib/deflate_compress.c");
+        let start = src
+            .find("} default_litlen_costs[] = {")
+            .expect("default_litlen_costs");
+        let body = &src[start..start + src[start..].find("\n};").expect("its end")];
+        let mut tables = Vec::new();
+        let mut rest = body;
+        while let Some(at) = rest.find(".used_lits_to_lit_cost = {") {
+            rest = &rest[at + ".used_lits_to_lit_cost = {".len()..];
+            let end = rest.find('}').expect("the table's end");
+            let costs: Vec<u8> = rest[..end]
+                .split(',')
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(|v| v.parse().expect("a number"))
+                .collect();
+            rest = &rest[end..];
+            let at =
+                rest.find(".len_sym_cost = ").expect("len_sym_cost") + ".len_sym_cost = ".len();
+            rest = &rest[at..];
+            let end = rest.find(',').expect("its end");
+            tables.push((costs, rest[..end].trim().parse().expect("a number")));
+        }
+        tables
+    }
+
+    /// The default literal and length symbol costs are upstream's table.
+    #[test]
+    fn default_litlen_costs_are_upstreams() {
+        let want = upstream_default_litlen_costs();
+        assert_eq!(want.len(), DEFAULT_LITLEN_COSTS.len());
+        for (i, (costs, len_sym_cost)) in want.iter().enumerate() {
+            assert_eq!(&costs[..], &DEFAULT_LITLEN_COSTS[i].0[..], "table {i}");
+            assert_eq!(*len_sym_cost, DEFAULT_LITLEN_COSTS[i].1, "table {i}");
+        }
     }
 
     /// `choose_min_match_len` gives upstream's table entry for every literal count (and 3

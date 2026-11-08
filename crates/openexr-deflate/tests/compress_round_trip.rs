@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2016 Eric Biggers
 
-//! The compressor's zlib streams decompress to their input, within the bound, at every level
-//! ported so far, for inputs that reach each of its paths: empty and short inputs passed
+//! The compressor's zlib streams decompress to their input, within the bound, at every level,
+//! 0 to 12, for inputs that reach each of its paths: empty and short inputs passed
 //! through, the three block types, matches across the window slide (over 32 KiB), and blocks
 //! ended by the split heuristic and by the soft maximum length (over 300 000 bytes). That the
 //! streams are the ones libdeflate writes is checked against the wheel's ZIP files (heavy
@@ -62,9 +62,7 @@ fn inputs() -> Vec<(String, Vec<u8>)> {
 fn zlib_streams_decompress_to_their_input() {
     let mut checked = 0;
     for level in 0..=12 {
-        let Some(mut c) = Compressor::new(level) else {
-            continue;
-        };
+        let mut c = Compressor::new(level).expect("every level");
         for (name, input) in inputs() {
             let mut out = vec![0u8; zlib_compress_bound(input.len())];
             let n = c.zlib_compress(&input, &mut out);
@@ -88,9 +86,7 @@ fn zlib_streams_decompress_to_their_input() {
 #[test]
 fn short_buffers_give_nothing() {
     for level in 0..=12 {
-        let Some(mut c) = Compressor::new(level) else {
-            continue;
-        };
+        let mut c = Compressor::new(level).expect("every level");
         for (name, input) in inputs() {
             let mut out = vec![0u8; zlib_compress_bound(input.len())];
             let n = c.zlib_compress(&input, &mut out);

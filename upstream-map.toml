@@ -685,7 +685,9 @@ note = "non-x86 CPU paths: only when ARM becomes a reference platform (D11)"
 [[file]]
 path = "external/deflate/lib/bt_matchfinder.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/bt_matchfinder.rs"
+note = "ported whole, for the near-optimal compressor (levels 10-12), whose streams equal Core's (tests/heavy_compress_levels.rs, the O1 harness); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/deflate/lib/cpu_features_common.h"
@@ -722,7 +724,7 @@ path = "external/deflate/lib/deflate_compress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-deflate/src/deflate_compress.rs"
-note = "the Huffman codes, block flushing and splitting, levels 0 to 9 (uncompressed, fastest, greedy, lazy, lazy2); level 4, the default, matches the wheel's ZIP and ZIPS streams byte for byte (heavy tier), the other levels round-trip (their streams need the O1 harness); the near-optimal compressor (10-12) to come"
+note = "ported whole: the Huffman codes, block flushing and splitting, and every level, 0 to 12 (uncompressed, fastest, greedy, lazy, lazy2, near-optimal); level 4, the default, matches the wheel's ZIP and ZIPS streams byte for byte, and every level's zlib streams equal Core's exr_compress_buffer (tests/heavy_compress_levels.rs, the O1 harness); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/deflate/lib/deflate_compress.h"
