@@ -1216,3 +1216,23 @@ fn test_ht_header_bounds() {
     bad_nch[HEADER_SZ + 1] = 32;
     assert!(read_header_throws(&bad_nch[..hdr_sz]));
 }
+
+/// Port of `testDeepNoCompression` (src/test/OpenEXRCoreTest/compression.cpp:1838-1840)
+/// @ v3.5.3: empty upstream.
+#[test]
+fn test_deep_no_compression() {}
+
+/// Port of `testDeepZIPCompression` (src/test/OpenEXRCoreTest/compression.cpp:1842-1844)
+/// @ v3.5.3: empty upstream.
+#[test]
+fn test_deep_zip_compression() {}
+
+/// Port of `testDeepZIPSCompression` (src/test/OpenEXRCoreTest/compression.cpp:1846-1848)
+/// @ v3.5.3: empty upstream.
+#[test]
+fn test_deep_zips_compression() {}
+
+/// Port of `testDeepZstdCompression` (src/test/OpenEXRCoreTest/compression.cpp:1850-1852)
+/// @ v3.5.3: empty upstream.
+#[test]
+fn test_deep_zstd_compression() {}

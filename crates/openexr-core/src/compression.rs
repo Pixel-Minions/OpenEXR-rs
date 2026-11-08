@@ -95,8 +95,8 @@ pub fn compress_buffer(level: i32, input: &[u8], out: &mut [u8]) -> Result<usize
 
 /// Port of `exr_compress_chunk` (src/lib/OpenEXRCore/compression.c:518-657 @ v3.5.3): the
 /// encode pipeline's compress stage, the packed bytes into the compressed buffer, with the
-/// part's compression. `ctxt` must be the pipeline's context. The deep sample count table's
-/// compression comes with deep data (Phase 7; `EXR_ERR_FEATURE_NOT_IMPLEMENTED` until then).
+/// part's compression, after the deep sample count table's (D-19). `ctxt` must be the
+/// pipeline's context.
 pub fn compress_chunk(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(), Error> {
     if encode.context == 0 || encode.context != ctxt.id {
         return Err(Error::bare(ErrorCode::MissingContextArg));
@@ -133,10 +133,78 @@ pub fn compress_chunk(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(),
 
     // This is never called in regular c++ usage
     if encode.sample_count_table.is_some() && !encode.skip_sample_count_table_compression {
-        return Err(Error::bare(ErrorCode::FeatureNotImplemented));
+        let sampsize = (encode.chunk.width as u64 * encode.chunk.height as u64 * 4) as usize;
+
+        if part.comp_type == Compression::NONE {
+            encode.packed_sample_count_table = Aliased::Packed;
+            encode.packed_sample_count_bytes = sampsize;
+        } else {
+            compress_sample_table(encode, ctxt, part.comp_type, sampsize)?;
+        }
     }
 
-    match part.comp_type {
+    compress_packed(encode, ctxt, part.comp_type)
+}
+
+/// The deep sample count table compressed into `packed_sample_count_table`, as the C++
+/// library's deep writers compress it through Core (a plain buffer, kept raw when it does not
+/// shrink). Upstream points the packed buffer at the freshly allocated, unfilled
+/// `packed_sample_count_table` instead, compresses that into the compressed buffer, and
+/// stores nothing, so the chunk is written with a 0-byte table (docs/deviations.md, D-19).
+fn compress_sample_table(
+    encode: &mut EncodePipeline,
+    ctxt: &Context,
+    comp_type: Compression,
+    sampsize: usize,
+) -> Result<(), Error> {
+    let table = encode
+        .sample_count_table
+        .as_deref()
+        .map(|t| t[..sampsize.min(t.len())].to_vec())
+        .unwrap_or_default();
+    let pb = encode.packed_buffer.take();
+    let pbb = encode.packed_bytes;
+    let cb = std::mem::take(&mut encode.compressed_buffer);
+    let cbb = encode.compressed_bytes;
+
+    // the table as the packed buffer (the layout ZSTD keeps for it)
+    encode.packed_buffer = Some(table);
+    encode.packed_bytes = sampsize as u64;
+    encode.packed_sample_count_table = Aliased::Packed;
+    encode.compressed_buffer = Aliased::Own(vec![0; compress_max_buffer_size(sampsize)]);
+    let rv = compress_packed(encode, ctxt, comp_type);
+    let out = match &encode.compressed_buffer {
+        Aliased::Own(b) => b[..encode.compressed_bytes.min(b.len())].to_vec(),
+        _ => encode.packed_buffer.as_deref().unwrap_or(&[]).to_vec(),
+    };
+
+    encode.packed_buffer = pb;
+    encode.packed_bytes = pbb;
+    encode.compressed_buffer = cb;
+    encode.compressed_bytes = cbb;
+
+    if let Err(e) = rv {
+        return Err(ctxt.print_error(e.code, "Unable to compress sample table", &[]));
+    }
+    if out.len() < sampsize {
+        encode.packed_sample_count_bytes = out.len();
+        encode.packed_sample_count_table = Aliased::Own(out);
+    } else {
+        // the table did not shrink: stored raw
+        encode.packed_sample_count_table = Aliased::Packed;
+        encode.packed_sample_count_bytes = sampsize;
+    }
+    Ok(())
+}
+
+/// The compression switch of `exr_compress_chunk` (src/lib/OpenEXRCore/compression.c:624-656
+/// @ v3.5.3): the packed buffer into the compressed one.
+fn compress_packed(
+    encode: &mut EncodePipeline,
+    ctxt: &Context,
+    comp_type: Compression,
+) -> Result<(), Error> {
+    match comp_type {
         Compression::NONE => Err(ctxt.report_error(
             ErrorCode::InvalidArgument,
             b"no compression set but still trying to compress",
@@ -158,7 +226,7 @@ pub fn compress_chunk(encode: &mut EncodePipeline, ctxt: &Context) -> Result<(),
         _ => Err(ctxt.print_error(
             ErrorCode::InvalidArgument,
             "Compression technique 0x%02X invalid",
-            &[part.comp_type.0.into()],
+            &[comp_type.0.into()],
         )),
     }
 }

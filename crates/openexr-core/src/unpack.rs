@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // Copyright Contributors to the OpenEXR Project.
 
-//! Port of `unpack.c` (src/lib/OpenEXRCore/unpack.c:1-1803 @ v3.5.3), so far the image
-//! (non-deep) unpackers and `internal_exr_match_decode`, which picks among them; the deep
-//! unpackers come with Phase 7.
+//! Port of `unpack.c` (src/lib/OpenEXRCore/unpack.c:1-1803 @ v3.5.3): the image and deep
+//! unpackers and `internal_exr_match_decode`, which picks among them.
 //!
 //! Each of upstream's specialized routines is kept, with its own write pattern: which
 //! channel's pointer it starts from, which line stride it advances by, and in which order it
@@ -19,7 +18,10 @@
 
 use crate::coding::{BufferRef, Region, check_regions, out_bytes, put16, put32};
 use crate::context::Error;
-use crate::decoding::{DecodeFn, DecodePipeline};
+use crate::decoding::{
+    DecodeFn, DecodePipeline, EXR_DECODE_NON_IMAGE_DATA_AS_POINTERS,
+    EXR_DECODE_SAMPLE_COUNTS_AS_INDIVIDUAL,
+};
 use crate::errors::ErrorCode;
 use crate::internal_coding::{
     float_to_half_int, float_to_uint_int, half_to_float, half_to_float_int, half_to_uint,
@@ -609,8 +611,273 @@ fn generic_unpack(decode: &mut DecodePipeline<'_>, outs: &mut [&mut [u8]]) -> Re
     Ok(())
 }
 
+/// Sample `i` of the native sample count table, or the refusal of one past it.
+fn samp_at(table: &[u8], i: i64) -> Result<i32, Error> {
+    let b = src_at(table, i.wrapping_mul(4), 4)?;
+    Ok(i32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+/// `PREPARE_SAMPLES` (src/lib/OpenEXRCore/unpack.c:1300-1308 @ v3.5.3): pixel `x`'s sample
+/// count, from the cumulative table unless the counts are individual.
+fn prepare_samples(
+    table: &[u8],
+    row: i64,
+    x: i64,
+    prevsamps: &mut i32,
+    individual: bool,
+) -> Result<i32, Error> {
+    let mut samps = samp_at(table, row + x)?;
+    if !individual {
+        let tmp = samps.wrapping_sub(*prevsamps);
+        *prevsamps = samps;
+        samps = tmp;
+    }
+    Ok(samps)
+}
+
+/// The samples a row of a channel holds: their sum when individual, the last cumulative count
+/// otherwise (upstream's skip of a channel without a pointer).
+fn row_samples(table: &[u8], row: i64, w: i64, individual: bool) -> Result<i32, Error> {
+    if individual {
+        let mut s = 0i32;
+        for x in 0..w {
+            s = s.wrapping_add(samp_at(table, row + x)?);
+        }
+        Ok(s)
+    } else {
+        samp_at(table, row + w - 1)
+    }
+}
+
+/// One pass of `generic_unpack_deep`: with `outs`, the samples stored; without, the bytes each
+/// channel will write gathered as regions (the up-front check of U-9).
+fn deep_pass(
+    decode: &DecodePipeline<'_>,
+    mut outs: Option<&mut [&mut [u8]]>,
+    regions: &mut Vec<Region>,
+) -> Result<(), Error> {
+    let src = decode.unpacked();
+    let table = decode.sample_counts();
+    let individual = decode.decode_flags & EXR_DECODE_SAMPLE_COUNTS_AS_INDIVIDUAL != 0;
+    let w = i64::from(decode.chunk.width);
+    let h = decode
+        .chunk
+        .height
+        .wrapping_sub(decode.user_line_end_ignore);
+    // for user line skip, we use y in the loop so account for that
+    let uls = decode.user_line_begin_skip;
+    let count = decode.channels.len();
+    let mut srcoff = 0i64;
+    let mut totsamps = 0i64;
+    // the furthest sample each channel writes, for the regions
+    let mut furthest = vec![0i64; count];
+    let mut row = 0i64;
+    for y in 0..h {
+        for (c, decc) in decode.channels.iter().enumerate() {
+            let mut prevsamps = 0i32;
+            let incr_tot = y >= uls && (c + 1) == count;
+            let bpc = i64::from(decc.bytes_per_element);
+            let ubpc = i64::from(decc.user_bytes_per_element);
+
+            let Some(r) = decc.data else {
+                let rs = i64::from(row_samples(table, row, w, individual)?);
+                srcoff = srcoff.wrapping_add(bpc.wrapping_mul(rs));
+                if incr_tot {
+                    totsamps = totsamps.wrapping_add(rs);
+                }
+                continue;
+            };
+
+            let mut cdata = (r.offset as i64).wrapping_add(totsamps.wrapping_mul(ubpc));
+            let mut slot = totsamps;
+            for x in 0..w {
+                let samps = prepare_samples(table, row, x, &mut prevsamps, individual)?;
+                let n = i64::from(samps).max(0) as usize;
+                let inp = src_at(src, srcoff, n * bpc.max(0) as usize)?;
+                match outs.as_deref_mut() {
+                    Some(o) => {
+                        unpack_samples(
+                            o,
+                            r.buffer,
+                            cdata,
+                            ubpc,
+                            decc.data_type,
+                            decc.user_data_type,
+                            inp,
+                            n,
+                        )?;
+                    }
+                    None => furthest[c] = furthest[c].max(slot.wrapping_add(n as i64)),
+                }
+                cdata = cdata.wrapping_add(ubpc.wrapping_mul(n as i64));
+                slot = slot.wrapping_add(n as i64);
+                srcoff = srcoff.wrapping_add(bpc.wrapping_mul(i64::from(samps)));
+                if incr_tot {
+                    totsamps = totsamps.wrapping_add(i64::from(samps));
+                }
+            }
+        }
+        row = row.wrapping_add(w);
+    }
+    if outs.is_none() {
+        for (c, decc) in decode.channels.iter().enumerate() {
+            let Some(r) = decc.data else { continue };
+            let ubpc = i64::from(decc.user_bytes_per_element);
+            regions.push(Region {
+                channel: c,
+                buffer: r.buffer,
+                start: r.offset as i64,
+                rows: (furthest[c] > 0).then_some((0, 0)),
+                line: 0,
+                cols: furthest[c],
+                col_stride: ubpc,
+                elem: ubpc,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Port of `generic_unpack_deep` (src/lib/OpenEXRCore/unpack.c:1517-1692 @ v3.5.3): each
+/// channel's samples stored one after another from its pointer, the rows following the last
+/// channel's running total of samples (so a row before `user_line_begin_skip` is written at
+/// the start and overwritten, as upstream writes it).
+fn generic_unpack_deep(
+    decode: &mut DecodePipeline<'_>,
+    outs: &mut [&mut [u8]],
+) -> Result<(), Error> {
+    let mut regions = Vec::new();
+    deep_pass(decode, None, &mut regions)?;
+    check_regions(decode.ctxt()?, &decode.channels, outs, &regions)?;
+    deep_pass(decode, Some(outs), &mut regions)
+}
+
+impl BufferRef {
+    /// The pointer a table of `EXR_DECODE_NON_IMAGE_DATA_AS_POINTERS` holds for this position:
+    /// eight little-endian bytes, `(buffer + 1) << 32 | offset`, 0 being NULL (upstream's
+    /// `void*`, whose size the strides count in).
+    pub fn to_pointer(self) -> u64 {
+        ((self.buffer as u64 + 1) << 32) | (self.offset as u64 & 0xFFFF_FFFF)
+    }
+
+    /// The position a pointer of such a table names, `None` for NULL.
+    pub fn from_pointer(p: u64) -> Option<BufferRef> {
+        let b = p >> 32;
+        (b != 0).then_some(BufferRef {
+            buffer: (b - 1) as usize,
+            offset: (p & 0xFFFF_FFFF) as usize,
+        })
+    }
+}
+
+/// `sizeof (void*)`, the size of a pointer table's entries.
+const PTR_SIZE: i64 = 8;
+
+/// The pointer at byte `pos` of buffer `buf` of the outputs, or the refusal of one outside it.
+fn pointer_at(outs: &mut [&mut [u8]], buf: usize, pos: i64) -> Result<Option<BufferRef>, Error> {
+    let b = out_bytes(outs, buf, pos, PTR_SIZE as usize)?;
+    Ok(BufferRef::from_pointer(u64::from_le_bytes([
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+    ])))
+}
+
+/// `stride / sizeof (void*)` in `size_t`, back to bytes: the step upstream's `void**` takes.
+fn pointer_step(stride: i32) -> i64 {
+    ((i64::from(stride) as u64) / PTR_SIZE as u64).wrapping_mul(PTR_SIZE as u64) as i64
+}
+
+/// One pass of `generic_unpack_deep_pointers`, as `deep_pass`.
+fn deep_pointers_pass(
+    decode: &DecodePipeline<'_>,
+    outs: &mut [&mut [u8]],
+    store: bool,
+    regions: &mut Vec<Region>,
+) -> Result<(), Error> {
+    let src = decode.unpacked();
+    let table = decode.sample_counts();
+    let individual = decode.decode_flags & EXR_DECODE_SAMPLE_COUNTS_AS_INDIVIDUAL != 0;
+    let w = i64::from(decode.chunk.width);
+    let h = decode
+        .chunk
+        .height
+        .wrapping_sub(decode.user_line_end_ignore);
+    // for user line skip, we use y in the loop so account for that
+    let uls = decode.user_line_begin_skip;
+    let mut srcoff = 0i64;
+    let mut row = 0i64;
+    for y in 0..h {
+        for (c, decc) in decode.channels.iter().enumerate() {
+            let mut prevsamps = 0i32;
+            let bpc = i64::from(decc.bytes_per_element);
+            let ubpc = i64::from(decc.user_bytes_per_element);
+
+            let r = match decc.data {
+                Some(r) if y >= uls => r,
+                _ => {
+                    let rs = i64::from(row_samples(table, row, w, individual)?);
+                    srcoff = srcoff.wrapping_add(bpc.wrapping_mul(rs));
+                    continue;
+                }
+            };
+
+            let mut pdata = (r.offset as i64)
+                .wrapping_add(i64::from(y - uls).wrapping_mul(pointer_step(decc.user_line_stride)));
+            let pixstride = pointer_step(decc.user_pixel_stride);
+
+            for x in 0..w {
+                let outpix = pointer_at(outs, r.buffer, pdata)?;
+                let samps = prepare_samples(table, row, x, &mut prevsamps, individual)?;
+                pdata = pdata.wrapping_add(pixstride);
+                if let Some(p) = outpix {
+                    let n = i64::from(samps).max(0) as usize;
+                    let inp = src_at(src, srcoff, n * bpc.max(0) as usize)?;
+                    if store {
+                        unpack_samples(
+                            outs,
+                            p.buffer,
+                            p.offset as i64,
+                            ubpc,
+                            decc.data_type,
+                            decc.user_data_type,
+                            inp,
+                            n,
+                        )?;
+                    } else {
+                        regions.push(Region {
+                            channel: c,
+                            buffer: p.buffer,
+                            start: p.offset as i64,
+                            rows: (n > 0).then_some((0, 0)),
+                            line: 0,
+                            cols: n as i64,
+                            col_stride: ubpc,
+                            elem: ubpc,
+                        });
+                    }
+                }
+                srcoff = srcoff.wrapping_add(bpc.wrapping_mul(i64::from(samps)));
+            }
+        }
+        row = row.wrapping_add(w);
+    }
+    Ok(())
+}
+
+/// Port of `generic_unpack_deep_pointers` (src/lib/OpenEXRCore/unpack.c:1310-1515 @ v3.5.3):
+/// each pixel's samples stored at the pointer the channel's table holds for it (a NULL one
+/// skipped). The table is one of the outputs, its pointers [`BufferRef::to_pointer`] values.
+fn generic_unpack_deep_pointers(
+    decode: &mut DecodePipeline<'_>,
+    outs: &mut [&mut [u8]],
+) -> Result<(), Error> {
+    let mut regions = Vec::new();
+    deep_pointers_pass(decode, outs, false, &mut regions)?;
+    check_regions(decode.ctxt()?, &decode.channels, outs, &regions)?;
+    deep_pointers_pass(decode, outs, true, &mut regions)
+}
+
 /// Port of `internal_exr_match_decode` (src/lib/OpenEXRCore/unpack.c:1696-1803 @ v3.5.3): the
-/// unpack routine for the channels' layout. Deep parts have none yet (Phase 7).
+/// unpack routine for the channels' layout.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn internal_exr_match_decode(
     decode: &DecodePipeline<'_>,
@@ -630,9 +897,10 @@ pub(crate) fn internal_exr_match_decode(
 ) -> Option<DecodeFn> {
     let count = i32::from(decode.channel_count);
     if isdeep {
-        // generic_unpack_deep_pointers (for EXR_DECODE_NON_IMAGE_DATA_AS_POINTERS) and
-        // generic_unpack_deep come with Phase 7
-        return None;
+        if decode.decode_flags & EXR_DECODE_NON_IMAGE_DATA_AS_POINTERS != 0 {
+            return Some(generic_unpack_deep_pointers);
+        }
+        return Some(generic_unpack_deep);
     }
 
     if hastypechange > 0 {

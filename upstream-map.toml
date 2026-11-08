@@ -1316,9 +1316,9 @@ note = "with exr_check_color_metadata"
 [[file]]
 path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/compression.rs"
-note = "ported whole: the dispatch both ways for every codec, the buffers, the cached deflate context; the deep sample table's compression waits for Phase 7"
+note = "ported whole: the dispatch both ways for every codec, the buffers, the cached deflate context, the deep sample count table's compression (D-19); deep chunks compress as the wheel's (heavy_deep)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
@@ -1337,16 +1337,16 @@ note = "exr_print_context_info, ported whole; its text is compared with C's only
 [[file]]
 path = "src/lib/OpenEXRCore/decoding.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/decoding.rs"
-note = "ported whole; NONE and RLE parts match the wheel bit for bit in every layout tested (heavy tier, tests/heavy_decode.rs); the deep paths are tested with Phase 7"
+note = "ported whole; every codec's parts decode as the wheel does (heavy_decode), deep parts too (heavy_deep)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/encoding.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/encoding.rs"
-note = "ported whole; files the C++ library wrote with NONE and RLE re-encode byte for byte (encoding::tests; heavy tier, tests/heavy_decode.rs, in every layout of oracle/write_images.py); the deep paths are tested with Phase 7"
+note = "ported whole; every codec's files re-encode byte for byte (heavy_decode); a deep part has no packer upstream (default_pack_deep answers EXR_ERR_INVALID_ARGUMENT), so deep chunks are compressed with exr_compress_chunk and written with the deep write calls, checked against the wheel's deep files (heavy_deep)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/float_vector.c"
@@ -1663,9 +1663,9 @@ note = "ported whole (scalar reconstruct and interleave; the SSE2/SSE4.1/NEON ke
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_zstd.rs"
-note = "both ways: flat parts decode as the wheel does, and the wheel's flat ZSTD files (chunks up to 1 MiB) encode as it wrote them (heavy tier); upstream's testZstdCompression passes with its C++ half; the deep scenarios are ported and wait for deep data (Phase 7)"
+note = "both ways: flat and deep parts decode as the wheel does, and the wheel's flat ZSTD files and deep ZSTD chunks (sample tables and data) encode as it wrote them (heavy_decode, heavy_deep); testZstdCompression and the deep ZSTD tests pass"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd_delta.c"
@@ -1857,7 +1857,7 @@ path = "src/lib/OpenEXRCore/unpack.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/unpack.rs"
-note = "the image unpackers and internal_exr_match_decode; the deep unpackers with Phase 7; the F16C half_to_float_buffer kernel (GCC builds, chosen at run time) with Phase 8"
+note = "the image and deep unpackers and internal_exr_match_decode; deep decoding checked against the wheel's deep files, with and without pointer tables (heavy_deep); the F16C half_to_float_buffer kernel (GCC builds, chosen at run time) with Phase 8"
 
 [[file]]
 path = "src/lib/OpenEXRCore/validation.c"
@@ -1918,9 +1918,9 @@ status = "todo"
 [[file]]
 path = "src/test/OpenEXRCoreTest/compression.cpp"
 kind = "test"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/upstream_tests/compression.rs"
-note = "testNoCompression, testRLECompression, testZIPCompression, testZIPSCompression (the C++ half by the wheel, oracle/save_load.py, heavy tier), testHUF (its comparison with the C++ hufCompress, which the wheel does not expose, n/a), testPIZCompression, testPXR24Compression, testB44Compression, testB44ACompression, testDWAACompression, testDWABCompression; the ZSTD and HTJ2K tests with their codecs"
+note = "every test ported: the codecs' (their C++ halves by the wheel, oracle/save_load.py, heavy tier), testHUF (its comparison with the C++ hufCompress, which the wheel does not expose, n/a), testHTChannelMap, testHTHeaderBounds, and the deep ones (empty upstream)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/compression.h"
@@ -1937,7 +1937,9 @@ note = "testB44Table, testDWATable (testLutHeader, an exhaustive search, in the 
 [[file]]
 path = "src/test/OpenEXRCoreTest/deep.cpp"
 kind = "test"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/deep.rs"
+note = "every test ported; testOpenDeep and testReadDeep in the heavy tier, the wheel writing their files (oracle/write_deep.py)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/deep.h"

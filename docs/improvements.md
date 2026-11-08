@@ -330,6 +330,24 @@ section. An entry says:
 - **Status:** matched (`crates/openexr-openjph/src/codestream.rs`); listed for the owner's
   review.
 
+### I-29. Core compresses an unfilled buffer as a deep chunk's sample count table
+
+- **Upstream:** when `exr_compress_chunk` is given a deep chunk's sample count table to
+  compress (`skip_sample_count_table_compression` unset), it points the packed buffer at the
+  freshly allocated `packed_sample_count_table`, compresses that uninitialized buffer into the
+  compressed buffer (which the data's compression then overwrites), and leaves
+  `packed_sample_count_bytes` as it was (`src/lib/OpenEXRCore/compression.c:558-622` @ v3.5.3);
+  the chunk is written with no table. "This is never called in regular c++ usage": the C++
+  library compresses the table itself and skips this.
+- **Who notices:** writers of compressed deep files through Core alone, whose files do not read
+  back.
+- **A fix:** compress the table as the C++ library's deep writers do through Core
+  (`ImfDeepScanLineOutputFile.cpp:690-760`, `ImfDeepTiledOutputFile.cpp:940-1030`): as a plain
+  buffer, kept raw when it does not shrink.
+- **Status:** **fixed**, deviation D-19 (owner, 2026-11-07: "anything that is a bug we can
+  fix") (`crates/openexr-core/src/compression.rs`); Core alone now writes the chunks the wheel
+  writes, byte for byte (`tests/heavy_deep.rs`).
+
 ## Messages and debug output
 
 ### I-7. A deep tile's unpacked size error prints the packed size
@@ -339,8 +357,8 @@ section. An entry says:
   (`src/lib/OpenEXRCore/chunk.c:1412-1425` @ v3.5.3).
 - **Who notices:** readers of corrupt deep tiled files, in the error text.
 - **A fix:** print `ddata[2]`.
-- **Status:** **fixed**, deviation D-3 (owner, 2026-11-07) (`crates/openexr-core/src/chunk_info.rs`). No
-  test yet: it needs a corrupt deep tiled file (Phase 7).
+- **Status:** **fixed**, deviation D-3 (owner, 2026-11-07) (`crates/openexr-core/src/chunk_info.rs`),
+  checked by `chunk_info::tests::deep_tile_unpacked_size_message`.
 
 ### I-8. The debug dump prints bytes and deepImageState attributes as unknown types
 
@@ -365,7 +383,8 @@ section. An entry says:
   implicitly, only when adding a part".
 - **Status:** **fixed**, deviation D-6 (owner, 2026-11-07) (`crates/openexr-core/src/chunk_info.rs`,
   `part_attr_set.rs`); the part type message is checked by
-  `part_attr_set::tests::refusals_carry_messages`.
+  `part_attr_set::tests::refusals_carry_messages`, the two deep scanline ones by
+  `chunk_info::tests::deep_scanline_leader_messages`.
 
 ### I-13. Two decode errors print the channel index as a character
 
@@ -514,7 +533,11 @@ section. An entry says:
   (bytes %lld to %lld; the buffer holds %llu)", leaving the buffers untouched; every store is
   bounds-checked as well. Layouts inside the buffers, negative strides included, decode as
   upstream does, byte for byte. Checked by `unpack::tests` (a buffer one byte short, a
-  bottom-up tile, each fast path against `generic_unpack`).
+  bottom-up tile, each fast path against `generic_unpack`). The deep unpackers check the same
+  way: each channel's run of samples, or each pixel's samples at its pointer; a table of
+  pointers (`EXR_DECODE_NON_IMAGE_DATA_AS_POINTERS`) is one of the run's buffers, each 8-byte
+  entry a `BufferRef::to_pointer` value (0 for NULL), so that the strides count in
+  `sizeof (void*)` as upstream's do.
 - **Status:** the port's choice, made up front at the owner's request (2026-11-07).
 
 ### U-10. RLE coding writes up to a run past its output buffer

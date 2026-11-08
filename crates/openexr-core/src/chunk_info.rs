@@ -605,3 +605,120 @@ impl Context {
         Ok(cinfo)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::context::{Context, DefaultWriteMode};
+    use crate::errors::ErrorCode;
+    use crate::openexr_attr::{Compression, PerceptualTreatment, PixelType, Storage};
+    use crate::upstream_tests::read::make_temp_dir;
+
+    /// The message of a refused call.
+    fn message<T: std::fmt::Debug>(
+        r: Result<T, crate::context::Error>,
+    ) -> (crate::errors::ExrResult, String) {
+        let e = r.expect_err("the call is refused");
+        (
+            e.code,
+            String::from_utf8_lossy(e.message.as_deref().unwrap_or(&[])).into_owned(),
+        )
+    }
+
+    /// A 2x2 deep scanline file without compression, one half channel, one sample per pixel,
+    /// written by the port; the file's bytes and the offset of chunk 0.
+    fn deep_scanline_file(path: &str) -> (Vec<u8>, usize) {
+        let mut f = Context::start_write(Some(path), DefaultWriteMode::WriteFileDirectly, None)
+            .expect("start_write");
+        f.add_part(Some("deep"), Storage::DEEP_SCANLINE)
+            .expect("add_part");
+        f.initialize_required_attr_simple(0, 2, 2, Compression::NONE)
+            .expect("required attributes");
+        f.add_channel(
+            0,
+            Some("A"),
+            PixelType::HALF,
+            PerceptualTreatment::LOGARITHMIC,
+            1,
+            1,
+        )
+        .expect("add_channel");
+        f.write_header().expect("write_header");
+        let table: Vec<u8> = [1u32, 2].iter().flat_map(|v| v.to_le_bytes()).collect();
+        for y in 0..2 {
+            f.write_deep_scanline_chunk(0, y, Some(&[0, 0x3c, 0, 0x3c]), 4, Some(&table))
+                .expect("write_deep_scanline_chunk");
+        }
+        f.finish().expect("finish");
+        let bytes = std::fs::read(path).expect("the file");
+        let r = Context::start_read(Some(path), None).expect("start_read");
+        let table_off = r.get_chunk_table_offset(0).expect("chunk table") as usize;
+        let chunk0 =
+            u64::from_le_bytes(bytes[table_off..table_off + 8].try_into().unwrap()) as usize;
+        (bytes, chunk0)
+    }
+
+    /// D-6: a deep scanline chunk's corrupt unpacked size and its sizes past the end of the
+    /// file are reported as "Preparing to read scanline" (upstream: "Preparing to scanline").
+    #[test]
+    fn deep_scanline_leader_messages() {
+        let tempdir = make_temp_dir();
+        let path = format!("{tempdir}deepscan.exr");
+        let (bytes, chunk0) = deep_scanline_file(&path);
+        // the leader: y, then the table, packed and unpacked sizes
+        let at = |i: usize| chunk0 + 4 + 8 * i;
+
+        let mut bad = bytes.clone();
+        bad[at(2)..at(2) + 8].copy_from_slice(&(-1i64).to_le_bytes());
+        std::fs::write(&path, &bad).unwrap();
+        let f = Context::start_read(Some(&path), None).expect("start_read");
+        assert_eq!(
+            message(f.read_scanline_chunk_info(0, 0)),
+            (ErrorCode::BadChunkLeader.into(), "Preparing to read scanline 0 (chunk 0), found corrupt leader: unsupported unpacked data size -1".to_string())
+        );
+
+        let mut bad = bytes.clone();
+        bad[at(1)..at(1) + 8].copy_from_slice(&1_000_000i64.to_le_bytes());
+        std::fs::write(&path, &bad).unwrap();
+        let f = Context::start_read(Some(&path), None).expect("start_read");
+        assert_eq!(
+            message(f.read_scanline_chunk_info(0, 0)),
+            (
+                ErrorCode::BadChunkLeader.into(),
+                format!(
+                    "Preparing to read scanline 0 (chunk 0), found corrupt leader: sample table and data result in access past end of the file: sample table size 8 + data size 1000000 larger than file {}",
+                    bad.len()
+                )
+            )
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// D-3: a deep tile's corrupt unpacked size is printed (upstream prints the packed size).
+    #[test]
+    fn deep_tile_unpacked_size_message() {
+        use crate::upstream_tests::deep::DEEP_ZSTD_TILE_DATA;
+
+        let tempdir = make_temp_dir();
+        let path = format!("{tempdir}deeptile.exr");
+        let mut bad = DEEP_ZSTD_TILE_DATA.to_vec();
+        // the tile's leader (at 0x18e): tile x, y and levels, then the table, packed and
+        // unpacked sizes
+        let unpacked = 0x18e + 16 + 16;
+        assert_eq!(
+            i64::from_le_bytes(bad[unpacked..unpacked + 8].try_into().unwrap()),
+            600
+        );
+        bad[unpacked..unpacked + 8].copy_from_slice(&(-1i64).to_le_bytes());
+        std::fs::write(&path, &bad).unwrap();
+        let f = Context::start_read(Some(&path), None).expect("start_read");
+        assert_eq!(
+            message(f.read_tile_chunk_info(0, 0, 0, 0, 0)),
+            (
+                ErrorCode::BadChunkLeader.into(),
+                "Corrupt deep tile (0, 0), level (0, 0) (chunk 0): invalid unpacked size -1"
+                    .to_string()
+            )
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+}
