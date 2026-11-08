@@ -278,8 +278,8 @@ note = "ported whole, in AVX2, chosen from X86_CPU_EXT_LEVEL_AVX2 as upstream ch
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_ssse3.cpp"
 kind = "vendored"
 status = "partial"
-target = "crates/openexr-openjph/src/block_decoder32.rs"
-note = "the generic decoder decodes the wheel's codeblocks as this one does (heavy_decode); its failures on corrupt codeblocks are to be checked (docs/deferred.md)"
+target = "crates/openexr-openjph/src/block_decoder_ssse3.rs"
+note = "ported whole, in SSSE3, chosen from X86_CPU_EXT_LEVEL_SSSE3 below AVX2 as upstream chooses it; forced on this machine, its chunk digests equal Core's under SDE -snb (where OpenJPH takes it) for the decode check's 240 HTJ2K/LJ2K files, damaged copies included; heavy-tier check pending gate --full and SDE"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_vsx.cpp"

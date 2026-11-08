@@ -268,7 +268,7 @@ impl<'a> Rev<'a> {
 
     /// Port of `rev_init` (external/OpenJPH/src/core/coding/ojph_block_decoder32.cpp:374-405
     /// @ OpenJPH 0.32.0): the VLC segment, from its end.
-    fn init_vlc(data: &'a [u8], lcup: i32, scup: i32) -> Self {
+    pub(crate) fn init_vlc(data: &'a [u8], lcup: i32, scup: i32) -> Self {
         // first byte has only the upper 4 bits
         let mut v = Rev {
             buf: data,

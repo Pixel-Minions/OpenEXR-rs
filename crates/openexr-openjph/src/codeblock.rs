@@ -248,8 +248,8 @@ impl Codeblock {
 
     /// `decode_cb32` as `codeblock_fun::init` chooses it
     /// (external/OpenJPH/src/core/codestream/ojph_codeblock_fun.cpp:215-227 @ OpenJPH 0.32.0):
-    /// the AVX2 decoder at `X86_CPU_EXT_LEVEL_AVX2` and above, else the generic one (the SSSE3
-    /// decoder upstream chooses from `X86_CPU_EXT_LEVEL_SSSE3` is not ported yet).
+    /// the AVX2 decoder at `X86_CPU_EXT_LEVEL_AVX2` and above, the SSSE3 one from
+    /// `X86_CPU_EXT_LEVEL_SSSE3`, else the generic one.
     #[allow(clippy::too_many_arguments)]
     fn decode_cb32(
         coded_data: &[u8],
@@ -266,6 +266,23 @@ impl Codeblock {
         #[cfg(target_arch = "x86_64")]
         if crate::arch::get_cpu_ext_level() >= crate::arch::x86_level::AVX2
             && let Some(r) = crate::block_decoder_avx2::decode_codeblock_avx2(
+                coded_data,
+                decoded_data,
+                missing_msbs,
+                num_passes,
+                lengths1,
+                lengths2,
+                width,
+                height,
+                stride,
+                stripe_causal,
+            )
+        {
+            return r;
+        }
+        #[cfg(target_arch = "x86_64")]
+        if crate::arch::get_cpu_ext_level() >= crate::arch::x86_level::SSSE3
+            && let Some(r) = crate::block_decoder_ssse3::decode_codeblock_ssse3(
                 coded_data,
                 decoded_data,
                 missing_msbs,
