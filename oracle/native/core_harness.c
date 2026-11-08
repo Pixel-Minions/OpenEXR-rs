@@ -241,6 +241,31 @@ copy_chunk (
     CHECK (exr_encoding_initialize (out, p, cout, &enc));
     if (enc.channel_count != dec.channel_count)
         return fail ("channel counts differ", EXR_ERR_INVALID_ARGUMENT);
+    /* The encoder's own planes, of the sizes the write side's chunk info gives: they differ
+     * from the read side's where Core's exr_write_tile_chunk_info keeps a whole tile at a
+     * level's edge (docs/improvements.md, I-21). The decoded rows are copied in, the rest is
+     * zero, so that Core reads only memory it is given. */
+    {
+        planes_t eplanes;
+        r = plan_channels (enc.channels, enc.channel_count, &eplanes);
+        if (r) return r;
+        for (int16_t c = 0; c < enc.channel_count; ++c)
+        {
+            const exr_coding_channel_info_t* d = dec.channels + c;
+            const exr_coding_channel_info_t* e = enc.channels + c;
+            int32_t rows = d->height < e->height ? d->height : e->height;
+            int32_t cols = d->width < e->width ? d->width : e->width;
+            for (int32_t y = 0; y < rows; ++y)
+                memcpy (
+                    eplanes.data + eplanes.offsets[c] +
+                        (size_t) y * (size_t) e->width * e->bytes_per_element,
+                    planes.data + planes.offsets[c] +
+                        (size_t) y * (size_t) d->width * d->bytes_per_element,
+                    (size_t) cols * d->bytes_per_element);
+        }
+        free (planes.data);
+        planes = eplanes;
+    }
     for (int16_t c = 0; c < enc.channel_count; ++c)
     {
         exr_coding_channel_info_t* ch = enc.channels + c;
