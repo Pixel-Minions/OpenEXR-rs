@@ -33,6 +33,7 @@ use crate::zstd_compress_internal::{
     ZSTD_BTOPT, ZSTD_DFAST, ZSTD_FAST, ZSTD_GREEDY, ZSTD_LAZY2, ZSTD_ROW_HASH_CACHE_SIZE, ll_code,
     min_gain, ml_code,
 };
+use crate::zstd_compress_internal::{OptMatch, OptState, Optimal, ZSTD_OPT_SIZE};
 use crate::zstd_compress_literals::zstd_compress_literals;
 use crate::zstd_compress_sequences::{
     zstd_build_ctable, zstd_encode_sequences, zstd_select_encoding_type,
@@ -44,12 +45,16 @@ use crate::zstd_decompress_internal::{
 use crate::zstd_double_fast::compress_block_double_fast;
 use crate::zstd_fast::compress_block_fast;
 use crate::zstd_lazy::{SearchMethod, ZSTD_ROW_HASH_TAG_BITS, bounded_4_6, compress_block_lazy};
+use crate::zstd_opt::compress_block_opt;
 use crate::zstd_pre_split::zstd_split_block;
 
 /// `ZSTD_MAGICNUMBER` (external/zstd/lib/zstd.h:142 @ zstd v1.5.7).
 const ZSTD_MAGICNUMBER: u32 = 0xFD2F_B528;
 /// `ZSTD_CLEVEL_DEFAULT` (external/zstd/lib/zstd.h:134 @ zstd v1.5.7).
 const ZSTD_CLEVEL_DEFAULT: i32 = 3;
+/// `ZSTD_HASHLOG3_MAX` (external/zstd/lib/compress/zstd_compress.c:55-57 @ zstd v1.5.7).
+const ZSTD_HASHLOG3_MAX: u32 = 17;
+
 /// `ZSTD_BLOCKSIZE_MAX` (external/zstd/lib/zstd.h:148 @ zstd v1.5.7).
 const ZSTD_BLOCKSIZE_MAX: usize = 1 << 17;
 /// `ZSTD_WINDOWLOG_MAX` on 64-bit (external/zstd/lib/zstd.h:1264 @ zstd v1.5.7).
@@ -286,6 +291,9 @@ impl CCtx {
                 chain_table: Vec::new(),
                 cparams,
                 lazy_skipping: false,
+                hash_table3: Vec::new(),
+                hash_log3: 0,
+                opt: OptState::default(),
             },
             blocks: [block.clone(), block],
             prev: 0,
@@ -352,6 +360,27 @@ impl CCtx {
         ms.hash_table.resize(h_size, 0);
         ms.chain_table.clear();
         ms.chain_table.resize(chain_size, 0);
+        // the optimal parser's tables: 3-byte hashes for a minimum match of 3, the stats
+        let hash_log3 = if cparams.min_match == 3 {
+            cparams.window_log.min(ZSTD_HASHLOG3_MAX)
+        } else {
+            0
+        };
+        ms.hash_log3 = hash_log3;
+        ms.hash_table3.clear();
+        ms.hash_table3
+            .resize(if hash_log3 != 0 { 1 << hash_log3 } else { 0 }, 0);
+        // ZSTD_invalidateMatchState: force reset of btopt stats
+        ms.opt.lit_length_sum = 0;
+        if cparams.strategy >= ZSTD_BTOPT {
+            let o = &mut ms.opt;
+            o.lit_freq.resize(256, 0);
+            o.lit_length_freq.resize(MAX_LL as usize + 1, 0);
+            o.match_length_freq.resize(MAX_ML as usize + 1, 0);
+            o.off_code_freq.resize(MAX_OFF as usize + 1, 0);
+            o.match_table.resize(ZSTD_OPT_SIZE, OptMatch::default());
+            o.price_table.resize(ZSTD_OPT_SIZE, Optimal::default());
+        }
         if row {
             // Row match finder needs an additional table of hashes ("tags")
             ms.tag_table.clear();
@@ -378,8 +407,9 @@ impl CCtx {
         compression_level: i32,
     ) -> ZResult<usize> {
         let cparams = get_cparams_internal(compression_level, src.len() as u64);
-        if !(ZSTD_FAST..=ZSTD_BTLAZY2).contains(&cparams.strategy) {
-            // the optimal parsers: not ported yet (docs/deferred.md)
+        if cparams.strategy >= ZSTD_BTOPT && cparams.window_log >= 17 {
+            // ZSTD_resolveBlockSplitterMode enables the post-block splitter (lines 233-238):
+            // not ported yet (docs/deferred.md)
             return Err(ErrorCode::ParameterUnsupported);
         }
         if src.len() as u64 >= ZSTD_CURRENT_MAX {
@@ -387,7 +417,7 @@ impl CCtx {
             return Err(ErrorCode::SrcSizeWrong);
         }
         let use_row = resolve_row_match_finder_mode(&cparams);
-        debug_assert!(cparams.strategy < ZSTD_BTOPT); // no LDM, no post block splitter
+        // no LDM: ZSTD_resolveEnableLdm needs a window of 2^27, past these inputs
         self.reset(cparams, use_row, src.len() as u64);
 
         // ZSTD_compressContinue_internal (frame, last chunk)
@@ -573,6 +603,9 @@ impl CCtx {
             ZSTD_FAST => compress_block_fast(ms, seq_store, rep, src, istart, istart + src_size),
             ZSTD_DFAST => {
                 compress_block_double_fast(ms, seq_store, rep, src, istart, istart + src_size)
+            }
+            s if s >= ZSTD_BTOPT => {
+                compress_block_opt(ms, seq_store, rep, src, istart, istart + src_size, s)
             }
             ZSTD_BTLAZY2 => compress_block_lazy(
                 ms,
@@ -999,8 +1032,9 @@ mod tests {
             1 << 20,
         ] {
             for level in 1..=ZSTD_MAX_CLEVEL {
-                let s = get_cparams_internal(level, len as u64).strategy;
-                if (ZSTD_FAST..=ZSTD_BTLAZY2).contains(&s) {
+                let cp = get_cparams_internal(level, len as u64);
+                // (the optimal parsers' blocks that the post-block splitter would split wait for it)
+                if !(cp.strategy >= ZSTD_BTOPT && cp.window_log >= 17) {
                     round_trip(&mut cctx, &image_like(len, len as u32), level);
                 }
             }
@@ -1011,10 +1045,13 @@ mod tests {
 
     #[test]
     fn unported_strategies_are_refused() {
+        // level 19 on 1 MiB: btultra with a window of 2^20, which the post-block splitter
+        // would split
         let mut cctx = CCtx::new();
-        let mut dst = vec![0u8; 1024];
+        let src = vec![7u8; 1 << 20];
+        let mut dst = vec![0u8; 1 << 21];
         assert_eq!(
-            cctx.compress_cctx(&mut dst, &[1, 2, 3], 19),
+            cctx.compress_cctx(&mut dst, &src, 19),
             Err(ErrorCode::ParameterUnsupported)
         );
     }

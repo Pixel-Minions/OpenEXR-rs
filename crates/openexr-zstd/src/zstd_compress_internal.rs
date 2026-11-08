@@ -477,8 +477,76 @@ pub(crate) fn update_rep(rep: &mut [u32; 3], off_base: u32, ll0: u32) {
     }
 }
 
+/// `ZSTD_OPT_NUM` (external/zstd/lib/common/zstd_internal.h:62 @ zstd v1.5.7).
+pub(crate) const ZSTD_OPT_NUM: usize = 1 << 12;
+/// `ZSTD_OPT_SIZE` (external/zstd/lib/compress/zstd_compress_internal.h:226 @ zstd v1.5.7).
+pub(crate) const ZSTD_OPT_SIZE: usize = ZSTD_OPT_NUM + 3;
+
+/// Port of `ZSTD_match_t` (external/zstd/lib/compress/zstd_compress_internal.h:194-197
+/// @ zstd v1.5.7).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct OptMatch {
+    /// Offset sumtype code for the match, using `ZSTD_storeSeq()` format.
+    pub(crate) off: u32,
+    /// Raw length of match.
+    pub(crate) len: u32,
+}
+
+/// Port of `ZSTD_optimal_t` (external/zstd/lib/compress/zstd_compress_internal.h:216-222
+/// @ zstd v1.5.7).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Optimal {
+    /// Price from beginning of segment to this position.
+    pub(crate) price: i32,
+    /// Offset of previous match.
+    pub(crate) off: u32,
+    /// Length of previous match.
+    pub(crate) mlen: u32,
+    /// Nb of literals since previous match.
+    pub(crate) litlen: u32,
+    /// Offset history after previous match.
+    pub(crate) rep: [u32; 3],
+}
+
+/// Port of `ZSTD_OptPrice_e` (external/zstd/lib/compress/zstd_compress_internal.h:224
+/// @ zstd v1.5.7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum OptPrice {
+    #[default]
+    Dynamic,
+    Predef,
+}
+
+/// Port of `optState_t` (external/zstd/lib/compress/zstd_compress_internal.h:227-249
+/// @ zstd v1.5.7), without a dictionary's symbol costs (n/a) and with literals always
+/// compressed (the literal compression mode is never "disable" here).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct OptState {
+    /// Literals statistics, of size 256.
+    pub(crate) lit_freq: Vec<u32>,
+    /// litLength statistics, of size (MaxLL+1).
+    pub(crate) lit_length_freq: Vec<u32>,
+    /// matchLength statistics, of size (MaxML+1).
+    pub(crate) match_length_freq: Vec<u32>,
+    /// offCode statistics, of size (MaxOff+1).
+    pub(crate) off_code_freq: Vec<u32>,
+    /// The matches found, of size `ZSTD_OPT_SIZE`.
+    pub(crate) match_table: Vec<OptMatch>,
+    /// All positions tracked by the optimal parser, of size `ZSTD_OPT_SIZE`.
+    pub(crate) price_table: Vec<Optimal>,
+    pub(crate) lit_sum: u32,
+    pub(crate) lit_length_sum: u32,
+    pub(crate) match_length_sum: u32,
+    pub(crate) off_code_sum: u32,
+    pub(crate) lit_sum_base_price: u32,
+    pub(crate) lit_length_sum_base_price: u32,
+    pub(crate) match_length_sum_base_price: u32,
+    pub(crate) off_code_sum_base_price: u32,
+    pub(crate) price_type: OptPrice,
+}
+
 /// Port of `ZSTD_MatchState_t` (external/zstd/lib/compress/zstd_compress_internal.h:269-315
-/// @ zstd v1.5.7), for the greedy and lazy match finders without a dictionary.
+/// @ zstd v1.5.7), for the match finders without a dictionary.
 #[derive(Debug, Clone)]
 pub(crate) struct MatchState {
     pub(crate) window: Window,
@@ -499,6 +567,11 @@ pub(crate) struct MatchState {
     pub(crate) cparams: CParams,
     /// The lazy match finders insert only the positions they search.
     pub(crate) lazy_skipping: bool,
+    /// The optimal parser's hash table of 3-byte sequences (`minMatch == 3`), and its log.
+    pub(crate) hash_table3: Vec<u32>,
+    pub(crate) hash_log3: u32,
+    /// The optimal parser's state.
+    pub(crate) opt: OptState,
 }
 
 /// Port of `ZSTD_getLowestMatchIndex`

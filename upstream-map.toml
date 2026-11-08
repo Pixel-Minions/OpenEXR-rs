@@ -1170,7 +1170,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_opt.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_opt.rs"
+note = "the optimal parsers (btopt, btultra, btultra2 with its first-block pass) over the binary tree, without a dictionary or long distance matching (n/a: ZSTD_compressCCtx uses none, and LDM needs a 2^27 window); Core-only ZSTD rewrites at these levels equal Core's own (tests/heavy_harness.rs) where the window is under 2^17; larger windows wait for the post-block splitter (zstd_compress.c)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_opt.h"
