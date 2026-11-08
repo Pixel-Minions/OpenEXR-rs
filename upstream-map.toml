@@ -1869,9 +1869,9 @@ note = "read and write part validation, shared attributes"
 [[file]]
 path = "src/lib/OpenEXRCore/write_header.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/write_header.rs"
-note = "ported whole, with exr_write_header (context.c) and the fixes D-10 to D-12; the headers of the C++ library's files come back byte for byte (heavy tier); single-part headers Core writes alone equal Core's own (tests/heavy_harness.rs); multipart ones wait for the harness's next checks"
+note = "ported whole, with exr_write_header (context.c) and the fixes D-10 to D-12; the headers of the C++ library's files come back byte for byte (heavy tier); the headers Core writes alone, single-part and multipart, equal Core's own (tests/heavy_harness.rs)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/CMakeLists.txt"

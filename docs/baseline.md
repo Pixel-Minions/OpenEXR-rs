@@ -126,8 +126,12 @@ damaged as above (1278 files), opened and read chunk by chunk as `core_harness i
 does, per-chunk results, a digest (FNV-1a 64) of every decoded chunk's bytes, and Core's and
 OpenJPH's messages, line for line, with header parsing silent and not; and
 `exr_print_context_info`'s verbose text, byte for byte: identical but for the lines of the
-waived deviations D-4 (178) and D-6 (5). Every `write_images.py` layout rewritten by Core
-alone into each compression, ZIP and ZIPS at levels 0-9, ZSTD at -1 to 22, DWAA and DWAB at
-five levels: the header byte for byte and every chunk by index, 973 rewrites identical; left
-out, D-10 and D-18 (76), and the ZSTD levels whose strategies are not yet ported (321).
+waived deviations D-4 (178) and D-6 (5). Every `write_images.py` layout, the multipart files
+of `oracle/write_multipart.py`, and upstream's images that decode cleanly (multipart.0001.exr,
+mipmapped tiles, real pictures among them) rewritten by Core alone into each compression,
+ZIP and ZIPS at levels 0-9, ZSTD at -1 to 22, DWAA and DWAB at five levels: the header byte
+for byte and every chunk by index, 2909 rewrites identical; left out, D-10, D-17 and D-18
+(124), and the ZSTD levels whose strategies are not yet ported (969). Upstream's pictures
+found a port bug the wheel's images could not: libdeflate's `min_lens` table had two entries
+wrong (fixed).
 

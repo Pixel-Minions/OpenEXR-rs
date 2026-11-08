@@ -675,13 +675,55 @@ fn port_recompress(
     dst.finish()
 }
 
-/// Whether `src`'s single part has a half channel.
-fn has_half(src: &Context) -> bool {
-    src.get_channels(0)
+/// Whether `chunk` (as Core wrote it) is a tile of a level above 0 at the level's right or
+/// bottom edge: the tiles whose size upstream's `exr_write_tile_chunk_info` clips against the
+/// data window and the port against the level (D-17, I-21).
+fn level_edge_tile(src: &Context, p: i32, chunk: &[u8], multipart: bool) -> bool {
+    if src.get_storage(p).ok() != Some(Storage::TILED) {
+        return false;
+    }
+    let o = if multipart { 4 } else { 0 };
+    let at = |k: usize| i32::from_le_bytes(chunk[o + 4 * k..o + 4 * k + 4].try_into().unwrap());
+    let (tx, ty, lx, ly) = (at(0), at(1), at(2), at(3));
+    if lx == 0 && ly == 0 {
+        return false;
+    }
+    let (tw, th, _, _) = src.get_tile_descriptor(p).unwrap();
+    let Ok((lw, lh)) = src.get_level_sizes(p, lx, ly) else {
+        return false;
+    };
+    i64::from(tx + 1) * i64::from(tw) > i64::from(lw)
+        || i64::from(ty + 1) * i64::from(th) > i64::from(lh)
+}
+
+/// Whether part `p` of `src` has a half channel.
+fn has_half(src: &Context, p: usize) -> bool {
+    src.get_channels(p as i32)
         .unwrap()
         .entries()
         .iter()
         .any(|e| e.pixel_type == PixelType::HALF)
+}
+
+/// Whether the port opens `path` without a message, and it holds no deep part: a source both
+/// can rewrite.
+fn clean_source(path: &Path) -> bool {
+    let (init, msgs) = capture(0);
+    let Ok(f) = Context::start_read(Some(path.to_str().unwrap()), Some(init)) else {
+        return false;
+    };
+    let flat = (0..f.get_count())
+        .all(|p| matches!(f.get_storage(p), Ok(Storage::SCANLINE) | Ok(Storage::TILED)));
+    // and every chunk decodes
+    let mut out = Vec::new();
+    if flat {
+        read_all(&f, &mut out);
+    }
+    let decodes = out.iter().all(|l| {
+        let l = String::from_utf8_lossy(l);
+        l.starts_with("chunk ") && l.contains(" EXR_ERR_SUCCESS")
+    });
+    flat && decodes && msgs.lock().unwrap().is_empty()
 }
 
 /// Heavy tier: files Core writes alone come out as Core 3.5.3 writes them (the harness): the
@@ -700,6 +742,18 @@ fn files_written_by_core_alone_as_core_writes_them() {
         .filter(|p| p.to_string_lossy().ends_with("_NO_COMPRESSION.exr"))
         .collect();
     sources.sort();
+    // multipart files (oracle/write_multipart.py), and upstream's images both can rewrite
+    let multipart = scratch.join("multipart");
+    let status = oracle_python()
+        .arg(root().join("oracle/write_multipart.py"))
+        .arg(&multipart)
+        .status()
+        .expect("uv runs the oracle");
+    assert!(status.success(), "write_multipart.py failed");
+    exr_files(&multipart, &mut sources);
+    let mut upstream = Vec::new();
+    exr_files(&root().join("upstream/openexr/src/test"), &mut upstream);
+    sources.extend(upstream.into_iter().filter(|p| clean_source(p)));
 
     let mut runs: Vec<(Compression, Level)> =
         COMPRESSIONS.iter().map(|c| (c.0, Level::Default)).collect();
@@ -804,24 +858,39 @@ fn files_written_by_core_alone_as_core_writes_them() {
             compared += 1;
             let (ha, ca) = file_parts(&a);
             let (hb, cb) = file_parts(&b);
-            let b44_no_half =
-                matches!(comp, Compression::B44 | Compression::B44A) && !has_half(&src);
+            let b44 = matches!(comp, Compression::B44 | Compression::B44A);
+            let decreasing = (0..src.get_count())
+                .any(|p| src.get_lineorder(p).unwrap() == LineOrder::DECREASING_Y);
             if ha != hb {
                 differing.push(format!("{what}: the headers differ"));
+            } else if ca.len() != cb.len() {
+                differing.push(format!("{what}: the part counts differ"));
             } else if ca != cb {
-                if b44_no_half {
-                    deviations += 1; // D-18 (I-23): the port keeps the packed bytes
-                } else {
-                    let bad: Vec<usize> = ca[0]
-                        .iter()
-                        .zip(&cb[0])
-                        .enumerate()
-                        .filter(|(_, (x, y))| x != y)
-                        .map(|(i, _)| i)
-                        .collect();
-                    differing.push(format!("{what}: chunks differ: {bad:?}"));
+                for (p, (x, y)) in ca.iter().zip(&cb).enumerate() {
+                    if x == y {
+                        continue;
+                    }
+                    if b44 && !has_half(&src, p) {
+                        deviations += 1; // D-18 (I-23): the port keeps the packed bytes
+                        continue;
+                    }
+                    let multipart = src.get_count() > 1;
+                    let mut bad = Vec::new();
+                    for (i, (cx, cy)) in x.iter().zip(y).enumerate() {
+                        if cx == cy {
+                            continue;
+                        }
+                        if level_edge_tile(&src, p as i32, cx, multipart) {
+                            deviations += 1; // D-17 (I-21): the port clips against the level
+                        } else {
+                            bad.push(i);
+                        }
+                    }
+                    if !bad.is_empty() {
+                        differing.push(format!("{what}: part {p}: chunks differ: {bad:?}"));
+                    }
                 }
-            } else if a != b && !layout.ends_with("_dec") {
+            } else if a != b && !decreasing {
                 // only a decreasing-Y part may store the same chunks in another order (D-14)
                 differing.push(format!("{what}: the same chunks, stored differently"));
             }
