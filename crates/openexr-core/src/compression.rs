@@ -82,14 +82,51 @@ pub fn compress_buffer(level: i32, input: &[u8], out: &mut [u8]) -> Result<usize
         }
     }
 
-    if let Some(mut comp) = openexr_deflate::Compressor::new(level) {
+    if let Some(mut comp) = cached_compressor(level) {
         let outsz = comp.zlib_compress(input, out);
+        keep_compressor(level, comp);
         if outsz != 0 {
             return Ok(outsz);
         }
         return Err(Error::bare(ErrorCode::OutOfMemory));
     }
     Err(Error::bare(ErrorCode::OutOfMemory))
+}
+
+thread_local! {
+    /// Compressors kept for reuse (with their levels), where upstream's `exr_compress_buffer`
+    /// allocates and frees one, about 700 KB of tables, for every chunk. libdeflate starts each
+    /// stream afresh (its compressors may be reused; a stream depends only on its input and
+    /// level), so a kept one writes the bytes a new one would.
+    static COMPRESSORS: std::cell::RefCell<Vec<(i32, openexr_deflate::Compressor)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The most compressors a thread keeps.
+const KEPT_COMPRESSORS: usize = 2;
+
+/// A kept compressor of `level`, or a new one (`libdeflate_alloc_compressor`).
+fn cached_compressor(level: i32) -> Option<openexr_deflate::Compressor> {
+    let kept = COMPRESSORS
+        .try_with(|c| {
+            let mut c = c.borrow_mut();
+            let i = c.iter().position(|(l, _)| *l == level)?;
+            Some(c.swap_remove(i).1)
+        })
+        .ok()
+        .flatten();
+    kept.or_else(|| openexr_deflate::Compressor::new(level))
+}
+
+/// Keeps `comp` for the next stream of `level` (`libdeflate_free_compressor` otherwise).
+fn keep_compressor(level: i32, comp: openexr_deflate::Compressor) {
+    let _ = COMPRESSORS.try_with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= KEPT_COMPRESSORS {
+            c.remove(0);
+        }
+        c.push((level, comp));
+    });
 }
 
 /// Port of `exr_compress_chunk` (src/lib/OpenEXRCore/compression.c:518-657 @ v3.5.3): the
