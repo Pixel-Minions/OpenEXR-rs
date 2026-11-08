@@ -23,6 +23,13 @@
  *       level) set, the header written, then its pixels decoded into planar buffers of the
  *       channels' own types (a scanline part whole, a tiled part tile by tile) and its
  *       chunks encoded from them in chunk order. Deep parts are refused.
+ *
+ *   core_harness compress-buffer <level> <in> <out>
+ *       exr_compress_buffer of a whole file's bytes at a level.
+ *
+ *   core_harness convert <dir>
+ *       Every half, float and uint conversion of Core's pack and unpack routines, over every
+ *       input, through the public pipeline (cmd_convert); digests on stdout.
  */
 
 #include <openexr.h>
@@ -518,17 +525,232 @@ cmd_compress_buffer (int argc, char** argv)
     return 0;
 }
 
+/* The pixel type conversions, every input of each, through Core's own pipeline: a part of one
+ * channel of type T, 65536 pixels wide, one scanline, NO_COMPRESSION, written to <dir>/T.exr.
+ * Encoding: its chunk encoded from user data of each other type U, whose 65536 values are one
+ * block of U's inputs, the write_fn replaced by one that digests the packed bytes and writes
+ * nothing. Decoding: the file's chunk decoded into each other type U, the read_fn wrapped so
+ * the packed bytes Core read are replaced by one block of T's inputs. A half's inputs are one
+ * block; a float's and a uint's, 65536 (every 32-bit pattern, in order). Each 256 blocks (or
+ * the one) give a line "encode|decode <T> <U> <n> <digest>", the digest FNV-1a 64 over the
+ * converted bytes taken eight at a time (a little-endian word each): a fingerprint of what
+ * Core produced. */
+
+#define CONVERT_WIDTH 65536
+
+static const char*
+type_name (exr_pixel_type_t t)
+{
+    return t == EXR_PIXEL_HALF ? "HALF" : t == EXR_PIXEL_FLOAT ? "FLOAT" : "UINT";
+}
+
+static int
+type_size (exr_pixel_type_t t)
+{
+    return t == EXR_PIXEL_HALF ? 2 : 4;
+}
+
+/* Block b of a type's inputs, as their little-endian bytes: the values b * 65536 + x. */
+static void
+fill_block (uint8_t* buf, exr_pixel_type_t t, uint32_t b)
+{
+    int n = type_size (t);
+    for (uint32_t x = 0; x < CONVERT_WIDTH; ++x)
+    {
+        uint32_t v = (b << 16) | x;
+        for (int k = 0; k < n; ++k)
+            buf[x * (uint32_t) n + (uint32_t) k] = (uint8_t) (v >> (8 * k));
+    }
+}
+
+typedef struct
+{
+    uint64_t         h;
+    uint32_t         block;
+    exr_pixel_type_t type;
+    exr_result_t (*read_fn) (exr_decode_pipeline_t*);
+} convert_state_t;
+
+static void
+digest_words (uint64_t* h, const uint8_t* p, size_t n)
+{
+    for (size_t i = 0; i + 8 <= n; i += 8)
+    {
+        uint64_t w = 0;
+        for (int k = 7; k >= 0; --k)
+            w = (w << 8) | p[i + (size_t) k];
+        *h = (*h ^ w) * 1099511628211ULL;
+    }
+}
+
+static exr_result_t
+digest_write (exr_encode_pipeline_t* enc)
+{
+    convert_state_t* s = (convert_state_t*) enc->encoding_user_data;
+    digest_words (&s->h, (const uint8_t*) enc->packed_buffer, (size_t) enc->packed_bytes);
+    return EXR_ERR_SUCCESS;
+}
+
+static exr_result_t
+block_read (exr_decode_pipeline_t* dec)
+{
+    convert_state_t* s  = (convert_state_t*) dec->decoding_user_data;
+    exr_result_t     rv = s->read_fn (dec);
+    if (rv == EXR_ERR_SUCCESS)
+    {
+        if (dec->chunk.packed_size !=
+            (uint64_t) CONVERT_WIDTH * (uint64_t) type_size (s->type))
+            return EXR_ERR_CORRUPT_CHUNK;
+        fill_block ((uint8_t*) dec->packed_buffer, s->type, s->block);
+    }
+    return rv;
+}
+
+static void
+convert_line (
+    const char* what, exr_pixel_type_t t, exr_pixel_type_t u, uint32_t n, uint64_t h)
+{
+    printf (
+        "%s %s %s %u %016llx\n",
+        what,
+        type_name (t),
+        type_name (u),
+        n,
+        (unsigned long long) h);
+}
+
+static void
+set_user (exr_coding_channel_info_t* ch, exr_pixel_type_t u, uint8_t* ptr, int encode)
+{
+    if (encode)
+        ch->encode_from_ptr = ptr;
+    else
+        ch->decode_to_ptr = ptr;
+    ch->user_pixel_stride      = type_size (u);
+    ch->user_line_stride       = CONVERT_WIDTH * type_size (u);
+    ch->user_bytes_per_element = (int16_t) type_size (u);
+    ch->user_data_type         = (uint16_t) u;
+}
+
+static const exr_pixel_type_t convert_types[3] = {
+    EXR_PIXEL_UINT, EXR_PIXEL_HALF, EXR_PIXEL_FLOAT};
+
+static int
+convert_type (const char* dir, exr_pixel_type_t t)
+{
+    char             path[4096];
+    exr_context_t    f   = NULL;
+    int              p   = 0;
+    uint8_t*         buf = (uint8_t*) malloc (CONVERT_WIDTH * 4);
+    exr_chunk_info_t ci;
+    convert_state_t  s;
+    if (!buf) return fail ("out of memory", EXR_ERR_OUT_OF_MEMORY);
+    snprintf (path, sizeof (path), "%s/%s.exr", dir, type_name (t));
+
+    CHECK (exr_start_write (&f, path, EXR_WRITE_FILE_DIRECTLY, NULL));
+    CHECK (exr_add_part (f, "", EXR_STORAGE_SCANLINE, &p));
+    CHECK (exr_initialize_required_attr_simple (
+        f, p, CONVERT_WIDTH, 1, EXR_COMPRESSION_NONE));
+    CHECK (exr_add_channel (f, p, "A", t, EXR_PERCEPTUALLY_LINEAR, 1, 1));
+    CHECK (exr_write_header (f));
+    CHECK (exr_write_scanline_chunk_info (f, p, 0, &ci));
+    for (int k = 0; k < 3; ++k)
+    {
+        exr_pixel_type_t      u   = convert_types[k];
+        uint32_t              nb  = u == EXR_PIXEL_HALF ? 1 : 65536;
+        exr_encode_pipeline_t enc = EXR_ENCODE_PIPELINE_INITIALIZER;
+        if (u == t) continue;
+        CHECK (exr_encoding_initialize (f, p, &ci, &enc));
+        set_user (enc.channels, u, buf, 1);
+        CHECK (exr_encoding_choose_default_routines (f, p, &enc));
+        enc.write_fn           = digest_write;
+        enc.encoding_user_data = &s;
+        s.h                    = 14695981039346656037ULL;
+        for (uint32_t b = 0; b < nb; ++b)
+        {
+            fill_block (buf, u, b);
+            CHECK (exr_encoding_run (f, p, &enc));
+            if (nb == 1 || (b & 255) == 255)
+            {
+                convert_line ("encode", t, u, nb == 1 ? 0 : b >> 8, s.h);
+                s.h = 14695981039346656037ULL;
+            }
+        }
+        CHECK (exr_encoding_destroy (f, &enc));
+    }
+    {
+        /* the chunk itself: block 0 of the file's own type */
+        exr_encode_pipeline_t enc = EXR_ENCODE_PIPELINE_INITIALIZER;
+        CHECK (exr_encoding_initialize (f, p, &ci, &enc));
+        set_user (enc.channels, t, buf, 1);
+        fill_block (buf, t, 0);
+        CHECK (exr_encoding_choose_default_routines (f, p, &enc));
+        CHECK (exr_encoding_run (f, p, &enc));
+        CHECK (exr_encoding_destroy (f, &enc));
+    }
+    CHECK (exr_finish (&f));
+
+    CHECK (exr_start_read (&f, path, NULL));
+    CHECK (exr_read_scanline_chunk_info (f, 0, 0, &ci));
+    for (int k = 0; k < 3; ++k)
+    {
+        exr_pixel_type_t      u   = convert_types[k];
+        uint32_t              nb  = t == EXR_PIXEL_HALF ? 1 : 65536;
+        exr_decode_pipeline_t dec = EXR_DECODE_PIPELINE_INITIALIZER;
+        if (u == t) continue;
+        CHECK (exr_decoding_initialize (f, 0, &ci, &dec));
+        set_user (dec.channels, u, buf, 0);
+        CHECK (exr_decoding_choose_default_routines (f, 0, &dec));
+        s.read_fn              = dec.read_fn;
+        s.type                 = t;
+        dec.read_fn            = block_read;
+        dec.decoding_user_data = &s;
+        s.h                    = 14695981039346656037ULL;
+        for (uint32_t b = 0; b < nb; ++b)
+        {
+            s.block = b;
+            CHECK (exr_decoding_run (f, 0, &dec));
+            digest_words (&s.h, buf, (size_t) CONVERT_WIDTH * (size_t) type_size (u));
+            if (nb == 1 || (b & 255) == 255)
+            {
+                convert_line ("decode", t, u, nb == 1 ? 0 : b >> 8, s.h);
+                s.h = 14695981039346656037ULL;
+            }
+        }
+        CHECK (exr_decoding_destroy (f, &dec));
+    }
+    CHECK (exr_finish (&f));
+    free (buf);
+    return 0;
+}
+
+static int
+cmd_convert (int argc, char** argv)
+{
+    if (argc != 1) return fail ("convert: <dir>", EXR_ERR_INVALID_ARGUMENT);
+    for (int k = 0; k < 3; ++k)
+    {
+        int r = convert_type (argv[0], convert_types[k]);
+        if (r) return r;
+    }
+    fflush (stdout);
+    return 0;
+}
+
 int
 main (int argc, char** argv)
 {
     if (argc >= 2 && !strcmp (argv[1], "compress-buffer"))
         return cmd_compress_buffer (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "info")) return cmd_info (argc - 2, argv + 2);
+    if (argc >= 2 && !strcmp (argv[1], "convert")) return cmd_convert (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "recompress"))
         return cmd_recompress (argc - 2, argv + 2);
     fprintf (
         stderr,
         "usage: core_harness info <file> [--strict] [--verbose]\n"
-        "       core_harness recompress <in> <out> <compression> [--zip N] [--zstd N] [--dwa F]\n");
+        "       core_harness recompress <in> <out> <compression> [--zip N] [--zstd N] [--dwa F]\n"
+        "       core_harness compress-buffer <level> <in> <out>\n"
+        "       core_harness convert <dir>\n");
     return 2;
 }
