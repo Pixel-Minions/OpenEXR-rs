@@ -992,7 +992,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/common/portability_macros.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/bmi2.rs"
+note = "DYNAMIC_BMI2 (GCC builds for x86-64, not MSVC): the entropy coders' BMI2 builds chosen where the CPU has BMI1 and BMI2 (bmi2.rs); ZSTD_DISABLE_ASM as the wheels' builds set it (huf_decompress.rs); the rest are compiler and platform switches with no counterpart"
 
 [[file]]
 path = "external/zstd/lib/common/threading.c"

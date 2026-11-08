@@ -12,6 +12,7 @@
 //! scratch reads the same values. `HUF_readCTable` (dictionaries) is n/a;
 //! `HUF_getNbBitsFromCTable` follows with the optimal parser.
 
+pub(crate) use crate::bmi2::huf_compress1x_using_ctable;
 use crate::error_private::{ErrorCode, ZResult};
 use crate::fse_compress::{
     FseCTable, fse_build_ctable, fse_build_ctable_workspace_size, fse_compress_using_ctable,
@@ -839,7 +840,12 @@ fn huf_tight_compress_bound(src_size: usize, table_log: usize) -> usize {
 /// Port of `HUF_compress1X_usingCTable_internal_body`
 /// (external/zstd/lib/compress/huf_compress.c:1055-1118 @ zstd v1.5.7), on 64-bit: one
 /// stream; 0 when it doesn't fit. The BMI2 build runs the same code.
-fn huf_compress1x_using_ctable(dst: &mut [u8], src: &[u8], ctable: &HufCTable) -> usize {
+#[inline(always)]
+pub(crate) fn huf_compress1x_using_ctable_body(
+    dst: &mut [u8],
+    src: &[u8],
+    ctable: &HufCTable,
+) -> usize {
     let (table_log, _) = read_ctable_header(ctable);
     let ct = &ctable[1..];
     let dst_size = dst.len();

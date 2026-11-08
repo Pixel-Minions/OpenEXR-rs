@@ -5,6 +5,7 @@
 //! the readers of FSE's normalized counts and of a Huffman tree's weights. The BMI2 builds of
 //! these functions are the same code compiled for other instructions.
 
+pub(crate) use crate::bmi2::{fse_read_ncount, huf_read_stats};
 use crate::error_private::{ErrorCode, ZResult};
 use crate::fse_decompress::{FSE_MAX_SYMBOL_VALUE, fse_decompress_wksp};
 use crate::mem::{count_trailing_zeros32, highbit32, read_le32};
@@ -19,7 +20,8 @@ pub(crate) const HUF_TABLELOG_MAX: u32 = 12;
 /// Port of `FSE_readNCount_body` and `FSE_readNCount` (external/zstd/lib/common/entropy_common.c:42-224
 /// @ zstd v1.5.7): the normalized counts of an FSE table header; `max_sv` is the largest
 /// symbol allowed on entry and the largest present on return. Returns the header's size.
-pub(crate) fn fse_read_ncount(
+#[inline(always)]
+pub(crate) fn fse_read_ncount_body(
     normalized_counter: &mut [i16],
     max_sv: &mut u32,
     table_log: &mut u32,
@@ -179,7 +181,8 @@ pub(crate) const HUF_READ_STATS_WORKSPACE_SIZE: usize =
 /// weights, stored directly (4 bits each) or FSE compressed, with the last weight implied;
 /// `rank_stats` counts each weight. `wksp_size` is the size of upstream's workspace, which
 /// decides what FSE header fits. Returns the size read.
-pub(crate) fn huf_read_stats(
+#[inline(always)]
+pub(crate) fn huf_read_stats_body(
     huff_weight: &mut [u8],
     rank_stats: &mut [u32],
     nb_symbols: &mut u32,

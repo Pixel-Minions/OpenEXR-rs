@@ -13,6 +13,7 @@
 //! O3). Custom allocators, dictionaries, legacy formats and streaming are n/a.
 
 mod bitstream;
+mod bmi2;
 mod clevels;
 mod entropy_common;
 mod error_private;
