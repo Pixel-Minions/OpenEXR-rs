@@ -5,11 +5,14 @@
 //! @ zstd v1.5.7): the Huffman decoder of zstd's literals, with single-symbol (X1) and
 //! double-symbol (X2) tables, one or four streams.
 //!
-//! The portable decoders are ported (`*_usingDTable_internal_body`). Upstream first tries its
-//! "fast" four-stream loops (in C, or in x86-64 assembly on Linux), which decode the same
-//! symbols and fall back to these when they cannot finish; they are performance work for
-//! later (PLAN.md O3). A write past the output, which only a corrupt stream can make, is
-//! refused as corruption (upstream's would write past its buffer).
+//! The portable decoders (`*_usingDTable_internal_body`) and, for four streams, the fast loops
+//! upstream tries first (`*_usingDTable_internal_fast`, in C, or on Linux in x86-64 assembly
+//! that translates the C), chosen as upstream's build chooses them ([`fast_decode`]). The two
+//! decode the same symbols from a valid stream, but not the same corrupt ones: the fast loops
+//! check only that each stream fills its segment, not that its bits end exactly, so they
+//! accept streams the portable body refuses (PLAN.md O3: each path ported as upstream takes
+//! it). A write past the output, which only a corrupt stream can make, is refused as
+//! corruption (upstream's would write past its buffer).
 
 use crate::bitstream::{BitDStream, BitDStreamStatus};
 use crate::entropy_common::{HUF_READ_STATS_WORKSPACE_SIZE, HUF_TABLELOG_MAX, huf_read_stats};
@@ -303,7 +306,11 @@ fn four_streams<'a>(
 
 /// Port of `HUF_decompress4X1_usingDTable_internal_body`
 /// (external/zstd/lib/decompress/huf_decompress.c:598-698 @ zstd v1.5.7).
-fn decompress_4x1_using_dtable(dst: &mut [u8], c_src: &[u8], dtable: &HufDTable) -> ZResult<usize> {
+fn decompress_4x1_using_dtable_body(
+    dst: &mut [u8],
+    c_src: &[u8],
+    dtable: &HufDTable,
+) -> ZResult<usize> {
     let dst_size = dst.len();
     let (mut bits, starts) = four_streams(c_src, dst_size)?;
     let oend = dst_size;
@@ -735,7 +742,11 @@ fn decompress_1x2_using_dtable(dst: &mut [u8], c_src: &[u8], dtable: &HufDTable)
 /// Port of `HUF_decompress4X2_usingDTable_internal_body`
 /// (external/zstd/lib/decompress/huf_decompress.c:1383-1501 @ zstd v1.5.7), as GCC and MSVC
 /// build it.
-fn decompress_4x2_using_dtable(dst: &mut [u8], c_src: &[u8], dtable: &HufDTable) -> ZResult<usize> {
+fn decompress_4x2_using_dtable_body(
+    dst: &mut [u8],
+    c_src: &[u8],
+    dtable: &HufDTable,
+) -> ZResult<usize> {
     let dst_size = dst.len();
     let (mut bits, starts) = four_streams(c_src, dst_size)?;
     let oend = dst_size;
@@ -892,4 +903,356 @@ pub(crate) fn huf_decompress_4x_huf_only(
     } else {
         decompress_4x1_using_dtable(dst, ip, dtable)
     }
+}
+
+/// Whether upstream's build tries the fast four-stream loops first, as
+/// `HUF_decompress4X1_usingDTable_internal` and `HUF_decompress4X2_usingDTable_internal`
+/// choose (external/zstd/lib/decompress/huf_decompress.c:897-928, 1726-1757 @ zstd v1.5.7).
+/// A build with `DYNAMIC_BMI2` (GCC or clang for x86-64 without `-mbmi2`: the Linux wheel)
+/// takes them only on a CPU with BMI1 and BMI2 (`ZSTD_cpuSupportsBmi2`), in assembly
+/// (`huf_decompress_amd64.S`, the C loop's translation), and the portable body otherwise;
+/// any other build (MSVC, where OpenEXR defines `ZSTD_DISABLE_ASM`: the Windows wheel) always
+/// takes the C loop. Once per process.
+fn fast_decode() -> bool {
+    static FAST: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FAST.get_or_init(|| {
+        #[cfg(all(target_arch = "x86_64", not(target_env = "msvc")))]
+        {
+            std::arch::is_x86_feature_detected!("bmi1")
+                && std::arch::is_x86_feature_detected!("bmi2")
+        }
+        #[cfg(not(all(target_arch = "x86_64", not(target_env = "msvc"))))]
+        {
+            true
+        }
+    })
+}
+
+/// Port of `HUF_decompress4X1_usingDTable_internal`
+/// (external/zstd/lib/decompress/huf_decompress.c:897-928 @ zstd v1.5.7): the fast loop when
+/// the build takes it ([`fast_decode`]) and it can run, else the portable body.
+fn decompress_4x1_using_dtable(dst: &mut [u8], c_src: &[u8], dtable: &HufDTable) -> ZResult<usize> {
+    if fast_decode() {
+        let ret = decompress_4x1_fast(dst, c_src, dtable)?;
+        if ret != 0 {
+            return Ok(ret);
+        }
+    }
+    decompress_4x1_using_dtable_body(dst, c_src, dtable)
+}
+
+/// Port of `HUF_decompress4X2_usingDTable_internal`
+/// (external/zstd/lib/decompress/huf_decompress.c:1726-1757 @ zstd v1.5.7), as the 4X1 one.
+fn decompress_4x2_using_dtable(dst: &mut [u8], c_src: &[u8], dtable: &HufDTable) -> ZResult<usize> {
+    if fast_decode() {
+        let ret = decompress_4x2_fast(dst, c_src, dtable)?;
+        if ret != 0 {
+            return Ok(ret);
+        }
+    }
+    decompress_4x2_using_dtable_body(dst, c_src, dtable)
+}
+
+/// Port of `HUF_DecompressFastArgs` (external/zstd/lib/decompress/huf_decompress.c:160-181
+/// @ zstd v1.5.7), its pointers as offsets: `ip` and `iend` into the source (whose start is
+/// `ilowest`), `op` and `oend` into the output.
+struct FastArgs {
+    ip: [usize; 4],
+    op: [usize; 4],
+    bits: [u64; 4],
+    oend: usize,
+    iend: [usize; 4],
+}
+
+/// Port of `HUF_initFastDStream` (external/zstd/lib/decompress/huf_decompress.c:149-156
+/// @ zstd v1.5.7).
+fn init_fast_dstream(src: &[u8], ip: usize) -> u64 {
+    let last_byte = src[ip + 7];
+    let bits_consumed = if last_byte != 0 {
+        8 - crate::mem::highbit32(u32::from(last_byte))
+    } else {
+        0
+    };
+    let value = crate::mem::read_le64(&src[ip..]) | 1;
+    value << bits_consumed
+}
+
+/// Port of `HUF_DecompressFastArgs_init` (external/zstd/lib/decompress/huf_decompress.c:183-279
+/// @ zstd v1.5.7), on a 64-bit little-endian machine: the arguments, or `None` when the
+/// portable body is to be used.
+fn fast_args_init(dst_size: usize, src: &[u8], dtable: &HufDTable) -> ZResult<Option<FastArgs>> {
+    let src_size = src.len();
+    // Avoid nullptr addition
+    if dst_size == 0 {
+        return Ok(None);
+    }
+    // strict minimum : jump table + 1 byte per stream
+    if src_size < 10 {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+    // Must have at least 8 bytes per stream because we do not handle initializing smaller bit
+    // containers. If table log is not correct at this point, fallback to the old decoder.
+    if u32::from(dtable.table_log) != HUF_DECODER_FAST_TABLELOG {
+        return Ok(None);
+    }
+
+    // Read the jump table.
+    let length1 = usize::from(read_le16(&src[0..]));
+    let length2 = usize::from(read_le16(&src[2..]));
+    let length3 = usize::from(read_le16(&src[4..]));
+    let length4 = src_size.wrapping_sub(length1 + length2 + length3 + 6);
+    let mut iend = [0usize; 4];
+    iend[0] = 6; // jumpTable
+    iend[1] = iend[0] + length1;
+    iend[2] = iend[1] + length2;
+    iend[3] = iend[2] + length3;
+
+    // HUF_initFastDStream() requires this, and this small of an input will not benefit from
+    // the ASM loop anyways.
+    if length1 < 8 || length2 < 8 || length3 < 8 || length4 < 8 {
+        return Ok(None);
+    }
+    if length4 > src_size {
+        return Err(ErrorCode::CorruptionDetected); // overflow
+    }
+    // ip[] contains the position that is currently loaded into bits[].
+    let ip = [iend[1] - 8, iend[2] - 8, iend[3] - 8, src_size - 8];
+
+    // op[] contains the output pointers.
+    let seg = dst_size.div_ceil(4);
+    let op = [0, seg, 2 * seg, 3 * seg];
+
+    // No point to call the ASM loop for tiny outputs.
+    if op[3] >= dst_size {
+        return Ok(None);
+    }
+
+    let bits = [
+        init_fast_dstream(src, ip[0]),
+        init_fast_dstream(src, ip[1]),
+        init_fast_dstream(src, ip[2]),
+        init_fast_dstream(src, ip[3]),
+    ];
+    Ok(Some(FastArgs {
+        ip,
+        op,
+        bits,
+        oend: dst_size,
+        iend,
+    }))
+}
+
+/// Port of `HUF_initRemainingDStream` (external/zstd/lib/decompress/huf_decompress.c:281-304
+/// @ zstd v1.5.7): stream `stream`'s bit reader after the fast loop.
+fn init_remaining_dstream<'a>(
+    src: &'a [u8],
+    args: &FastArgs,
+    stream: usize,
+    segment_end: usize,
+) -> ZResult<BitDStream<'a>> {
+    // Validate that we have not overwritten.
+    if args.op[stream] > segment_end {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+    // Validate that we have not read beyond iend[]. Note that ip[] may be < iend[] because
+    // the MSB is the next bit to read, and we may have consumed 100% of the stream, so down
+    // to iend[i] - 8 is valid.
+    if (args.ip[stream] as isize) < args.iend[stream] as isize - 8 {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+    Ok(BitDStream::from_parts(
+        src,
+        args.ip[stream],
+        crate::mem::read_le64(&src[args.ip[stream]..]),
+        args.bits[stream].trailing_zeros(),
+    ))
+}
+
+/// Port of `HUF_decompress4X1_usingDTable_internal_fast_c_loop`
+/// (external/zstd/lib/decompress/huf_decompress.c:720-831 @ zstd v1.5.7): five symbols per
+/// stream per iteration, while no bound can be reached.
+fn fast_c_loop_4x1(dst: &mut [u8], src: &[u8], dt: &[DEltX1], args: &mut FastArgs) {
+    let (mut bits, mut ip, mut op) = (args.bits, args.ip, args.op);
+    let oend = args.oend;
+    loop {
+        // Each iteration produces 5 output symbols per stream
+        let oiters = (oend - op[3]) / 5;
+        // Each iteration consumes up to 11 bits * 5 = 55 bits < 7 bytes per stream.
+        let iiters = ip[0] / 7;
+        // We can safely run iters iterations before running bounds checks
+        let iters = oiters.min(iiters);
+        let olimit = op[3] + iters * 5;
+
+        // Exit fast decoding loop once we reach the end.
+        if op[3] == olimit {
+            break;
+        }
+        // Exit the decoding loop if any input pointer has crossed the previous one.
+        if (1..4).any(|s| ip[s] < ip[s - 1]) {
+            break;
+        }
+
+        loop {
+            // Decode 5 symbols in each of the 4 streams
+            for symbol in 0..5 {
+                for s in 0..4 {
+                    let e = dt[(bits[s] >> 53) as usize];
+                    bits[s] <<= u32::from(e.nb_bits) & 0x3F;
+                    dst[op[s] + symbol] = e.byte;
+                }
+            }
+            // Reload each of the 4 the bitstreams
+            for s in 0..4 {
+                let ctz = bits[s].trailing_zeros();
+                let nb_bits = ctz & 7;
+                let nb_bytes = (ctz >> 3) as usize;
+                op[s] += 5;
+                ip[s] -= nb_bytes;
+                bits[s] = crate::mem::read_le64(&src[ip[s]..]) | 1;
+                bits[s] <<= nb_bits;
+            }
+            if op[3] >= olimit {
+                break;
+            }
+        }
+    }
+    args.bits = bits;
+    args.ip = ip;
+    args.op = op;
+}
+
+/// The end of each output segment, as the fast decoders' finishing loop steps them.
+fn segment_ends(dst_size: usize) -> [usize; 4] {
+    let segment_size = dst_size.div_ceil(4);
+    let mut segment_end = 0usize;
+    let mut ends = [0usize; 4];
+    for e in &mut ends {
+        if segment_size <= dst_size - segment_end {
+            segment_end += segment_size;
+        } else {
+            segment_end = dst_size;
+        }
+        *e = segment_end;
+    }
+    ends
+}
+
+/// Port of `HUF_decompress4X1_usingDTable_internal_fast`
+/// (external/zstd/lib/decompress/huf_decompress.c:833-893 @ zstd v1.5.7): the fast loop, then
+/// each stream finished by `HUF_decodeStreamX1`; 0 when the portable body is to be used.
+fn decompress_4x1_fast(dst: &mut [u8], src: &[u8], dtable: &HufDTable) -> ZResult<usize> {
+    let dst_size = dst.len();
+    let Some(mut args) = fast_args_init(dst_size, src, dtable)? else {
+        return Ok(0);
+    };
+    fast_c_loop_4x1(dst, src, &dtable.x1, &mut args);
+
+    // finish bit streams one by one.
+    for (i, segment_end) in segment_ends(dst_size).into_iter().enumerate() {
+        let mut bit = init_remaining_dstream(src, &args, i, segment_end)?;
+        // Decompress and validate that we have produced exactly the expected length.
+        decode_stream_x1(
+            dst,
+            args.op[i],
+            &mut bit,
+            segment_end,
+            &dtable.x1,
+            HUF_DECODER_FAST_TABLELOG,
+        )?;
+        args.op[i] = segment_end;
+    }
+    // decoded size
+    Ok(dst_size)
+}
+
+/// Port of `HUF_decompress4X2_usingDTable_internal_fast_c_loop`
+/// (external/zstd/lib/decompress/huf_decompress.c:1523-1664 @ zstd v1.5.7): five lookups per
+/// stream per iteration (one or two symbols each), the last stream decoded between the
+/// reloads.
+fn fast_c_loop_4x2(dst: &mut [u8], src: &[u8], dt: &[DEltX2], args: &mut FastArgs) {
+    let (mut bits, mut ip, mut op) = (args.bits, args.ip, args.op);
+    let oend = [op[1], op[2], op[3], args.oend];
+
+    // HUF_4X2_DECODE_SYMBOL: MEM_write16 of the cell's sequence, which may write one byte
+    // more than the cell's length
+    let decode = |s: usize, bits: &mut [u64; 4], op: &mut [usize; 4], dst: &mut [u8]| {
+        let e = dt[(bits[s] >> 53) as usize];
+        dst[op[s]..op[s] + 2].copy_from_slice(&e.sequence.to_le_bytes());
+        bits[s] <<= u32::from(e.nb_bits) & 0x3F;
+        op[s] += usize::from(e.length);
+    };
+
+    loop {
+        // We can consume up to 7 bytes of input per iteration per stream.
+        let mut iters = ip[0] / 7;
+        // Each iteration can produce up to 10 bytes of output per stream.
+        for s in 0..4 {
+            let oiters = (oend[s] - op[s]) / 10;
+            iters = iters.min(oiters);
+        }
+        let olimit = op[3] + iters * 5;
+
+        // Exit the fast decoding loop once we reach the end.
+        if op[3] == olimit {
+            break;
+        }
+        // Exit the decoding loop if any input pointer has crossed the previous one.
+        if (1..4).any(|s| ip[s] < ip[s - 1]) {
+            break;
+        }
+
+        loop {
+            // Decode 5 symbols from each of the first 3 streams.
+            for _ in 0..5 {
+                for s in 0..3 {
+                    decode(s, &mut bits, &mut op, dst);
+                }
+            }
+            // Decode one symbol from the final stream
+            decode(3, &mut bits, &mut op, dst);
+            // Decode 4 symbols from the final stream & reload bitstreams.
+            for s in 0..4 {
+                decode(3, &mut bits, &mut op, dst);
+                let ctz = bits[s].trailing_zeros();
+                let nb_bits = ctz & 7;
+                let nb_bytes = (ctz >> 3) as usize;
+                ip[s] -= nb_bytes;
+                bits[s] = crate::mem::read_le64(&src[ip[s]..]) | 1;
+                bits[s] <<= nb_bits;
+            }
+            if op[3] >= olimit {
+                break;
+            }
+        }
+    }
+    args.bits = bits;
+    args.ip = ip;
+    args.op = op;
+}
+
+/// Port of `HUF_decompress4X2_usingDTable_internal_fast`
+/// (external/zstd/lib/decompress/huf_decompress.c:1666-1724 @ zstd v1.5.7), as the 4X1 one
+/// with `HUF_decodeStreamX2`.
+fn decompress_4x2_fast(dst: &mut [u8], src: &[u8], dtable: &HufDTable) -> ZResult<usize> {
+    let dst_size = dst.len();
+    let Some(mut args) = fast_args_init(dst_size, src, dtable)? else {
+        return Ok(0);
+    };
+    fast_c_loop_4x2(dst, src, &dtable.x2, &mut args);
+
+    // finish bitStreams one by one
+    for (i, segment_end) in segment_ends(dst_size).into_iter().enumerate() {
+        let mut bit = init_remaining_dstream(src, &args, i, segment_end)?;
+        decode_stream_x2(
+            dst,
+            args.op[i],
+            &mut bit,
+            segment_end,
+            &dtable.x2,
+            HUF_DECODER_FAST_TABLELOG,
+        )?;
+        args.op[i] = segment_end;
+    }
+    // decoded size
+    Ok(dst_size)
 }

@@ -91,6 +91,25 @@ impl<'a> BitDStream<'a> {
         Ok((bit_d, src_size))
     }
 
+    /// A stream whose `start` is `src`'s first byte (its limit 8 bytes above it), positioned at
+    /// `ptr` with `bit_container` and `bits_consumed` given: the `BIT_DStream_t`
+    /// `HUF_initRemainingDStream` builds (external/zstd/lib/decompress/huf_decompress.c:281-304
+    /// @ zstd v1.5.7).
+    pub(crate) fn from_parts(
+        src: &'a [u8],
+        ptr: usize,
+        bit_container: u64,
+        bits_consumed: u32,
+    ) -> Self {
+        BitDStream {
+            bit_container,
+            bits_consumed,
+            src,
+            ptr,
+            zeroed: false,
+        }
+    }
+
     /// Port of `BIT_lookBits` and `BIT_getMiddleBits`
     /// (external/zstd/lib/common/bitstream.h:307-342 @ zstd v1.5.7), as x86-64 computes them:
     /// the next `nb_bits` bits, the register unchanged.

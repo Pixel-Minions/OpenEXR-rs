@@ -1200,7 +1200,7 @@ path = "external/zstd/lib/decompress/huf_decompress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/huf_decompress.rs"
-note = "the portable decoders ported; the fast C and assembly loops (same symbols) are performance work (O3); checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier)"
+note = "the portable decoders and the fast four-stream C loops, chosen as upstream's build chooses them (the C loop on Windows; on Linux the assembly loop on a BMI2 CPU, its translation, else the portable body); checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them, and damaged ones as Core decodes them (tests/heavy_harness.rs); the Linux assembly path waits for the Rocky run"
 
 [[file]]
 path = "external/zstd/lib/decompress/huf_decompress_amd64.S"
@@ -1330,9 +1330,9 @@ note = "start_read, start_write, start_inplace_header_update (not implemented up
 [[file]]
 path = "src/lib/OpenEXRCore/debug.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/debug.rs"
-note = "exr_print_context_info, ported whole; its text is compared with C's only with the source-built harness (PLAN.md O1), and the opaque handlers' %p addresses cannot match"
+note = "exr_print_context_info, ported whole; its text equals Core's own on 1278 files (tests/heavy_harness.rs, the source-built harness), but for D-2 and D-4; the opaque handlers' %p addresses cannot match (an address)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/decoding.c"
@@ -1757,7 +1757,7 @@ note = "initializer, flags, callbacks, and the functions of context.c"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_debug.h"
 kind = "api"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/debug.rs"
 note = "with debug.c"
 
@@ -1871,7 +1871,7 @@ path = "src/lib/OpenEXRCore/write_header.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/write_header.rs"
-note = "ported whole, with exr_write_header (context.c) and the fixes D-10 to D-12; the headers of the C++ library's files come back byte for byte (heavy tier); Core's own bytes are compared with the source-built harness (PLAN.md O1)"
+note = "ported whole, with exr_write_header (context.c) and the fixes D-10 to D-12; the headers of the C++ library's files come back byte for byte (heavy tier); single-part headers Core writes alone equal Core's own (tests/heavy_harness.rs); multipart ones wait for the harness's next checks"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/CMakeLists.txt"
