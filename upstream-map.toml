@@ -271,8 +271,8 @@ note = "ported; checked through Core's HTJ2K decoder and encoder against the whe
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_avx2.cpp"
 kind = "vendored"
 status = "partial"
-target = "crates/openexr-openjph/src/block_decoder32.rs"
-note = "as ojph_block_decoder_ssse3.cpp"
+target = "crates/openexr-openjph/src/block_decoder_avx2.rs"
+note = "ported whole, in AVX2, chosen from X86_CPU_EXT_LEVEL_AVX2 as upstream chooses it; decodes as the wheel's and the harness's (heavy_decode, heavy_harness's reads of damaged files); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_ssse3.cpp"

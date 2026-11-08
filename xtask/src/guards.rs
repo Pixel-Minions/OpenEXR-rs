@@ -25,6 +25,8 @@ const UNSAFE_ALLOWLIST: &[&str] = &[
     "crates/openexr-testkit/src/cpu.rs",
     // The OS error text of the default file streams (PLAN.md O7).
     "crates/openexr-core/src/os_error.rs",
+    // OpenJPH's AVX2 block decoder (a SIMD kernel, PLAN.md D8).
+    "crates/openexr-openjph/src/block_decoder_avx2.rs",
 ];
 
 /// Upstream tests that are not applicable to a Rust port, with the owner's decision (PLAN.md O8).

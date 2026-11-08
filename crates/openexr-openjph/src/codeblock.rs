@@ -203,6 +203,54 @@ impl Codeblock {
         self.zero_block = false;
     }
 
+    /// `decode_cb32` as `codeblock_fun::init` chooses it
+    /// (external/OpenJPH/src/core/codestream/ojph_codeblock_fun.cpp:215-227 @ OpenJPH 0.32.0):
+    /// the AVX2 decoder at `X86_CPU_EXT_LEVEL_AVX2` and above, else the generic one (the SSSE3
+    /// decoder upstream chooses from `X86_CPU_EXT_LEVEL_SSSE3` is not ported yet).
+    #[allow(clippy::too_many_arguments)]
+    fn decode_cb32(
+        coded_data: &[u8],
+        decoded_data: &mut [u32],
+        missing_msbs: u32,
+        num_passes: u32,
+        lengths1: u32,
+        lengths2: u32,
+        width: u32,
+        height: u32,
+        stride: u32,
+        stripe_causal: bool,
+    ) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        if crate::arch::get_cpu_ext_level() >= crate::arch::x86_level::AVX2
+            && let Some(r) = crate::block_decoder_avx2::decode_codeblock_avx2(
+                coded_data,
+                decoded_data,
+                missing_msbs,
+                num_passes,
+                lengths1,
+                lengths2,
+                width,
+                height,
+                stride,
+                stripe_causal,
+            )
+        {
+            return r;
+        }
+        ojph_decode_codeblock32(
+            coded_data,
+            decoded_data,
+            missing_msbs,
+            num_passes,
+            lengths1,
+            lengths2,
+            width,
+            height,
+            stride,
+            stripe_causal,
+        )
+    }
+
     /// Port of `codeblock::decode`
     /// (external/OpenJPH/src/core/codestream/ojph_codeblock.cpp:190-226 @ OpenJPH 0.32.0).
     pub(crate) fn decode(&mut self, coded_cb: &CodedCbHeader) -> OjphResult<()> {
@@ -213,7 +261,7 @@ impl Codeblock {
         {
             let data = &buf[PREFIX_BUF_SIZE..];
             let result = if self.precision == BUF32 {
-                ojph_decode_codeblock32(
+                Self::decode_cb32(
                     data,
                     &mut self.buf32,
                     coded_cb.missing_msbs,

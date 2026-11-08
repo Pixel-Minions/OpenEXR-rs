@@ -18,6 +18,8 @@ mod block_common;
 mod block_decoder32;
 #[allow(dead_code)] // used as the port grows
 mod block_decoder64;
+#[cfg(target_arch = "x86_64")]
+mod block_decoder_avx2;
 #[allow(dead_code)] // used as the port grows
 mod block_encoder;
 #[allow(dead_code)] // used as the port grows
