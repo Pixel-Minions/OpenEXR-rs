@@ -430,6 +430,20 @@ section. An entry says:
   (`crates/openexr-core/src/encoding.rs`); checked by
   `encoding::tests::bad_input_size_names_the_channel`.
 
+### I-31. zstd's long distance matcher does not reset its rolling hash
+
+- **Upstream:** `ZSTD_ldm_gear_reset` (external/zstd/lib/compress/zstd_ldm.c:65-85 @ zstd
+  v1.5.7) hashes into a local copy of the rolling state and never stores it back, so it does
+  not reset the hash where `ZSTD_ldm_generateSequences_internal` asks it to (at a block's start
+  and after a match running past the hashed data).
+- **Who notices:** ZSTD chunks compressed with long distance matching, which zstd turns on for
+  btopt and up with a 2^27 window (`ZSTD_resolveEnableLdm`): level 22 on chunks over 64 MiB.
+  The matcher finds other split points than a reset hash would, so other bytes (still valid
+  zstd frames).
+- **A fix:** store the reset state back; the frames would differ from Core's.
+- **Status:** matched (`crates/openexr-zstd/src/zstd_ldm.rs`, `gear_reset`); checked by
+  `crates/openexr-core/tests/heavy_zstd_big.rs` against Core (`core_harness zstd-big`).
+
 ## Undefined behaviour the port does not copy
 
 ### U-1. A string created from no data has an unset terminator

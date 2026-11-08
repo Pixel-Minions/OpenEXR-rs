@@ -146,6 +146,11 @@ digests per 2^24 inputs: the port's 2052 digests equal Core's, and its three one
 equal Core's byte for byte; on Rocky Linux 9 too (its harness unpacks halves to floats with
 F16C on this CPU).
 
+zstd frames past `ZSTD_CURRENT_MAX` (2026-11-08, Windows): `core_harness zstd-big`, a 3.76 GB
+frame at levels 1, 3, 5, 9, 13, 16, 19 and 22, and 1 GB frames continuing four at a time at
+levels 1, 9, 13, 16 and 22 (`tests/heavy_zstd_big.rs`): every digest equal to Core's, level 22
+with long distance matching; both checks 227 s; peak memory 14.7 GB (Core) and 18.2 GB (port).
+
 ## Rocky Linux 9 (2026-11-08)
 
 `scripts/rocky9.sh` runs the reference container (`docker/rocky9`, image `openexr-rs-rocky9:2`:
