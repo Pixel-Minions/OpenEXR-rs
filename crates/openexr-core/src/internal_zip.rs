@@ -45,9 +45,10 @@ fn reconstruct(buf: &mut [u8]) {
         d = add_bytes(d, d << 8);
         d = add_bytes(d, d << 16);
         d = add_bytes(d, d << 32);
-        d = add_bytes(d, prev.wrapping_mul(ONES));
-        w.copy_from_slice(&d.to_le_bytes());
-        prev = d >> 56;
+        // the previous words' sum: the only step each word waits for is one byte add
+        let out = add_bytes(d, prev.wrapping_mul(ONES));
+        *w = out.to_le_bytes();
+        prev = (prev + (d >> 56)) & 0xFF;
     }
     if done == 0 {
         // no word: the scalar loop's, the pre-flip undone

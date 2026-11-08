@@ -159,7 +159,7 @@ pub(crate) fn internal_decode_alloc_buffer(buf: &mut Option<Vec<u8>>, newsz: usi
         return;
     }
     if buf.as_ref().is_none_or(|b| b.len() < newsz) {
-        *buf = Some(vec![0; newsz]);
+        recycle(buf.replace(pooled_zeros(newsz)));
     }
 }
 
@@ -169,7 +169,27 @@ fn alloc_aliased(buf: &mut Aliased, newsz: usize) {
         return;
     }
     if !matches!(buf, Aliased::Own(b) if b.len() >= newsz) {
-        *buf = Aliased::Own(vec![0; newsz]);
+        recycle_aliased(std::mem::replace(buf, Aliased::Own(pooled_zeros(newsz))));
+    }
+}
+
+/// `n` zeros from the thread's pool (`buffer_pool`); as `vec![0; n]`, an allocation that
+/// fails aborts.
+fn pooled_zeros(n: usize) -> Vec<u8> {
+    crate::buffer_pool::zeroed(n).unwrap_or_else(|_| vec![0; n])
+}
+
+/// A buffer given back to the thread's pool.
+fn recycle(b: Option<Vec<u8>>) {
+    if let Some(v) = b {
+        crate::buffer_pool::give_back(v);
+    }
+}
+
+/// An owned aliased buffer given back to the thread's pool.
+fn recycle_aliased(b: Aliased) {
+    if let Aliased::Own(v) = b {
+        crate::buffer_pool::give_back(v);
     }
 }
 
@@ -813,7 +833,14 @@ impl Context {
     /// Port of `exr_decoding_destroy` (src/lib/OpenEXRCore/decoding.c:715-783 @ v3.5.3): frees
     /// the pipeline's buffers and resets it.
     pub fn decoding_destroy(&self, decode: &mut DecodePipeline<'_>) -> Result<(), Error> {
-        *decode = DecodePipeline::default();
+        // the buffers go back to the thread's pool, where upstream frees them
+        let old = std::mem::take(decode);
+        recycle(old.packed_buffer);
+        recycle_aliased(old.unpacked_buffer);
+        recycle(old.packed_sample_count_table);
+        recycle_aliased(old.sample_count_table);
+        recycle(old.scratch_buffer_1);
+        recycle(old.scratch_buffer_2);
         Ok(())
     }
 }

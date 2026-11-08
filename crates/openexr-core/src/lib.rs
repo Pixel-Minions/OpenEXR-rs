@@ -8,6 +8,7 @@
 
 pub mod attributes;
 pub mod base;
+mod buffer_pool;
 pub mod bytes;
 #[doc(hidden)]
 pub mod cfmt;

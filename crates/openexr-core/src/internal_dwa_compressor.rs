@@ -64,6 +64,22 @@ pub(crate) struct DwaCompressor {
     pub(crate) funcs: DwaFuncs,
 }
 
+/// The buffers go back to the thread's pool (`buffer_pool`) where upstream's
+/// `DwaCompressor_destroy` frees them.
+impl Drop for DwaCompressor {
+    fn drop(&mut self) {
+        use crate::buffer_pool::give_back;
+        give_back(std::mem::take(&mut self.packed_ac_buffer));
+        give_back(std::mem::take(&mut self.packed_dc_buffer));
+        give_back(std::mem::take(&mut self.rle_buffer));
+        for b in &mut self.planar_unc_buffer {
+            if let Some(v) = b.take() {
+                give_back(v);
+            }
+        }
+    }
+}
+
 impl DwaCompressor {
     /// Port of `DwaCompressor_construct` (src/lib/OpenEXRCore/internal_dwa_compressor.h:96-196
     /// @ v3.5.3), for a decode pipeline.
@@ -856,13 +872,9 @@ impl DwaCompressor {
 
 /// A zeroed buffer of `n` elements, refused as upstream's allocator would refuse it when it
 /// cannot be had.
-fn alloc<T: Clone + Default>(n: u64) -> Result<Vec<T>, Error> {
+fn alloc<T: crate::buffer_pool::Pooled>(n: u64) -> Result<Vec<T>, Error> {
     let n = usize::try_from(n).map_err(|_| Error::bare(ErrorCode::OutOfMemory))?;
-    let mut v = Vec::new();
-    v.try_reserve_exact(n)
-        .map_err(|_| Error::bare(ErrorCode::OutOfMemory))?;
-    v.resize(n, T::default());
-    Ok(v)
+    crate::buffer_pool::zeroed(n).map_err(|_| Error::bare(ErrorCode::OutOfMemory))
 }
 
 /// `len` bytes of `buf` from `at`; a span outside it is a corrupt chunk (upstream reads or

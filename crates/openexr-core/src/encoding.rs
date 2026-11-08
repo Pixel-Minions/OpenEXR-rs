@@ -146,7 +146,7 @@ pub(crate) fn internal_encode_alloc_buffer(
         ));
     }
     if buf.as_ref().is_none_or(|b| b.len() < newsz) {
-        *buf = Some(vec![0; newsz]);
+        recycle(buf.replace(pooled_zeros(newsz)));
     }
     Ok(())
 }
@@ -169,9 +169,29 @@ pub(crate) fn internal_encode_alloc_aliased(
         ));
     }
     if !matches!(buf, Aliased::Own(b) if b.len() >= newsz) {
-        *buf = Aliased::Own(vec![0; newsz]);
+        recycle_aliased(std::mem::replace(buf, Aliased::Own(pooled_zeros(newsz))));
     }
     Ok(())
+}
+
+/// `n` zeros from the thread's pool (`buffer_pool`); as `vec![0; n]`, an allocation that
+/// fails aborts.
+fn pooled_zeros(n: usize) -> Vec<u8> {
+    crate::buffer_pool::zeroed(n).unwrap_or_else(|_| vec![0; n])
+}
+
+/// A buffer given back to the thread's pool.
+fn recycle(b: Option<Vec<u8>>) {
+    if let Some(v) = b {
+        crate::buffer_pool::give_back(v);
+    }
+}
+
+/// An owned aliased buffer given back to the thread's pool.
+fn recycle_aliased(b: Aliased) {
+    if let Aliased::Own(v) = b {
+        crate::buffer_pool::give_back(v);
+    }
 }
 
 /// Port of `default_yield` (src/lib/OpenEXRCore/encoding.c:17-27 @ v3.5.3): whether the
@@ -521,7 +541,14 @@ impl Context {
     /// Port of `exr_encoding_destroy` (src/lib/OpenEXRCore/encoding.c:387-426 @ v3.5.3): frees
     /// the pipeline's buffers and resets it.
     pub fn encoding_destroy(&self, encode: &mut EncodePipeline) -> Result<(), Error> {
-        *encode = EncodePipeline::default();
+        // the buffers go back to the thread's pool, where upstream frees them
+        let old = std::mem::take(encode);
+        recycle(old.packed_buffer);
+        recycle_aliased(old.compressed_buffer);
+        recycle_aliased(old.packed_sample_count_table);
+        recycle(old.sample_count_table);
+        recycle(old.scratch_buffer_1);
+        recycle(old.scratch_buffer_2);
         Ok(())
     }
 }

@@ -174,22 +174,22 @@ chunk encoded with a `write_fn` that writes nothing; best of 7 runs over 3 round
 the images. The port's time over Core's, before the speed work and after each round
 (profiles: `perf` on Rocky Linux 9, of the port and, side by side, of Core's harness):
 
-| Compression | Decode, before | round 1 | round 2 | Encode, before | round 1 | round 2 |
-|---|---|---|---|---|---|---|
-| NONE | 1.02 | 1.02 | 1.02 | 5.00 | 0.43 | 0.44 |
-| RLE | 0.45 | 0.46 | 0.43 | 1.20 | 0.93 | 0.88 |
-| ZIPS | 1.62 | 1.35 | 1.28 | 1.66 | 1.30 | 1.17 |
-| ZIP | 1.58 | 1.29 | 1.04 | 1.58 | 1.23 | 1.09 |
-| PIZ | 1.03 | 1.04 | 1.06 | 0.95 | 0.86 | 0.86 |
-| PXR24 | 1.43 | 1.19 | 1.15 | 1.66 | 1.28 | 1.13 |
-| B44 | 0.80 | 0.80 | 0.74 | 1.15 | 0.84 | 0.85 |
-| B44A | 0.80 | 0.82 | 0.76 | 1.12 | 0.81 | 0.82 |
-| DWAA | 1.31 | 1.32 | 1.29 | 1.17 | 1.14 | 1.05 |
-| DWAB | 1.18 | 1.15 | 1.13 | 1.18 | 1.10 | 1.04 |
-| HTJ2K256 | 1.55 | 1.56 | 1.53 | 1.46 | 1.31 | 1.29 |
-| HTJ2K32 | 1.34 | 1.30 | 1.31 | 1.36 | 1.28 | 1.26 |
-| LJ2K | 1.73 | 1.79 | 1.75 | 1.81 | 1.44 | 1.42 |
-| ZSTD | 1.44 | 1.07 | 1.05 | 1.50 | 1.18 | 1.17 |
+| Compression | Decode, before | round 1 | round 2 | round 3 | Encode, before | round 1 | round 2 | round 3 |
+|---|---|---|---|---|---|---|---|---|
+| NONE | 1.02 | 1.02 | 1.02 | 1.02 | 5.00 | 0.43 | 0.44 | 0.41 |
+| RLE | 0.45 | 0.46 | 0.43 | 0.39 | 1.20 | 0.93 | 0.88 | 1.00 |
+| ZIPS | 1.62 | 1.35 | 1.28 | 1.12 | 1.66 | 1.30 | 1.17 | 1.23 |
+| ZIP | 1.58 | 1.29 | 1.04 | 0.87 | 1.58 | 1.23 | 1.09 | 1.02 |
+| PIZ | 1.03 | 1.04 | 1.06 | 0.95 | 0.95 | 0.86 | 0.86 | 0.83 |
+| PXR24 | 1.43 | 1.19 | 1.15 | 0.94 | 1.66 | 1.28 | 1.13 | 1.07 |
+| B44 | 0.80 | 0.80 | 0.74 | 0.45 | 1.15 | 0.84 | 0.85 | 0.73 |
+| B44A | 0.80 | 0.82 | 0.76 | 0.43 | 1.12 | 0.81 | 0.82 | 0.69 |
+| DWAA | 1.31 | 1.32 | 1.29 | 0.82 | 1.17 | 1.14 | 1.05 | 0.90 |
+| DWAB | 1.18 | 1.15 | 1.13 | 0.83 | 1.18 | 1.10 | 1.04 | 0.90 |
+| HTJ2K256 | 1.55 | 1.56 | 1.53 | 1.47 | 1.46 | 1.31 | 1.29 | 1.27 |
+| HTJ2K32 | 1.34 | 1.30 | 1.31 | 1.30 | 1.36 | 1.28 | 1.26 | 1.25 |
+| LJ2K | 1.73 | 1.79 | 1.75 | 1.70 | 1.81 | 1.44 | 1.42 | 1.40 |
+| ZSTD | 1.44 | 1.07 | 1.05 | 0.93 | 1.50 | 1.18 | 1.17 | 1.25 |
 
 The changes, none of which changes a byte: packing takes a line whose every read and store is in
 bounds through a loop specialized to its types (a copy for the same type), where the per-sample
@@ -202,6 +202,9 @@ library call. Round 2: unpacking takes a line whose every store is in bounds thr
 specialized to its types, as packing does; libdeflate's matchfinder and `lz_extend` are inlined
 where upstream's are `forceinline` (Core's whole lazy compressor is one function), the lazy
 compressor is compiled for each mode, and the matchfinder's bucket prefetches are restored as
-plain loads. What remains is mostly where Core
+plain loads. Round 3: the codecs' and pipelines' buffers come from a per-thread pool
+(`buffer_pool.rs`), zeroed to the length asked as a new one is, instead of fresh pages for every
+chunk; ZIP's predictor waits on one byte add per word; Adler-32 keeps per-lane running sums, so it
+vectorizes. What remains is mostly where Core
 uses SIMD the port does not (OpenJPH's block coders, libdeflate's decoder, DWA) and zeroed
-buffers (`docs/deferred.md`).
+buffers' zeroing where upstream leaves them uninitialized.
