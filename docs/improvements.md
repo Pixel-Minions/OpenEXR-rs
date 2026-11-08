@@ -444,6 +444,20 @@ section. An entry says:
 - **Status:** matched (`crates/openexr-zstd/src/zstd_ldm.rs`, `gear_reset`); checked by
   `crates/openexr-core/tests/heavy_zstd_big.rs` against Core (`core_harness zstd-big`).
 
+### I-32. Each build leaves out a SIMD kernel the other takes
+
+- **Upstream:** ZIP's SSE4.1 `reconstruct` is built only with `__SSE4_1__` or MSVC
+  (src/lib/OpenEXRCore/internal_zip.c:23-26, 49-94 @ v3.5.3), so GCC's x86-64 build, the
+  Linux wheel's, runs the scalar loop; the ZSTD codec's AVX2 unshuffle and delta decode are
+  built only by GCC (src/lib/OpenEXRCore/internal_zstd_shuffle.c:75-300,
+  internal_zstd_delta.c:63-276 @ v3.5.3), so MSVC's build, the Windows wheel's, runs them
+  scalar on every CPU.
+- **Who notices:** no one in the results: the kernels compute the scalar loops' bytes
+  (integer prefix sums, byte shuffles and deltas). Only the time differs.
+- **A fix:** take each kernel wherever the CPU has its instructions.
+- **Status:** **fixed**, deviation D-21; checked against the wheels and Core on Windows and
+  Rocky Linux 9 (heavy tier).
+
 ## Undefined behaviour the port does not copy
 
 ### U-1. A string created from no data has an unset terminator
