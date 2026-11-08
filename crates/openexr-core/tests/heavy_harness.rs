@@ -812,7 +812,13 @@ fn files_written_by_core_alone_as_core_writes_them() {
             if !h.status.success() {
                 // a refusal: the same code, and the same messages from Core
                 let herr = lines(&h.stderr);
-                let (last, core_msgs) = herr.split_last().expect("the harness says why");
+                let Some((last, core_msgs)) = herr.split_last() else {
+                    differing.push(format!(
+                        "{what}: the harness failed silently ({})",
+                        h.status
+                    ));
+                    continue;
+                };
                 let hcode = String::from_utf8_lossy(last)
                     .rsplit(": ")
                     .next()

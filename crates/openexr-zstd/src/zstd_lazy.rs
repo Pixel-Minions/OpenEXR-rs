@@ -2,16 +2,16 @@
 // Copyright (c) Meta Platforms, Inc. and affiliates.
 
 //! Port of `zstd_lazy.c` (external/zstd/lib/compress/zstd_lazy.c:1-2199 @ zstd v1.5.7): the
-//! greedy, lazy and lazy2 parsers over the hash chain and the row match finder, without a
-//! dictionary. The binary tree (btlazy2), dictionaries and extDict windows (which a one-shot
-//! compression never has) are not ported yet. Upstream's SSE2 tag comparison computes the
+//! greedy, lazy and lazy2 parsers over the hash chain and the row match finder, and the
+//! btlazy2 one over the binary tree (`ZSTD_DUBT_*`), without a dictionary; dictionaries and
+//! extDict windows (which a one-shot compression never has) are n/a. Upstream's SSE2 tag comparison computes the
 //! same bit mask as the scalar loop.
 
 use crate::mem::highbit32;
 use crate::zstd_compress_internal::{
     K_SEARCH_STRENGTH, MatchState, REPCODE1_TO_OFFBASE, SeqStore, ZSTD_ROW_HASH_CACHE_SIZE,
-    get_lowest_prefix_index, hash_ptr, hash_ptr_salted, offbase_is_offset, offset_to_offbase,
-    read32, zstd_count,
+    get_lowest_match_index, get_lowest_prefix_index, hash_ptr, hash_ptr_salted, offbase_is_offset,
+    offset_to_offbase, read32, zstd_count,
 };
 
 /// `kLazySkippingStep` (external/zstd/lib/compress/zstd_lazy.c:20 @ zstd v1.5.7).
@@ -29,6 +29,7 @@ const ZSTD_ROW_HASH_CACHE_MASK: u32 = ZSTD_ROW_HASH_CACHE_SIZE - 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SearchMethod {
     HashChain,
+    BinaryTree,
     RowHash,
 }
 
@@ -377,6 +378,268 @@ fn row_find_best_match(
     ml
 }
 
+/// `ZSTD_DUBT_UNSORTED_MARK` (external/zstd/lib/compress/zstd_compress_internal.h:34
+/// @ zstd v1.5.7): index 1 means "unsorted".
+const ZSTD_DUBT_UNSORTED_MARK: u32 = 1;
+
+/// A tree pointer of the binary tree search: a slot of the tree (`bt`), or upstream's
+/// `dummy32`, where writes go to be forgotten.
+#[derive(Clone, Copy)]
+enum BtSlot {
+    At(usize),
+    Dummy,
+}
+
+#[inline]
+fn bt_set(bt: &mut [u32], slot: BtSlot, v: u32) {
+    if let BtSlot::At(i) = slot {
+        bt[i] = v;
+    }
+}
+
+/// Port of `ZSTD_updateDUBT` (external/zstd/lib/compress/zstd_lazy.c:27-64 @ zstd v1.5.7):
+/// the positions from `nextToUpdate` to `ip` inserted in the hash table and, unsorted, in the
+/// binary tree (as a chain).
+fn update_dubt(ms: &mut MatchState, src: &[u8], ip: usize, mls: u32) {
+    let hash_log = ms.cparams.hash_log;
+    let bt_log = ms.cparams.chain_log - 1;
+    let bt_mask = (1u32 << bt_log) - 1;
+    let target = ms.window.idx(ip);
+    let mut idx = ms.next_to_update;
+
+    while idx < target {
+        let h = hash_ptr(src, ms.window.pos(idx), hash_log, mls); // assumption : ip + 8 <= iend
+        let match_index = ms.hash_table[h];
+        let next_candidate = 2 * (idx & bt_mask) as usize;
+
+        ms.hash_table[h] = idx; // Update Hash Table
+        ms.chain_table[next_candidate] = match_index; // update BT like a chain
+        ms.chain_table[next_candidate + 1] = ZSTD_DUBT_UNSORTED_MARK;
+        idx += 1;
+    }
+    ms.next_to_update = target;
+}
+
+/// Port of `ZSTD_insertDUBT1` (external/zstd/lib/compress/zstd_lazy.c:67-157 @ zstd v1.5.7),
+/// without a dictionary: one already inserted but unsorted position, `curr`, sorted into the
+/// tree.
+fn insert_dubt1(
+    ms: &mut MatchState,
+    src: &[u8],
+    curr: u32,
+    input_end: usize,
+    mut nb_compares: u32,
+    bt_low: u32,
+) {
+    let bt_log = ms.cparams.chain_log - 1;
+    let bt_mask = (1u32 << bt_log) - 1;
+    let mut common_length_smaller = 0usize;
+    let mut common_length_larger = 0usize;
+    let ip = ms.window.pos(curr);
+    let iend = input_end;
+    let mut smaller_ptr = BtSlot::At(2 * (curr & bt_mask) as usize);
+    let mut larger_ptr = BtSlot::At(2 * (curr & bt_mask) as usize + 1);
+    // this candidate is unsorted : next sorted candidate is reached through *smallerPtr, while
+    // *largerPtr contains previous unsorted candidate (which is already saved and can be
+    // overwritten)
+    let mut match_index = ms.chain_table[2 * (curr & bt_mask) as usize];
+    let window_valid = ms.window.low_limit;
+    let max_distance = 1u32 << ms.cparams.window_log;
+    let window_low = if curr - window_valid > max_distance {
+        curr - max_distance
+    } else {
+        window_valid
+    };
+
+    while nb_compares != 0 && match_index > window_low {
+        let next_ptr = 2 * (match_index & bt_mask) as usize;
+        // guaranteed minimum nb of common bytes
+        let mut match_length = common_length_smaller.min(common_length_larger);
+        let m = ms.window.pos(match_index);
+        match_length += zstd_count(src, ip + match_length, m + match_length, iend);
+
+        if ip + match_length == iend {
+            // equal : no way to know if inf or sup; drop, to guarantee consistency
+            break;
+        }
+
+        if src[m + match_length] < src[ip + match_length] {
+            // match is smaller than current
+            bt_set(&mut ms.chain_table, smaller_ptr, match_index); // update smaller idx
+            common_length_smaller = match_length; // all smaller will now have at least this guaranteed common length
+            if match_index <= bt_low {
+                // beyond tree size, stop searching
+                smaller_ptr = BtSlot::Dummy;
+                break;
+            }
+            smaller_ptr = BtSlot::At(next_ptr + 1); // new "candidate" => larger than match, which was smaller than target
+            match_index = ms.chain_table[next_ptr + 1]; // new matchIndex, larger than previous and closer to current
+        } else {
+            // match is larger than current
+            bt_set(&mut ms.chain_table, larger_ptr, match_index);
+            common_length_larger = match_length;
+            if match_index <= bt_low {
+                // beyond tree size, stop searching
+                larger_ptr = BtSlot::Dummy;
+                break;
+            }
+            larger_ptr = BtSlot::At(next_ptr);
+            match_index = ms.chain_table[next_ptr];
+        }
+        nb_compares -= 1;
+    }
+
+    bt_set(&mut ms.chain_table, smaller_ptr, 0);
+    bt_set(&mut ms.chain_table, larger_ptr, 0);
+}
+
+/// Port of `ZSTD_DUBT_findBestMatch` (external/zstd/lib/compress/zstd_lazy.c:241-390
+/// @ zstd v1.5.7), without a dictionary: the unsorted candidates sorted in, then the longest
+/// match searched in the tree, `ip` inserted; the length, with the offset in `off_base_ptr`.
+fn dubt_find_best_match(
+    ms: &mut MatchState,
+    src: &[u8],
+    ip: usize,
+    iend: usize,
+    off_base_ptr: &mut usize,
+    mls: u32,
+) -> usize {
+    let hash_log = ms.cparams.hash_log;
+    let h = hash_ptr(src, ip, hash_log, mls);
+    let mut match_index = ms.hash_table[h];
+
+    let curr = ms.window.idx(ip);
+    let window_low = get_lowest_match_index(ms, curr, ms.cparams.window_log);
+
+    let bt_log = ms.cparams.chain_log - 1;
+    let bt_mask = (1u32 << bt_log) - 1;
+    let bt_low = curr.saturating_sub(bt_mask); // (btMask >= curr) ? 0 : curr - btMask
+    let unsort_limit = bt_low.max(window_low);
+
+    let mut next_candidate = 2 * (match_index & bt_mask) as usize;
+    let mut unsorted_mark = next_candidate + 1;
+    let mut nb_compares = 1u32 << ms.cparams.search_log;
+    let mut nb_candidates = nb_compares;
+    let mut previous_candidate = 0u32;
+
+    // reach end of unsorted candidates list
+    while (match_index > unsort_limit)
+        && (ms.chain_table[unsorted_mark] == ZSTD_DUBT_UNSORTED_MARK)
+        && (nb_candidates > 1)
+    {
+        // the unsortedMark becomes a reversed chain, to move up back to original position
+        ms.chain_table[unsorted_mark] = previous_candidate;
+        previous_candidate = match_index;
+        match_index = ms.chain_table[next_candidate];
+        next_candidate = 2 * (match_index & bt_mask) as usize;
+        unsorted_mark = next_candidate + 1;
+        nb_candidates -= 1;
+    }
+
+    // nullify last candidate if it's still unsorted (simplification, detrimental to
+    // compression ratio, beneficial for speed)
+    if (match_index > unsort_limit) && (ms.chain_table[unsorted_mark] == ZSTD_DUBT_UNSORTED_MARK) {
+        ms.chain_table[next_candidate] = 0;
+        ms.chain_table[unsorted_mark] = 0;
+    }
+
+    // batch sort stacked candidates
+    match_index = previous_candidate;
+    while match_index != 0 {
+        // will end on matchIndex == 0
+        let next_candidate_idx = ms.chain_table[2 * (match_index & bt_mask) as usize + 1];
+        insert_dubt1(ms, src, match_index, iend, nb_candidates, unsort_limit);
+        match_index = next_candidate_idx;
+        nb_candidates += 1;
+    }
+
+    // find longest match
+    let mut common_length_smaller = 0usize;
+    let mut common_length_larger = 0usize;
+    let mut smaller_ptr = BtSlot::At(2 * (curr & bt_mask) as usize);
+    let mut larger_ptr = BtSlot::At(2 * (curr & bt_mask) as usize + 1);
+    let mut match_end_idx = curr + 8 + 1;
+    let mut best_length = 0usize;
+
+    match_index = ms.hash_table[h];
+    ms.hash_table[h] = curr; // Update Hash Table
+
+    while nb_compares != 0 && match_index > window_low {
+        let next_ptr = 2 * (match_index & bt_mask) as usize;
+        // guaranteed minimum nb of common bytes
+        let mut match_length = common_length_smaller.min(common_length_larger);
+        let m = ms.window.pos(match_index);
+        match_length += zstd_count(src, ip + match_length, m + match_length, iend);
+
+        if match_length > best_length {
+            if match_length > (match_end_idx - match_index) as usize {
+                match_end_idx = match_index + match_length as u32;
+            }
+            // (4*(int)(matchLength-bestLength)) > (int)(ZSTD_highbit32(curr - matchIndex + 1)
+            // - ZSTD_highbit32((U32)*offBasePtr)), the subtraction in U32
+            if 4 * as_int(match_length - best_length)
+                > highbit32(curr - match_index + 1).wrapping_sub(highbit32(*off_base_ptr as u32))
+                    as i32
+            {
+                best_length = match_length;
+                *off_base_ptr = offset_to_offbase(curr - match_index) as usize;
+            }
+            if ip + match_length == iend {
+                // equal : no way to know if inf or sup; drop, to guarantee consistency
+                break;
+            }
+        }
+
+        if src[m + match_length] < src[ip + match_length] {
+            // match is smaller than current
+            bt_set(&mut ms.chain_table, smaller_ptr, match_index); // update smaller idx
+            common_length_smaller = match_length; // all smaller will now have at least this guaranteed common length
+            if match_index <= bt_low {
+                // beyond tree size, stop the search
+                smaller_ptr = BtSlot::Dummy;
+                break;
+            }
+            smaller_ptr = BtSlot::At(next_ptr + 1); // new "smaller" => larger of match
+            match_index = ms.chain_table[next_ptr + 1]; // new matchIndex larger than previous (closer to current)
+        } else {
+            // match is larger than current
+            bt_set(&mut ms.chain_table, larger_ptr, match_index);
+            common_length_larger = match_length;
+            if match_index <= bt_low {
+                // beyond tree size, stop the search
+                larger_ptr = BtSlot::Dummy;
+                break;
+            }
+            larger_ptr = BtSlot::At(next_ptr);
+            match_index = ms.chain_table[next_ptr];
+        }
+        nb_compares -= 1;
+    }
+
+    bt_set(&mut ms.chain_table, smaller_ptr, 0);
+    bt_set(&mut ms.chain_table, larger_ptr, 0);
+
+    ms.next_to_update = match_end_idx - 8; // skip repetitive patterns
+    best_length
+}
+
+/// Port of `ZSTD_BtFindBestMatch` (external/zstd/lib/compress/zstd_lazy.c:392-404
+/// @ zstd v1.5.7): the tree updated to `ip`, then the best match there.
+fn bt_find_best_match(
+    ms: &mut MatchState,
+    src: &[u8],
+    ip: usize,
+    i_limit: usize,
+    off_base_ptr: &mut usize,
+    mls: u32,
+) -> usize {
+    if ip < ms.window.pos(ms.next_to_update) {
+        return 0; // skipped area
+    }
+    update_dubt(ms, src, ip, mls);
+    dubt_find_best_match(ms, src, ip, i_limit, off_base_ptr, mls)
+}
+
 /// Port of `ZSTD_searchMax` (external/zstd/lib/compress/zstd_lazy.c:1487-1508 @ zstd v1.5.7),
 /// without a dictionary.
 #[inline]
@@ -393,6 +656,7 @@ fn search_max(
 ) -> usize {
     match search_method {
         SearchMethod::HashChain => hc_find_best_match(ms, src, ip, iend, offset_ptr, mls),
+        SearchMethod::BinaryTree => bt_find_best_match(ms, src, ip, iend, offset_ptr, mls),
         SearchMethod::RowHash => row_find_best_match(ms, src, ip, iend, offset_ptr, mls, row_log),
     }
 }
@@ -677,9 +941,9 @@ pub(crate) fn compress_block_lazy_generic(
     iend - anchor
 }
 
-/// The block compressors of `ZSTD_selectBlockCompressor` this port has: ports of
-/// `ZSTD_compressBlock_greedy`, `_greedy_row`, `_lazy`, `_lazy_row`, `_lazy2` and `_lazy2_row`
-/// (external/zstd/lib/compress/zstd_lazy.c:1784-1898 @ zstd v1.5.7).
+/// Ports of `ZSTD_compressBlock_greedy`, `_greedy_row`, `_lazy`, `_lazy_row`, `_lazy2`,
+/// `_lazy2_row` and `_btlazy2` (external/zstd/lib/compress/zstd_lazy.c:1784-1898 @ zstd v1.5.7):
+/// the lazy parser of `depth` over `search_method`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compress_block_lazy(
     ms: &mut MatchState,
@@ -688,13 +952,8 @@ pub(crate) fn compress_block_lazy(
     src: &[u8],
     istart: usize,
     iend: usize,
-    row: bool,
+    search_method: SearchMethod,
     depth: u32,
 ) -> usize {
-    let search_method = if row {
-        SearchMethod::RowHash
-    } else {
-        SearchMethod::HashChain
-    };
     compress_block_lazy_generic(ms, seq_store, rep, src, istart, iend, search_method, depth)
 }

@@ -1143,9 +1143,9 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_lazy.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_lazy.rs"
-note = "the greedy, lazy and lazy2 parsers over the hash chain and the row match finder without a dictionary; the binary tree (btlazy2), the dictionary and extDict modes remain; checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
+note = "the greedy, lazy and lazy2 parsers over the hash chain and the row match finder, and btlazy2 over the binary tree (ZSTD_DUBT_*), without a dictionary; the dictionary, dedicated dictionary search and extDict modes n/a (ZSTD_compressCCtx uses none); Core-only ZSTD rewrites at these levels equal Core's own (tests/heavy_harness.rs)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_lazy.h"
