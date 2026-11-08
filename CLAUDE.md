@@ -151,6 +151,10 @@ end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 | `uv run --project oracle python -I oracle/smoke.py <out> [images]` | The oracle's smoke check |
 | `uv run --project oracle python -I oracle/dump_pixels.py <image> <out>` | The wheel's pixels of every channel of every part, for the decode checks |
 | `uv run --project oracle python -I oracle/write_images.py <out> <compression>...` | Small images in many channel layouts, written by the wheel, for the decode checks |
+| `scripts/oracle-native-build.cmd [Release\|Debug]` | Build the source-built Core harness (PLAN.md O1) on Windows, inside the MSVC rez environment; `scripts/oracle-native-build.sh` on Linux |
+| `target/oracle-native/msvc-Release/core_harness.exe info\|recompress ...` | Core 3.5.3 itself: open, print and read a file; rewrite one through Core alone |
+| `uv run --project oracle python -I oracle/native_accept.py <harness> <dir>` | The harness's acceptance: Core-only rewrites against the wheel's chunks |
+| `uv run --project oracle python -I oracle/native_accept_messages.py <harness> [--damage <dir>] <files>` | The harness's acceptance: Core's messages against the wheel's |
 | `uv run --no-project python -I scripts/upstream_map.py` | Add new upstream files to `upstream-map.toml` |
 | `cargo xtask gate` | Fast tier: fmt, clippy, guards, tests (every chunk) |
 | `cargo xtask gate --full` | Adds the heavy tier: `--features heavy` tests (deferred, `PLAN.md` §8) |

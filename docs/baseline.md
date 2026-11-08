@@ -102,3 +102,20 @@ reach Core as follows (the `exr_*` calls of `src/lib/OpenEXR/*.cpp`):
 - **Not reached:** Core's own writer (`exr_start_write`, `write_header.c`; `ImfContext.cpp`
   has a write mode, but nothing in the C++ library uses it), packing (`pack.c`), Core's error
   codes and messages for API misuse, and `exr_print_*` (`debug.c`).
+
+## The source-built Core harness (PLAN.md O1, owner 2026-11-07)
+
+`oracle/native/core_harness.c`, built by `scripts/oracle-native-build.cmd` (Windows, in the MSVC
+rez environment) or `scripts/oracle-native-build.sh` (Rocky Linux 9) from the pinned submodule
+with the wheel's settings (`oracle/native/CMakeLists.txt`, as `scripts/upstream-build.*`), into
+`target/oracle-native/`. It drives OpenEXRCore 3.5.3 through its public C API only:
+`core_harness info` (`exr_start_read`, `exr_print_context_info`, and with `--read` every chunk
+decoded, Core's messages on stderr through its default handler) and `core_harness recompress`
+(a file rewritten through Core alone: its header by `write_header.c`, its chunks packed by
+`pack.c` and compressed at the levels asked for). It is used only for what the wheel can't
+reach, and only where it reproduces the wheel:
+
+| Check | Windows (2026-11-07) | Rocky Linux 9 |
+|---|---|---|
+| `oracle/native_accept.py`: every layout of `oracle/write_images.py`, rewritten from its uncompressed copy into each of the 14 compressions by Core alone, against the wheel's own file of that compression, chunk by chunk | 2145 chunks byte-identical; 46 not, all from two upstream bugs of Core's writer, where the harness is not accepted: I-14 (the `attrs` layout's bytes attribute, which Core refuses to write) and I-23 (B44 and B44A on parts without half channels) | pending |
+| `oracle/native_accept_messages.py`: the 53 images of upstream's test tree and the `write_images.py` set, each also cut, with 16 bytes of its first chunk set to 0xff, and with its first chunk's size set to 0x7fffffff: every Core message the wheel prints is printed by the harness, byte for byte | 1300 files, 627 with messages from the wheel, none missed | pending |
