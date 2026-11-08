@@ -18,9 +18,8 @@
 //! (`<width> <level>...`); `OPENEXR_RS_HARNESS` a harness other than the one
 //! `scripts/oracle-native-build` builds.
 //!
-//! The levels stop short of long distance matching, which zstd enables for btopt and up
-//! with a window of 2^27 (level 22 on inputs over 64 MiB) and the port does not have yet
-//! (`zstd_ldm.c`): `OPENEXR_RS_ZSTD_BIG="9000000 22"` shows its frames differing.
+//! Level 22's frames over 64 MiB, here all of them, take zstd's long distance matcher
+//! (`ZSTD_resolveEnableLdm`: btopt and up with a window of 2^27).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -203,14 +202,16 @@ fn compare(spec: &str) {
 #[test]
 fn a_zstd_frame_past_the_index_maximum_compresses_as_core_does() {
     compare(
-        &std::env::var("OPENEXR_RS_ZSTD_BIG").unwrap_or_else(|_| "470000000 1 3 5 9 13".to_owned()),
+        &std::env::var("OPENEXR_RS_ZSTD_BIG")
+            .unwrap_or_else(|_| "470000000 1 3 5 9 13 16 19 22".to_owned()),
     );
 }
 
 #[test]
 fn zstd_frames_continuing_past_the_index_maximum_compress_as_core_does() {
     compare(
-        &std::env::var("OPENEXR_RS_ZSTD_FRAMES")
-            .unwrap_or_else(|_| "125000000 1 1 1 1 9 9 9 9 13 13 13 13 16 16 16 16".to_owned()),
+        &std::env::var("OPENEXR_RS_ZSTD_FRAMES").unwrap_or_else(|_| {
+            "125000000 1 1 1 1 9 9 9 9 13 13 13 13 16 16 16 16 22 22 22 22".to_owned()
+        }),
     );
 }

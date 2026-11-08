@@ -55,6 +55,10 @@ use crate::zstd_decompress_internal::{LL_BITS, ML_BITS};
 use crate::zstd_double_fast::compress_block_double_fast;
 use crate::zstd_fast::compress_block_fast;
 use crate::zstd_lazy::{SearchMethod, ZSTD_ROW_HASH_TAG_BITS, bounded_4_6, compress_block_lazy};
+use crate::zstd_ldm::{
+    LdmParams, LdmState, RawSeq, RawSeqStore, adjust_parameters, generate_sequences,
+    get_max_nb_seq, resolve_enable_ldm, skip_raw_seq_store_bytes,
+};
 use crate::zstd_opt::compress_block_opt;
 use crate::zstd_pre_split::zstd_split_block;
 
@@ -280,6 +284,12 @@ pub struct CCtx {
     /// Whether the context has been reset once (`initialized`): its indices continue from
     /// then on.
     initialized: bool,
+    /// The long distance matcher's parameters (`appliedParams.ldmParams`), state, and storage
+    /// for its sequences (`ldmSequences`, `maxNbLdmSequences` of them).
+    ldm_params: LdmParams,
+    ldm_state: LdmState,
+    ldm_sequences: Vec<RawSeq>,
+    max_nb_ldm_sequences: usize,
 }
 
 impl std::fmt::Debug for HufCompressTables {
@@ -340,6 +350,10 @@ impl CCtx {
             produced_csize: 0,
             stage_ending: false,
             initialized: false,
+            ldm_params: LdmParams::default(),
+            ldm_state: LdmState::new(),
+            ldm_sequences: Vec::new(),
+            max_nb_ldm_sequences: 0,
         }
     }
 
@@ -369,6 +383,28 @@ impl CCtx {
         self.consumed_src_size = 0;
         self.produced_csize = 0;
         self.stage_ending = false;
+
+        // The long distance matcher: its parameters start at 0, resolved and adjusted for
+        // these cParams (ZSTD_CCtxParams_init_internal, lines 373-393; ZSTD_resetCCtx_internal,
+        // lines 2122-2129), its hash table, sequence storage and window new (lines 2222-2232),
+        // and its bucket offsets zeroed (lines 2257-2264).
+        self.ldm_params = LdmParams {
+            enable: resolve_enable_ldm(&cparams),
+            ..LdmParams::default()
+        };
+        if self.ldm_params.enable {
+            adjust_parameters(&mut self.ldm_params, &cparams);
+            let ldm_h_size = 1usize << self.ldm_params.hash_log;
+            let st = &mut self.ldm_state;
+            st.hash_table.clear();
+            st.hash_table.resize(ldm_h_size, Default::default());
+            self.max_nb_ldm_sequences = get_max_nb_seq(&self.ldm_params, self.block_size_max);
+            st.window = Window::init();
+            let num_buckets =
+                1usize << (self.ldm_params.hash_log - self.ldm_params.bucket_size_log);
+            st.bucket_offsets.clear();
+            st.bucket_offsets.resize(num_buckets, 0);
+        }
 
         // ZSTD_reset_compressedBlockState (prevCBlock)
         let prev = &mut self.blocks[self.prev];
@@ -464,9 +500,8 @@ impl CCtx {
     ) -> ZResult<usize> {
         let cparams = get_cparams_internal(compression_level, src.len() as u64);
         let use_row = resolve_row_match_finder_mode(&cparams);
-        // no LDM (zstd_ldm.c, not ported): ZSTD_resolveEnableLdm (lines 269-273) enables it
-        // for btopt and up with a window of 2^27, which level 22 reaches on inputs over 64 MiB;
-        // those frames differ from upstream's (docs/deferred.md)
+        // (the long distance matcher, which ZSTD_resolveEnableLdm turns on for btopt and up
+        // with a window of 2^27, is set up by reset)
         self.reset(cparams, use_row, src.len() as u64);
 
         // ZSTD_compressContinue_internal (frame, last chunk)
@@ -476,6 +511,9 @@ impl CCtx {
             // ZSTD_window_update: a new segment, after the window's end
             if !self.ms.window.update_new_segment(src.len()) {
                 self.ms.next_to_update = self.ms.window.dict_limit;
+            }
+            if self.ldm_params.enable {
+                self.ldm_state.window.update_new_segment(src.len());
             }
             c_size = self.compress_frame_chunk(&mut dst[fh_size..], src)?;
             self.consumed_src_size += src.len() as u64;
@@ -648,7 +686,7 @@ impl CCtx {
         const RLE_MAX_LENGTH: usize = 25;
         let mut c_size;
 
-        if self.build_seq_store(src, istart, src_size) == BuildSeqStore::NoCompress {
+        if self.build_seq_store(src, istart, src_size)? == BuildSeqStore::NoCompress {
             c_size = 0;
         } else {
             // encode sequences and literals
@@ -677,9 +715,14 @@ impl CCtx {
     /// Port of `ZSTD_buildSeqStore` (external/zstd/lib/compress/zstd_compress.c:3264-3427
     /// @ zstd v1.5.7), with `ZSTD_storeLastLiterals` (lines 3154-3159): the block's sequences,
     /// from the strategy's block compressor.
-    fn build_seq_store(&mut self, src: &[u8], istart: usize, src_size: usize) -> BuildSeqStore {
+    fn build_seq_store(
+        &mut self,
+        src: &[u8],
+        istart: usize,
+        src_size: usize,
+    ) -> ZResult<BuildSeqStore> {
         if src_size < MIN_CBLOCK_SIZE + BLOCK_HEADER_SIZE + 1 + 1 {
-            return BuildSeqStore::NoCompress; // don't even attempt compression below a certain srcSize
+            return Ok(BuildSeqStore::NoCompress); // don't even attempt compression below a certain srcSize
         }
         self.seq_store.reset();
 
@@ -697,6 +740,52 @@ impl CCtx {
         let prev_rep = self.blocks[self.prev].rep;
         self.blocks[next].rep = prev_rep;
         let row = self.use_row_match_finder && row_match_finder_supported(self.cparams.strategy);
+        if self.ldm_params.enable {
+            // The long distance matcher's sequences of the block (ldmSeqStore, from
+            // ZSTD_ldm_generateSequences), then ZSTD_ldm_blockCompress (zstd_ldm.c:681-745),
+            // whose path for btopt and up hands them to the optimal parser as candidates
+            // (ms->ldmSeqStore) and moves past the block; the matcher is enabled only there.
+            let mut ldm_seq_store = RawSeqStore {
+                seq: std::mem::take(&mut self.ldm_sequences),
+                capacity: self.max_nb_ldm_sequences,
+                ..RawSeqStore::default()
+            };
+            ldm_seq_store.seq.clear();
+            let r = generate_sequences(
+                &mut self.ldm_state,
+                &mut ldm_seq_store,
+                &self.ldm_params,
+                src,
+                istart,
+                istart + src_size,
+            );
+            if let Err(e) = r {
+                self.ldm_sequences = ldm_seq_store.seq;
+                return Err(e);
+            }
+            let (ms, seq_store, rep) = (
+                &mut self.ms,
+                &mut self.seq_store,
+                &mut self.blocks[next].rep,
+            );
+            let last_ll_size = compress_block_opt(
+                ms,
+                seq_store,
+                rep,
+                src,
+                istart,
+                istart + src_size,
+                self.cparams.strategy,
+                Some(&ldm_seq_store),
+            );
+            skip_raw_seq_store_bytes(&mut ldm_seq_store, src_size);
+            self.ldm_sequences = ldm_seq_store.seq;
+            let last_literals = istart + src_size - last_ll_size;
+            self.seq_store
+                .lit
+                .extend_from_slice(&src[last_literals..istart + src_size]);
+            return Ok(BuildSeqStore::Compress);
+        }
         // ZSTD_selectBlockCompressor (lines 3065-3152), without a dictionary
         let (ms, seq_store, rep) = (
             &mut self.ms,
@@ -709,7 +798,7 @@ impl CCtx {
                 compress_block_double_fast(ms, seq_store, rep, src, istart, istart + src_size)
             }
             s if s >= ZSTD_BTOPT => {
-                compress_block_opt(ms, seq_store, rep, src, istart, istart + src_size, s)
+                compress_block_opt(ms, seq_store, rep, src, istart, istart + src_size, s, None)
             }
             ZSTD_BTLAZY2 => compress_block_lazy(
                 ms,
@@ -743,7 +832,7 @@ impl CCtx {
         self.seq_store
             .lit
             .extend_from_slice(&src[last_literals..istart + src_size]);
-        BuildSeqStore::Compress
+        Ok(BuildSeqStore::Compress)
     }
 
     /// Port of `ZSTD_entropyCompressSeqStore`
@@ -1753,7 +1842,7 @@ impl CCtx {
         last_block: u32,
     ) -> ZResult<usize> {
         let block = &src[istart..istart + src_size];
-        if self.build_seq_store(src, istart, src_size) == BuildSeqStore::NoCompress {
+        if self.build_seq_store(src, istart, src_size)? == BuildSeqStore::NoCompress {
             let prev = &mut self.blocks[self.prev];
             if prev.entropy.fse.offcode_repeat_mode == FseRepeat::Valid {
                 prev.entropy.fse.offcode_repeat_mode = FseRepeat::Check;

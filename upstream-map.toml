@@ -1070,7 +1070,7 @@ path = "external/zstd/lib/compress/zstd_compress.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-zstd/src/zstd_compress.rs"
-note = "ZSTD_compressCCtx and ZSTD_compressBound at every level (fast to btultra2, with the post-block splitter); a context's indices continue from frame to frame, its tables keeping the last frames' entries below the cleared window (ZSTDirp_continue, reset when too close to the maximum or new; upstream's workspace reallocation, which also resets them, has no counterpart: where indices start changes no match); the index overflow correction (ZSTD_overflowCorrectIfNeeded, ZSTD_reduceIndex); Core-only rewrites at every level equal Core's own (tests/heavy_harness.rs), and frames past ZSTD_CURRENT_MAX, alone and continuing (tests/heavy_zstd_big.rs); streaming, dictionaries, LDM, sequence producers and multithreading n/a"
+note = "ZSTD_compressCCtx and ZSTD_compressBound at every level (fast to btultra2, with the post-block splitter); a context's indices continue from frame to frame, its tables keeping the last frames' entries below the cleared window (ZSTDirp_continue, reset when too close to the maximum or new; upstream's workspace reallocation, which also resets them, has no counterpart: where indices start changes no match); the index overflow correction (ZSTD_overflowCorrectIfNeeded, ZSTD_reduceIndex); the long distance matcher where ZSTD_resolveEnableLdm turns it on (zstd_ldm.rs); Core-only rewrites at every level equal Core's own (tests/heavy_harness.rs), and frames past ZSTD_CURRENT_MAX, alone and continuing, level 22's over 64 MiB with long distance matches (tests/heavy_zstd_big.rs); streaming, dictionaries, explicit LDM settings, sequence producers and multithreading n/a"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_internal.h"
@@ -1157,24 +1157,30 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/compress/zstd_ldm.c"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_ldm.rs"
+note = "what ZSTD_compressCCtx reaches: the parameters, the gear hash (ZSTD_ldm_gear_reset, which never stores its hash back, kept so), each block's sequences with the matcher's own overflow correction, and the raw sequence store the optimal parser takes them from; level 22 on zstd inputs over 64 MiB equals Core's (tests/heavy_zstd_big.rs); n/a: the extDict branches (the matcher's window never has one), ZSTD_ldm_fillHashTable (dictionaries), and ZSTD_ldm_blockCompress's path below btopt (only an explicitly enabled matcher reaches it)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_ldm.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_ldm.rs"
+note = "the declarations zstd_ldm.c's ported part needs"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_ldm_geartab.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-zstd/src/zstd_ldm_geartab.rs"
+note = "the gear table, value for value (a unit test reads it from the header)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_opt.c"
 kind = "vendored"
 status = "done"
 target = "crates/openexr-zstd/src/zstd_opt.rs"
-note = "the optimal parsers (btopt, btultra, btultra2 with its first-block pass) over the binary tree, without a dictionary or long distance matching (n/a: ZSTD_compressCCtx uses none, and LDM needs a 2^27 window); Core-only ZSTD rewrites at these levels equal Core's own (tests/heavy_harness.rs)"
+note = "the optimal parsers (btopt, btultra, btultra2 with its first-block pass) over the binary tree, without a dictionary, the long distance matcher's sequences among their candidates (ZSTD_optLdm_*); Core-only ZSTD rewrites at these levels equal Core's own (tests/heavy_harness.rs)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_opt.h"
