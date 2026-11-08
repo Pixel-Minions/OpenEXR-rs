@@ -174,6 +174,25 @@ pub(crate) fn internal_encode_alloc_aliased(
     Ok(())
 }
 
+/// [`internal_encode_alloc_aliased`] for a chunk's compressed buffer, which the codecs write
+/// before they read: `buffer_pool::reused`, as upstream's `malloc` leaves it unspecified.
+pub(crate) fn internal_encode_alloc_output(
+    ctxt: &Context,
+    part_index: i32,
+    bufid: i32,
+    buf: &mut Aliased,
+    newsz: usize,
+) -> Result<(), Error> {
+    if newsz == 0 {
+        return internal_encode_alloc_aliased(ctxt, part_index, bufid, buf, newsz);
+    }
+    if !matches!(buf, Aliased::Own(b) if b.len() >= newsz) {
+        let v = crate::buffer_pool::reused(newsz).unwrap_or_else(|_| vec![0; newsz]);
+        recycle_aliased(std::mem::replace(buf, Aliased::Own(v)));
+    }
+    Ok(())
+}
+
 /// `n` zeros from the thread's pool (`buffer_pool`); as `vec![0; n]`, an allocation that
 /// fails aborts.
 fn pooled_zeros(n: usize) -> Vec<u8> {
