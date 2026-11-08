@@ -1405,9 +1405,9 @@ target = "crates/openexr-core/src/channel_list.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_coding.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_coding.rs,crates/openexr-core/src/imath_half.rs"
-note = "pixel conversions and Imath half done; pipeline declarations with coding.c (Phase 4); heavy tier: every half and float through the source-built harness (O1)"
+note = "ported whole: the pixel conversions (Imath 3.2.3's half) and the pipeline declarations; every conversion over every input equals Core's through its pack and unpack routines (core_harness convert, heavy_harness.rs, Windows and Linux)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_compress.h"
@@ -1819,9 +1819,9 @@ note = "ported whole (upstream has no deep packer); checked by the re-encode tes
 [[file]]
 path = "src/lib/OpenEXRCore/parse_header.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/parse_header.rs"
-note = "complete for reading; done after the heavy tier compares every corpus header with the source-built harness (O1)"
+note = "ported whole; every header of upstream's test images, the write_images set, the corpus and their damaged copies reads, prints and fails as Core's does (heavy_harness.rs), and parses as the wheel's (heavy_decode.rs)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/part.c"
@@ -1982,9 +1982,9 @@ note = "read verbatim (include_str!) by testDWAQuantize's port"
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.cpp"
 kind = "test"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/upstream_tests/general_attr.rs"
-note = "all 11 tests ported; the 2 GiB string and 134M-entry vector checks are heavy-tier, done after gate --full"
+note = "all 11 tests ported, the 2 GiB string and 134M-entry vector checks in the heavy tier"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/general_attr.h"
