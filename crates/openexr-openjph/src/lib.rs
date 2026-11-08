@@ -54,4 +54,4 @@ mod transform;
 pub use base::{Point, Rect, Size};
 pub use codestream::{Codestream, CommentExchange};
 pub use file::{Infile, MemInfile, Outfile, Seek};
-pub use message::{OjphError, OjphResult};
+pub use message::{ErrorStream, OjphError, OjphResult, set_error_stream};

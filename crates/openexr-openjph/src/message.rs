@@ -124,14 +124,50 @@ pub(crate) fn format(fmt: &str, args: &[Arg<'_>]) -> String {
     out
 }
 
+/// Where errors are printed: upstream's `FILE* error_stream`.
+pub enum ErrorStream {
+    /// `stderr`, the default.
+    Stderr,
+    /// `NULL`: errors are not printed.
+    Null,
+    /// Another stream.
+    Writer(Box<dyn Write + Send>),
+}
+
+impl std::fmt::Debug for ErrorStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ErrorStream::Stderr => "Stderr",
+            ErrorStream::Null => "Null",
+            ErrorStream::Writer(_) => "Writer",
+        })
+    }
+}
+
+/// `error_stream` (external/OpenJPH/src/core/others/ojph_message.cpp:131 @ OpenJPH 0.32.0),
+/// process-wide as upstream's.
+static ERROR_STREAM: std::sync::Mutex<ErrorStream> = std::sync::Mutex::new(ErrorStream::Stderr);
+
+/// Port of `set_error_stream` (external/OpenJPH/src/core/others/ojph_message.cpp:150-153
+/// @ OpenJPH 0.32.0): where errors are printed from now on, for the whole process.
+pub fn set_error_stream(s: ErrorStream) {
+    *ERROR_STREAM.lock().unwrap_or_else(|e| e.into_inner()) = s;
+}
+
 /// Port of `message_error::operator()` (external/OpenJPH/src/core/others/ojph_message.cpp:156-171
-/// @ OpenJPH 0.32.0) through `OJPH_ERROR`: the message on stderr, and the error.
+/// @ OpenJPH 0.32.0) through `OJPH_ERROR`: the message on the error stream, and the error.
 pub(crate) fn error(code: u32, file: &str, line: u32, fmt: &str, args: &[Arg<'_>]) -> OjphError {
     let text = format(fmt, args);
-    let _ = writeln!(
-        std::io::stderr(),
-        "ojph error 0x{code:08X} at {file}:{line}: {text}"
-    );
+    let line = format!("ojph error 0x{code:08X} at {file}:{line}: {text}\n");
+    match &mut *ERROR_STREAM.lock().unwrap_or_else(|e| e.into_inner()) {
+        ErrorStream::Stderr => {
+            let _ = std::io::stderr().write_all(line.as_bytes());
+        }
+        ErrorStream::Null => {}
+        ErrorStream::Writer(w) => {
+            let _ = w.write_all(line.as_bytes());
+        }
+    }
     OjphError { code, what: None }
 }
 
