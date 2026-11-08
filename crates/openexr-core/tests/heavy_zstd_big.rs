@@ -151,7 +151,8 @@ fn compare(spec: &str) {
     let mut args = spec.split_whitespace();
     let w: u32 = args.next().unwrap().parse().unwrap();
     let levels: Vec<i32> = args.map(|l| l.parse().unwrap()).collect();
-    let dir = root().join("target/heavy-zstd-big");
+    let dir =
+        std::env::temp_dir().join(format!("openexr_rs_heavy_zstd_big_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 

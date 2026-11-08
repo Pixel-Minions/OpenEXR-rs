@@ -1134,7 +1134,8 @@ fn port_convert_file(path: &str, t: PixelType) -> Result<(), Error> {
 
 #[test]
 fn every_conversion_converts_as_core_does() {
-    let scratch = root().join("target/heavy-harness-convert");
+    let scratch =
+        std::env::temp_dir().join(format!("openexr_rs_heavy_convert_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(scratch.join("core")).unwrap();
     std::fs::create_dir_all(scratch.join("port")).unwrap();
