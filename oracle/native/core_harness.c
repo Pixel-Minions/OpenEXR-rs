@@ -47,16 +47,31 @@ fail (const char* what, exr_result_t rv)
         if (check_rv_ != EXR_ERR_SUCCESS) return fail (#call, check_rv_);      \
     } while (0)
 
-/* Decodes one chunk without outputs (decompression only); its result on stdout. */
+/* Decodes one chunk without outputs (decompression only); its result on stdout, and when it
+ * decoded, the FNV-1a 64 digest of its unpacked bytes (the chunk's unpacked size of them):
+ * a fingerprint of what Core produced, not a value computed in its place. */
 static void
 read_chunk (exr_const_context_t f, int p, const exr_chunk_info_t* ci)
 {
     exr_decode_pipeline_t dec = EXR_DECODE_PIPELINE_INITIALIZER;
     exr_result_t          rv  = exr_decoding_initialize (f, p, ci, &dec);
+    uint64_t              h   = 14695981039346656037ULL;
     if (rv == EXR_ERR_SUCCESS) rv = exr_decoding_choose_default_routines (f, p, &dec);
     if (rv == EXR_ERR_SUCCESS) rv = exr_decoding_run (f, p, &dec);
+    if (rv == EXR_ERR_SUCCESS && dec.unpacked_buffer)
+    {
+        const uint8_t* b = (const uint8_t*) dec.unpacked_buffer;
+        for (uint64_t i = 0; i < ci->unpacked_size; ++i)
+        {
+            h ^= b[i];
+            h *= 1099511628211ULL;
+        }
+        printf ("chunk %d %d %s %016llx\n", p, ci->idx, exr_get_error_code_as_string (rv),
+                (unsigned long long) h);
+    }
+    else
+        printf ("chunk %d %d %s\n", p, ci->idx, exr_get_error_code_as_string (rv));
     exr_decoding_destroy (f, &dec);
-    printf ("chunk %d %d %s\n", p, ci->idx, exr_get_error_code_as_string (rv));
 }
 
 static void
@@ -362,7 +377,7 @@ cmd_recompress (int argc, char** argv)
     exr_context_t             in = NULL, out = NULL;
     exr_context_initializer_t cinit = EXR_DEFAULT_CONTEXT_INITIALIZER;
     exr_compression_t         comp;
-    int                       zip = -1, zstd = -1, have_dwa = 0, nparts = 0;
+    int                       zip = 0, zstd = 0, have_zip = 0, have_zstd = 0, have_dwa = 0, nparts = 0;
     float                     dwa = 0.f;
 
     if (argc < 3) return fail ("recompress: <in> <out> <compression>", EXR_ERR_INVALID_ARGUMENT);
@@ -370,9 +385,9 @@ cmd_recompress (int argc, char** argv)
     for (int i = 3; i + 1 < argc; i += 2)
     {
         if (!strcmp (argv[i], "--zip"))
-            zip = atoi (argv[i + 1]);
+            { zip = atoi (argv[i + 1]); have_zip = 1; }
         else if (!strcmp (argv[i], "--zstd"))
-            zstd = atoi (argv[i + 1]);
+            { zstd = atoi (argv[i + 1]); have_zstd = 1; }
         else if (!strcmp (argv[i], "--dwa"))
         {
             dwa      = (float) atof (argv[i + 1]);
@@ -404,8 +419,8 @@ cmd_recompress (int argc, char** argv)
         CHECK (exr_add_part (out, name, st, &idx));
         CHECK (exr_copy_unset_attributes (out, idx, in, p));
         CHECK (exr_set_compression (out, idx, comp));
-        if (zip >= 0) CHECK (exr_set_zip_compression_level (out, idx, zip));
-        if (zstd >= 0) CHECK (exr_set_zstd_compression_level (out, idx, zstd));
+        if (have_zip) CHECK (exr_set_zip_compression_level (out, idx, zip));
+        if (have_zstd) CHECK (exr_set_zstd_compression_level (out, idx, zstd));
         if (have_dwa) CHECK (exr_set_dwa_compression_level (out, idx, dwa));
     }
     CHECK (exr_write_header (out));
