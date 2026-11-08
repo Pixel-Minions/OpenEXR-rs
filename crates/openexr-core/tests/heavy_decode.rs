@@ -304,6 +304,50 @@ fn images(scratch: &Path) -> Vec<PathBuf> {
     images
 }
 
+/// The reversible kernels of [`atk_images`], as `oracle/craft_atk.py`'s lifting steps
+/// (`Eatk,Batk,Aatk`, OpenJPH's steps d[0], d[1]): each case of upstream's lifting loops
+/// (`a == 1`, `a == -1`, the general case; the 5/3 predict takes `e == 1` only) with an
+/// ATK-Eatk at and past the width of 32- and 64-bit lines, where C's shifts are undefined and
+/// SIMD's are not, and the 5/3 kernel itself.
+const ATK_KERNELS: [(&str, &[&str]); 7] = [
+    ("rev53", &["2,2,1", "1,1,-1"]),
+    ("upd32", &["32,2,1", "1,1,-1"]),
+    ("neg33", &["2,2,1", "33,1,-1"]),
+    ("gen35", &["35,2,2", "1,1,-1"]),
+    ("upd64", &["64,2,1", "1,1,-1"]),
+    ("neg255", &["2,2,1", "255,0,-1"]),
+    ("gen70", &["70,-3,3", "1,1,-1"]),
+];
+
+/// Copies of the HTJ2K images among `images` that hold codestreams (the `smooth` layouts: 32-
+/// and 64-bit lines, scanlines and partial tiles), each decoding with every kernel of
+/// [`ATK_KERNELS`] (`oracle/craft_atk.py`). (LJ2K's codestreams take the irreversible
+/// wavelet with a LUT nonlinearity, which OpenJPH refuses with a reversible kernel.)
+fn atk_images(scratch: &Path, images: &[PathBuf]) -> Vec<PathBuf> {
+    let dir = scratch.join("atk");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut out = Vec::new();
+    for image in images {
+        let name = image.file_name().unwrap().to_string_lossy().into_owned();
+        if !name.starts_with("smooth_") || !name.contains("_HTJ2K") {
+            continue;
+        }
+        for (kernel, steps) in ATK_KERNELS {
+            let dst = dir.join(format!("{kernel}_{name}"));
+            let status = oracle_script("oracle/craft_atk.py")
+                .arg(image)
+                .arg(&dst)
+                .args(steps)
+                .status()
+                .expect("uv runs the oracle");
+            assert!(status.success(), "craft_atk.py failed on {name}");
+            out.push(dst);
+        }
+    }
+    assert!(!out.is_empty(), "no HTJ2K image holds a codestream");
+    out
+}
+
 /// Every `.exr` under `dir`, recursively.
 fn exr_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -320,15 +364,17 @@ fn exr_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The images of the decode check: [`images`], the corpus (`corpus/openexr-images`, fetched
+/// The images of the decode check: [`images`] and [`atk_images`]' copies of them, the corpus (`corpus/openexr-images`, fetched
 /// by `scripts/fetch-corpus.sh`, which the heavy tier needs), and damaged copies of all of
 /// them (`oracle/native_accept_messages.py`'s: cut, 16 bytes of a chunk set to 0xff, a chunk's
 /// size made huge), which the wheel decodes as far as it can. Files the C++ library wrote for
 /// another version, the corpus's, are not the encode checks' (their bytes are not 3.5.3's).
-/// Under SDE (`scripts/sde.sh`), only [`images`]: they hold every compression and layout,
+/// Under SDE (`scripts/sde.sh`), only [`images`] and the copies: they hold every compression and layout,
 /// and an emulated CPU runs many times slower.
 fn decode_images(scratch: &Path) -> Vec<PathBuf> {
     let mut images = images(scratch);
+    let atk = atk_images(scratch, &images);
+    images.extend(atk);
     if std::env::var_os("OPENEXR_RS_SDE").is_some() {
         return images;
     }

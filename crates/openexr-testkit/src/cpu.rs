@@ -15,9 +15,11 @@
 compile_error!("the CPU reference supports x86_64 only");
 
 use std::arch::x86_64::{
-    __m128i, __m256, _CMP_NGE_UQ, _CMP_NLT_UQ, _mm_cvtps_epi32, _mm_cvtt_ss2si, _mm_loadu_ps,
-    _mm_loadu_si128, _mm_set_ss, _mm_storeu_si128, _mm256_cmp_ps, _mm256_cvtph_ps, _mm256_cvtps_ph,
-    _mm256_loadu_ps, _mm256_movemask_ps, _mm256_storeu_ps,
+    __m128i, __m256, _CMP_NGE_UQ, _CMP_NLT_UQ, _mm_cvtps_epi32, _mm_cvtsi32_si128,
+    _mm_cvtsi64_si128, _mm_cvtsi128_si32, _mm_cvtsi128_si64, _mm_cvtt_ss2si, _mm_loadu_ps,
+    _mm_loadu_si128, _mm_set_ss, _mm_sll_epi64, _mm_sra_epi32, _mm_srl_epi64, _mm_storeu_si128,
+    _mm256_cmp_ps, _mm256_cvtph_ps, _mm256_cvtps_ph, _mm256_loadu_ps, _mm256_movemask_ps,
+    _mm256_storeu_ps,
 };
 
 /// Whether the CPU has F16C, with the AVX state it needs.
@@ -138,4 +140,68 @@ fn cmp8(a: &[f32; 8], b: &[f32; 8]) -> (i32, i32) {
         _mm256_movemask_ps(_mm256_cmp_ps::<_CMP_NLT_UQ>(va, vb)),
         _mm256_movemask_ps(_mm256_cmp_ps::<_CMP_NGE_UQ>(va, vb)),
     )
+}
+
+/// `psrad` (`_mm_sra_epi32`) of `v` by the 64-bit count `count` in a register (the low
+/// quadword of its count operand): SSE2, which every x86-64 CPU has.
+pub fn psrad(v: i32, count: u64) -> i32 {
+    // SAFETY: SSE2 is part of x86-64; the operands are registers.
+    unsafe {
+        _mm_cvtsi128_si32(_mm_sra_epi32(
+            _mm_cvtsi32_si128(v),
+            _mm_cvtsi64_si128(count as i64),
+        ))
+    }
+}
+
+/// `psrlq` (`_mm_srl_epi64`) of `v` by the 64-bit count `count` in a register: SSE2.
+pub fn psrlq(v: u64, count: u64) -> u64 {
+    // SAFETY: SSE2 is part of x86-64; the operands are registers.
+    unsafe {
+        _mm_cvtsi128_si64(_mm_srl_epi64(
+            _mm_cvtsi64_si128(v as i64),
+            _mm_cvtsi64_si128(count as i64),
+        )) as u64
+    }
+}
+
+/// `psllq` (`_mm_sll_epi64`) of `v` by the 64-bit count `count` in a register: SSE2.
+pub fn psllq(v: u64, count: u64) -> u64 {
+    // SAFETY: SSE2 is part of x86-64; the operands are registers.
+    unsafe {
+        _mm_cvtsi128_si64(_mm_sll_epi64(
+            _mm_cvtsi64_si128(v as i64),
+            _mm_cvtsi64_si128(count as i64),
+        )) as u64
+    }
+}
+
+/// x86's `sar r32, cl` of `v` by `cl`.
+pub fn sar32(v: i32, cl: u8) -> i32 {
+    let mut r = v;
+    // SAFETY: a register-only instruction.
+    unsafe {
+        std::arch::asm!("sar {r:e}, cl", r = inout(reg) r, in("cl") cl, options(pure, nomem, nostack))
+    };
+    r
+}
+
+/// x86's `sar r64, cl` of `v` by `cl`.
+pub fn sar64(v: i64, cl: u8) -> i64 {
+    let mut r = v;
+    // SAFETY: a register-only instruction.
+    unsafe {
+        std::arch::asm!("sar {r}, cl", r = inout(reg) r, in("cl") cl, options(pure, nomem, nostack))
+    };
+    r
+}
+
+/// x86's `shl r64, cl` of `v` by `cl`.
+pub fn shl64(v: u64, cl: u8) -> u64 {
+    let mut r = v;
+    // SAFETY: a register-only instruction.
+    unsafe {
+        std::arch::asm!("shl {r}, cl", r = inout(reg) r, in("cl") cl, options(pure, nomem, nostack))
+    };
+    r
 }
