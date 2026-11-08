@@ -10,6 +10,9 @@ row by row, and <out-dir>/manifest.tsv gets one line, tab-separated:
 
   part  index  name (UTF-8, hex)  dtype  height  width  x_sampling  y_sampling  file
 
+A deep channel's dtype is `deep-<sample dtype>`: <p>.<i>.counts holds its pixels' sample
+counts (uint32, row by row) and <p>.<i>.bin its samples, pixel after pixel.
+
 If the wheel refuses the image, manifest.tsv holds a single line `error<TAB><message>`.
 
 This script reports what the library does; it computes no expected values.
@@ -18,7 +21,11 @@ This script reports what the library does; it computes no expected values.
 import os
 import sys
 
+import numpy as np
 import OpenEXR
+
+# a deep channel's samples, by the channel's type
+DEEP_TYPES = {"PixelType.UINT": "uint32", "PixelType.HALF": "float16", "PixelType.FLOAT": "float32"}
 
 
 def main():
@@ -33,9 +40,23 @@ def main():
             for i, (name, ch) in enumerate(part.channels.items()):
                 px = ch.pixels
                 fn = f"{p}.{i}.bin"
-                with open(os.path.join(out, fn), "wb") as fh:
-                    fh.write(px.tobytes(order="C"))
                 h, w = px.shape[:2]
+                if px.dtype == object:
+                    dtype = "deep-" + DEEP_TYPES[str(ch.type())]
+                    counts = np.zeros((h, w), dtype=np.uint32)
+                    with open(os.path.join(out, fn), "wb") as fh:
+                        for y in range(h):
+                            for x in range(w):
+                                s = px[y, x]
+                                if s is not None:
+                                    counts[y, x] = s.shape[0]
+                                    fh.write(s.tobytes(order="C"))
+                    with open(os.path.join(out, f"{p}.{i}.counts"), "wb") as fh:
+                        fh.write(counts.tobytes(order="C"))
+                else:
+                    dtype = px.dtype.name
+                    with open(os.path.join(out, fn), "wb") as fh:
+                        fh.write(px.tobytes(order="C"))
                 lines.append(
                     "\t".join(
                         str(v)
@@ -43,7 +64,7 @@ def main():
                             p,
                             i,
                             name.encode("utf-8").hex(),
-                            px.dtype.name,
+                            dtype,
                             h,
                             w,
                             ch.xSampling,
