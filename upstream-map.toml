@@ -524,8 +524,8 @@ note = "ported"
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx.cpp"
 kind = "vendored"
 status = "done"
-target = "crates/openexr-openjph/src/transform.rs"
-note = "the irreversible lifting computes as the generic one (the same operations per lane)"
+target = "crates/openexr-openjph/src/transform.rs, crates/openexr-openjph/src/transform_avx2.rs"
+note = "the irreversible lifting computes as the generic one (the same operations per lane); compiled for AVX and chosen at the level upstream chooses it"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx2.cpp"
@@ -538,8 +538,8 @@ note = "the reversible lifting, one loop per case as upstream's AVX2 loops, comp
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx512.cpp"
 kind = "vendored"
 status = "done"
-target = "crates/openexr-openjph/src/transform.rs"
-note = "the irreversible lifting as the generic one, fused where GCC contracts it: the Linux wheel's object holds exactly five FMAs (vfmadd213ps x3 in irv_vert_step and irv_horz_ana, vfnmadd213ps x2 in irv_horz_syn), which the port computes with mul_add on GCC-built x86-64 at AVX-512 (transform.rs fused_irv_lifting); MSVC does not contract; LJ2K equals both wheels"
+target = "crates/openexr-openjph/src/transform.rs, crates/openexr-openjph/src/transform_avx2.rs"
+note = "the irreversible lifting as the generic one, fused where GCC contracts it: the Linux wheel's object holds exactly five FMAs (vfmadd213ps x3 in irv_vert_step and irv_horz_ana, vfnmadd213ps x2 in irv_horz_syn), which the port computes with mul_add on GCC-built x86-64 at AVX-512 (transform.rs fused_irv_lifting); MSVC does not contract; LJ2K equals both wheels; compiled for AVX-512 (with FMA, in line) and chosen at the level upstream chooses it"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_local.h"

@@ -458,13 +458,50 @@ fn fused_irv_lifting() -> bool {
     })
 }
 
-/// `d + a * (s1 + s2)` as the kernel upstream's build chooses computes it ([`fused_irv_lifting`]).
-#[inline]
-fn irv_lift(d: f32, a: f32, sum: f32, fused: bool) -> f32 {
-    if fused {
-        a.mul_add(sum, d)
+/// The `n` samples of `d` lifted by `a (s1 + s2)`, added (`d + a * (s1 + s2)`) or, with
+/// `negate`, subtracted (`d - a * (s1 + s2)`), fused as the kernel upstream's build chooses
+/// computes it ([`fused_irv_lifting`]): `fma (a, s, d)` or `fma (-a, s, d)`, rounded once.
+/// The choice is made once for the line, in loops the compiler vectorizes.
+#[inline(always)]
+fn irv_lift_line(
+    a: f32,
+    s1: &[f32],
+    s2: &[f32],
+    d: &mut [f32],
+    n: usize,
+    negate: bool,
+    fused: bool,
+) {
+    let (s1, s2, d) = (&s1[..n], &s2[..n], &mut d[..n]);
+    let it = d.iter_mut().zip(s1.iter().zip(s2));
+    match (fused, negate) {
+        (true, false) => it.for_each(|(d, (&x, &y))| *d = a.mul_add(x + y, *d)),
+        (true, true) => it.for_each(|(d, (&x, &y))| *d = (-a).mul_add(x + y, *d)),
+        (false, false) => it.for_each(|(d, (&x, &y))| *d += a * (x + y)),
+        (false, true) => it.for_each(|(d, (&x, &y))| *d -= a * (x + y)),
+    }
+}
+
+/// The SIMD build of the irreversible kernels upstream chooses at the CPU's level
+/// (`init_wavelet_transform_functions`, ojph_transform.cpp:117-169): AVX-512's from
+/// `X86_CPU_EXT_LEVEL_AVX512`, AVX's from `X86_CPU_EXT_LEVEL_AVX`; their lanes compute as the
+/// generic kernels (with AVX-512's fusing, [`fused_irv_lifting`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IrvSimd {
+    None,
+    Avx,
+    Avx512,
+}
+
+/// The irreversible kernels' build for the CPU's level ([`IrvSimd`]).
+pub(crate) fn irv_simd() -> IrvSimd {
+    let level = crate::arch::get_cpu_ext_level();
+    if cfg!(target_arch = "x86_64") && level >= crate::arch::x86_level::AVX512 {
+        IrvSimd::Avx512
+    } else if cfg!(target_arch = "x86_64") && level >= crate::arch::x86_level::AVX {
+        IrvSimd::Avx
     } else {
-        d + a * sum
+        IrvSimd::None
     }
 }
 
@@ -479,21 +516,53 @@ pub(crate) fn irv_vert_step(
     repeat: u32,
     synthesis: bool,
 ) {
+    #[cfg(target_arch = "x86_64")]
+    if crate::transform_avx2::irv_vert_step(s, sig, other, aug, repeat, synthesis) {
+        return;
+    }
+    irv_vert_step_gen(s, sig, other, aug, repeat, synthesis);
+}
+
+/// [`irv_vert_step`]'s kernel, inlined into the SIMD builds too.
+#[inline(always)]
+pub(crate) fn irv_vert_step_gen(
+    s: &LiftingStep,
+    sig: &LineBuf,
+    other: &LineBuf,
+    aug: &mut LineBuf,
+    repeat: u32,
+    synthesis: bool,
+) {
     let mut a = s.irv_aatk();
     if synthesis {
         a = -a;
     }
     let (src1, src2) = (sig.f32(), other.f32());
     let dst = aug.f32_mut();
-    let fused = fused_irv_lifting();
-    for i in 0..repeat as usize {
-        dst[i] = irv_lift(dst[i], a, src1[i] + src2[i], fused);
-    }
+    irv_lift_line(
+        a,
+        src1,
+        src2,
+        dst,
+        repeat as usize,
+        false,
+        fused_irv_lifting(),
+    );
 }
 
 /// Port of `gen_irv_vert_times_K`
 /// (external/OpenJPH/src/core/transform/ojph_transform.cpp:707-712 @ OpenJPH 0.32.0).
 pub(crate) fn irv_vert_times_k(k: f32, aug: &mut LineBuf, repeat: u32) {
+    #[cfg(target_arch = "x86_64")]
+    if crate::transform_avx2::irv_vert_times_k(k, aug, repeat) {
+        return;
+    }
+    irv_vert_times_k_gen(k, aug, repeat);
+}
+
+/// [`irv_vert_times_k`]'s kernel, inlined into the SIMD builds too.
+#[inline(always)]
+pub(crate) fn irv_vert_times_k_gen(k: f32, aug: &mut LineBuf, repeat: u32) {
     for d in &mut aug.f32_mut()[..repeat as usize] {
         *d *= k;
     }
@@ -508,11 +577,28 @@ pub(crate) fn irv_horz_ana(
     hdst: Option<&mut LineBuf>,
     src: &LineBuf,
     width: u32,
-    mut even: bool,
+    even: bool,
 ) {
     let (mut d1, mut d2) = (None, None);
     let ldst = or_dummy(ldst, &mut d1, src);
     let hdst = or_dummy(hdst, &mut d2, src);
+    #[cfg(target_arch = "x86_64")]
+    if crate::transform_avx2::irv_horz_ana(atk, ldst, hdst, src, width, even) {
+        return;
+    }
+    irv_horz_ana_gen(atk, ldst, hdst, src, width, even);
+}
+
+/// [`irv_horz_ana`]'s kernel, inlined into the SIMD builds too.
+#[inline(always)]
+pub(crate) fn irv_horz_ana_gen(
+    atk: &ParamAtk,
+    ldst: &mut LineBuf,
+    hdst: &mut LineBuf,
+    src: &LineBuf,
+    width: u32,
+    mut even: bool,
+) {
     let src = src.f32();
     let (l, lp0) = ldst.raw_f32_mut();
     let (h, hp0) = hdst.raw_f32_mut();
@@ -555,10 +641,17 @@ pub(crate) fn irv_horz_ana(
             lbuf[l0 + l_width as usize] = lbuf[l0 + l_width as usize - 1];
             // lifting
             let sp0 = l0 + usize::from(even);
-            let fused = fused_irv_lifting();
-            for i in 0..h_width as usize {
-                hbuf[h0 + i] = irv_lift(hbuf[h0 + i], a, lbuf[sp0 + i - 1] + lbuf[sp0 + i], fused);
-            }
+            let n = h_width as usize;
+            let s = &lbuf[sp0 - 1..sp0 + n];
+            irv_lift_line(
+                a,
+                &s[..n],
+                &s[1..],
+                &mut hbuf[h0..],
+                n,
+                false,
+                fused_irv_lifting(),
+            );
             // swap buffers
             lp_is_l = !lp_is_l;
             even = !even;
@@ -601,6 +694,23 @@ pub(crate) fn irv_horz_syn(
     let (mut d1, mut d2) = (None, None);
     let lsrc = or_dummy(lsrc, &mut d1, dst);
     let hsrc = or_dummy(hsrc, &mut d2, dst);
+    #[cfg(target_arch = "x86_64")]
+    if crate::transform_avx2::irv_horz_syn(atk, dst, lsrc, hsrc, width, even) {
+        return;
+    }
+    irv_horz_syn_gen(atk, dst, lsrc, hsrc, width, even);
+}
+
+/// [`irv_horz_syn`]'s kernel, inlined into the SIMD builds too.
+#[inline(always)]
+pub(crate) fn irv_horz_syn_gen(
+    atk: &ParamAtk,
+    dst: &mut LineBuf,
+    lsrc: &mut LineBuf,
+    hsrc: &mut LineBuf,
+    width: u32,
+    even: bool,
+) {
     let dst = dst.f32_mut();
     let (l, lp0) = lsrc.raw_f32_mut();
     let (h, hp0) = hsrc.raw_f32_mut();
@@ -634,15 +744,18 @@ pub(crate) fn irv_horz_syn(
             obuf[o0 + oth_width as usize] = obuf[o0 + oth_width as usize - 1];
             // lifting
             let sp0 = o0 + usize::from(!ev);
-            let fused = fused_irv_lifting();
-            for i in 0..aug_width as usize {
-                let sum = obuf[sp0 + i - 1] + obuf[sp0 + i];
-                abuf[a0 + i] = if fused {
-                    (-a).mul_add(sum, abuf[a0 + i]) // -(a * sum) + p, rounded once
-                } else {
-                    abuf[a0 + i] - a * sum
-                };
-            }
+            let n = aug_width as usize;
+            let s = &obuf[sp0 - 1..sp0 + n];
+            // p - a * sum, or fused -(a * sum) + p, rounded once
+            irv_lift_line(
+                a,
+                &s[..n],
+                &s[1..],
+                &mut abuf[a0..],
+                n,
+                true,
+                fused_irv_lifting(),
+            );
             // swap buffers
             oth_is_h = !oth_is_h;
             ev = !ev;
