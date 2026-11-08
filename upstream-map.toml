@@ -100,8 +100,8 @@ note = "avx_mem_clear clears as the generic kernel"
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_avx2.cpp"
 kind = "vendored"
 status = "done"
-target = "crates/openexr-openjph/src/codeblock_fun.rs"
-note = "as ojph_codestream_sse2.cpp"
+target = "crates/openexr-openjph/src/codeblock_fun.rs, crates/openexr-openjph/src/codestream_avx2.rs"
+note = "as ojph_codestream_sse2.cpp; the 32-bit conversions compiled for AVX2 and chosen at X86_CPU_EXT_LEVEL_AVX2"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp"
@@ -271,8 +271,8 @@ note = "ported; checked through Core's HTJ2K decoder and encoder against the whe
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_avx2.cpp"
 kind = "vendored"
 status = "partial"
-target = "crates/openexr-openjph/src/block_decoder32.rs"
-note = "as ojph_block_decoder_ssse3.cpp"
+target = "crates/openexr-openjph/src/block_decoder_avx2.rs"
+note = "ported whole, in AVX2, chosen from X86_CPU_EXT_LEVEL_AVX2 as upstream chooses it; decodes as the wheel's and the harness's (heavy_decode, heavy_harness's reads of damaged files); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_ssse3.cpp"
@@ -324,8 +324,8 @@ note = "Apple's build of the AVX2 encoder; the port has no macOS x86-64 target (
 path = "external/OpenJPH/src/core/coding/ojph_block_encoder_avx512.cpp"
 kind = "vendored"
 status = "partial"
-target = "crates/openexr-openjph/src/block_encoder.rs"
-note = "writes the generic encoder's bytes: the wheel chooses it on this machine, and Core's HTJ2K chunks are byte-identical"
+target = "crates/openexr-openjph/src/block_encoder_avx512.rs"
+note = "ported whole, in AVX-512F/CD, chosen at X86_CPU_EXT_LEVEL_AVX512 as upstream chooses it; encodes as the wheel's (heavy_decode's encode checks); its unchecked MEL and VLC writes are refused past their buffers (unreachable); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/table0.h"
@@ -469,9 +469,9 @@ note = "the ICT computes as the generic one (the same operations per lane)"
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_avx2.cpp"
 kind = "vendored"
-status = "done"
-target = "crates/openexr-openjph/src/colour.rs"
-note = "as ojph_colour_sse2.cpp (AVX2's clamps let NaN through); checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode, gate --full)"
+status = "partial"
+target = "crates/openexr-openjph/src/colour.rs, crates/openexr-openjph/src/colour_avx2.rs"
+note = "as ojph_colour_sse2.cpp (AVX2's clamps let NaN through); the LUT nonlinearity conversions (types 2 and 4) in AVX2 with gathers, chosen at X86_CPU_EXT_LEVEL_AVX2; checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_local.h"
@@ -524,22 +524,22 @@ note = "ported"
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx.cpp"
 kind = "vendored"
 status = "done"
-target = "crates/openexr-openjph/src/transform.rs"
-note = "the irreversible lifting computes as the generic one (the same operations per lane)"
+target = "crates/openexr-openjph/src/transform.rs, crates/openexr-openjph/src/transform_avx2.rs"
+note = "the irreversible lifting computes as the generic one (the same operations per lane); compiled for AVX and chosen at the level upstream chooses it"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx2.cpp"
 kind = "vendored"
-status = "done"
-target = "crates/openexr-openjph/src/transform.rs"
-note = "the reversible lifting computes as the generic one"
+status = "partial"
+target = "crates/openexr-openjph/src/transform.rs, crates/openexr-openjph/src/transform_avx2.rs"
+note = "the reversible lifting, one loop per case as upstream's AVX2 loops, compiled for AVX2 and chosen at X86_CPU_EXT_LEVEL_AVX2 as upstream chooses it (the same integers lane by lane); heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx512.cpp"
 kind = "vendored"
 status = "done"
-target = "crates/openexr-openjph/src/transform.rs"
-note = "the irreversible lifting as the generic one, fused where GCC contracts it: the Linux wheel's object holds exactly five FMAs (vfmadd213ps x3 in irv_vert_step and irv_horz_ana, vfnmadd213ps x2 in irv_horz_syn), which the port computes with mul_add on GCC-built x86-64 at AVX-512 (transform.rs fused_irv_lifting); MSVC does not contract; LJ2K equals both wheels"
+target = "crates/openexr-openjph/src/transform.rs, crates/openexr-openjph/src/transform_avx2.rs"
+note = "the irreversible lifting as the generic one, fused where GCC contracts it: the Linux wheel's object holds exactly five FMAs (vfmadd213ps x3 in irv_vert_step and irv_horz_ana, vfnmadd213ps x2 in irv_horz_syn), which the port computes with mul_add on GCC-built x86-64 at AVX-512 (transform.rs fused_irv_lifting); MSVC does not contract; LJ2K equals both wheels; compiled for AVX-512 (with FMA, in line) and chosen at the level upstream chooses it"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_local.h"

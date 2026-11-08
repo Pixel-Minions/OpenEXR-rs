@@ -12,6 +12,12 @@
 use crate::arch::{get_cpu_ext_level, x86_level};
 use crate::codestream_gen as cg;
 
+/// Whether upstream's level takes the AVX2 conversions (`X86_CPU_EXT_LEVEL_AVX2`).
+#[cfg(target_arch = "x86_64")]
+fn avx2_level() -> bool {
+    get_cpu_ext_level() >= x86_level::AVX2
+}
+
 /// Port of `codeblock_fun` (external/OpenJPH/src/core/codestream/ojph_codeblock_fun.h:99-115
 /// @ OpenJPH 0.32.0): the kernels of a reversible or an irreversible codeblock. The line
 /// is an integer one when reversible, a float one otherwise (the subband's lines and the
@@ -39,6 +45,10 @@ impl CodeblockFun {
         max_val: &mut u32,
     ) {
         debug_assert!(self.reversible);
+        #[cfg(target_arch = "x86_64")]
+        if avx2_level() && crate::codestream_avx2::rev_tx_to_cb32(sp, dp, k_max, count, max_val) {
+            return;
+        }
         cg::rev_tx_to_cb32(sp, dp, k_max, count, max_val);
     }
 
@@ -55,6 +65,12 @@ impl CodeblockFun {
         max_val: &mut u32,
     ) {
         debug_assert!(!self.reversible);
+        #[cfg(target_arch = "x86_64")]
+        if avx2_level()
+            && crate::codestream_avx2::irv_tx_to_cb32_rounded(sp, dp, delta_inv, count, max_val)
+        {
+            return;
+        }
         if cfg!(target_arch = "x86_64") && get_cpu_ext_level() >= x86_level::SSE2 {
             cg::irv_tx_to_cb32_rounded(sp, dp, delta_inv, count, max_val);
         } else {
@@ -78,12 +94,20 @@ impl CodeblockFun {
     /// `tx_from_cb32` into an integer line: `gen_rev_tx_from_cb32`.
     pub(crate) fn tx_from_cb32_i(&self, sp: &[u32], dp: &mut [i32], k_max: u32, count: u32) {
         debug_assert!(self.reversible);
+        #[cfg(target_arch = "x86_64")]
+        if avx2_level() && crate::codestream_avx2::rev_tx_from_cb32(sp, dp, k_max, count) {
+            return;
+        }
         cg::rev_tx_from_cb32(sp, dp, k_max, count);
     }
 
     /// `tx_from_cb32` into a float line: `gen_irv_tx_from_cb32`.
     pub(crate) fn tx_from_cb32_f(&self, sp: &[u32], dp: &mut [f32], delta: f32, count: u32) {
         debug_assert!(!self.reversible);
+        #[cfg(target_arch = "x86_64")]
+        if avx2_level() && crate::codestream_avx2::irv_tx_from_cb32(sp, dp, delta, count) {
+            return;
+        }
         cg::irv_tx_from_cb32(sp, dp, delta, count);
     }
 

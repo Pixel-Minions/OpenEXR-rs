@@ -18,18 +18,26 @@ mod block_common;
 mod block_decoder32;
 #[allow(dead_code)] // used as the port grows
 mod block_decoder64;
+#[cfg(target_arch = "x86_64")]
+mod block_decoder_avx2;
 #[allow(dead_code)] // used as the port grows
 mod block_encoder;
+#[cfg(target_arch = "x86_64")]
+mod block_encoder_avx512;
 #[allow(dead_code)] // used as the port grows
 mod codeblock;
 #[allow(dead_code)] // used as the port grows
 mod codeblock_fun;
 #[allow(dead_code)] // used as the port grows
 mod codestream;
+#[cfg(target_arch = "x86_64")]
+mod codestream_avx2;
 #[allow(dead_code)] // used as the port grows
 mod codestream_gen;
 #[allow(dead_code)] // used as the port grows
 mod colour;
+#[cfg(target_arch = "x86_64")]
+mod colour_avx2;
 #[allow(dead_code)] // used as the port grows
 mod file;
 #[allow(dead_code)] // used as the port grows
@@ -50,6 +58,8 @@ mod tile;
 mod tile_comp;
 #[allow(dead_code)] // used as the port grows
 mod transform;
+#[cfg(target_arch = "x86_64")]
+mod transform_avx2;
 
 pub use base::{Point, Rect, Size};
 pub use codestream::{Codestream, CommentExchange};
