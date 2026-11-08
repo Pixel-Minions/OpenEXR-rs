@@ -4,8 +4,8 @@
 
   uv run --project oracle python -I oracle/dump_pixels.py <image> <out-dir>
 
-The image is read with `separate_channels=True`. For channel number i of part p (in the order
-the wheel lists them), <out-dir>/<p>.<i>.bin holds the channel's pixels in native byte order,
+The image is read with `separate_channels=True`. For channel number i of part p (the part's
+number in the file; a part whose pixels the wheel cannot read is left out), <out-dir>/<p>.<i>.bin holds the channel's pixels in native byte order,
 row by row, and <out-dir>/manifest.tsv gets one line, tab-separated:
 
   part  index  name (UTF-8, hex)  dtype  height  width  x_sampling  y_sampling  file
@@ -36,7 +36,10 @@ def main():
     lines = []
     try:
         f = OpenEXR.File(image, separate_channels=True)
-        for p, part in enumerate(f.parts):
+        # the part's number in the file: the binding leaves out a part whose pixels it cannot
+        # read, so a part's place in f.parts is not its number
+        for part in f.parts:
+            p = part.part_index
             for i, (name, ch) in enumerate(part.channels.items()):
                 px = ch.pixels
                 fn = f"{p}.{i}.bin"
