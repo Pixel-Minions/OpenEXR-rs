@@ -7,16 +7,18 @@
 //! `init_wavelet_transform_functions`, ojph_transform.cpp:155-160): the generic kernels'
 //! lifting, which upstream's AVX2 loops compute lane by lane (one loop per lifting case, eight
 //! 32-bit or four 64-bit samples a step, integer adds, multiplies and arithmetic shifts),
-//! compiled for AVX2. The samples inside each line are the same integers; upstream's lanes
-//! past a line's width only write padding, which nothing inside the width reads.
+//! compiled for AVX2, with the shifts of AVX2's loops by an ATK-Eatk at or past a sample's
+//! width (`RevKernel::Avx2`, I-33). The samples inside each line are the same integers;
+//! upstream's lanes past a line's width only write padding, which nothing inside the width
+//! reads.
 
 #![allow(unsafe_code)]
 
 use crate::mem::LineBuf;
 use crate::params::{LiftingStep, ParamAtk};
 use crate::transform::{
-    IrvSimd, irv_horz_ana_gen, irv_horz_syn_gen, irv_simd, irv_vert_step_gen, irv_vert_times_k_gen,
-    rev_horz_ana_gen, rev_horz_syn_gen, rev_vert_step_gen,
+    IrvSimd, RevKernel, irv_horz_ana_gen, irv_horz_syn_gen, irv_simd, irv_vert_step_gen,
+    irv_vert_times_k_gen, rev_horz_ana_gen, rev_horz_syn_gen, rev_vert_step_gen,
 };
 
 /// The CPU has AVX2 (upstream's level check implies it).
@@ -35,7 +37,7 @@ unsafe fn rev_vert_step_avx2(
     repeat: u32,
     synthesis: bool,
 ) {
-    rev_vert_step_gen(s, sig, other, aug, repeat, synthesis);
+    rev_vert_step_gen(s, sig, other, aug, repeat, synthesis, RevKernel::Avx2);
 }
 
 /// `avx2_rev_vert_step` (lines 387-407): false where the CPU lacks AVX2.
@@ -66,7 +68,7 @@ unsafe fn rev_horz_ana_avx2(
     width: u32,
     even: bool,
 ) {
-    rev_horz_ana_gen(atk, ldst, hdst, src, width, even);
+    rev_horz_ana_gen(atk, ldst, hdst, src, width, even, RevKernel::Avx2);
 }
 
 /// `avx2_rev_horz_ana` (lines 727-745): false where the CPU lacks AVX2.
@@ -97,7 +99,7 @@ unsafe fn rev_horz_syn_avx2(
     width: u32,
     even: bool,
 ) {
-    rev_horz_syn_gen(atk, dst, lsrc, hsrc, width, even);
+    rev_horz_syn_gen(atk, dst, lsrc, hsrc, width, even, RevKernel::Avx2);
 }
 
 /// `avx2_rev_horz_syn` (lines 1064-1082): false where the CPU lacks AVX2.

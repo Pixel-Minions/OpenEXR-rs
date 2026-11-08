@@ -511,7 +511,7 @@ path = "external/OpenJPH/src/core/transform/ojph_transform.cpp"
 kind = "vendored"
 status = "done"
 target = "crates/openexr-openjph/src/transform.rs"
-note = "the generic lifting ported, which the SSE/AVX/SSE2/AVX2 kernels compute; checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode, gate --full)"
+note = "the generic lifting ported, which the SSE/AVX/SSE2/AVX2 kernels compute; checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode, gate --full); an ATK-Eatk at or past a sample's width shifts as each wheel's build of the kernel upstream runs (RevKernel, I-33: intrinsics' sign fill or 0, x86's masked sar, GCC's vectorized loops), checked with crafted ATK kernels against both wheels natively and under SDE nhm (heavy_decode)"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform.h"
@@ -532,7 +532,7 @@ path = "external/OpenJPH/src/core/transform/ojph_transform_avx2.cpp"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-openjph/src/transform.rs, crates/openexr-openjph/src/transform_avx2.rs"
-note = "the reversible lifting, 32- and 64-bit, one loop per case as upstream's AVX2 loops, compiled for AVX2 and chosen at X86_CPU_EXT_LEVEL_AVX2 as upstream chooses it (the same integers lane by lane, the 64-bit srai emulation exact for Eatk < 64); heavy-tier check pending gate --full"
+note = "the reversible lifting, 32- and 64-bit, one loop per case as upstream's AVX2 loops, compiled for AVX2 and chosen at X86_CPU_EXT_LEVEL_AVX2 as upstream chooses it (the same integers lane by lane, the 64-bit srai emulation exact for Eatk < 64); heavy-tier check pending gate --full; its shifts by an ATK-Eatk past a sample's width as each wheel's build computes them (RevKernel::Avx2, I-33)"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx512.cpp"
@@ -560,7 +560,7 @@ path = "external/OpenJPH/src/core/transform/ojph_transform_sse2.cpp"
 kind = "vendored"
 status = "done"
 target = "crates/openexr-openjph/src/transform.rs"
-note = "the reversible lifting computes as the generic one"
+note = "the reversible lifting computes as the generic one; its shifts by an ATK-Eatk past a sample's width as each wheel's build computes them (RevKernel::Sse2, I-33)"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_vsx.cpp"
