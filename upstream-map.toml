@@ -1271,7 +1271,8 @@ target = "crates/openexr-core/src/attributes.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/backward_compatibility.h"
 kind = "src"
-status = "todo"
+status = "n/a"
+note = "the v1 context initializer, a C struct versioned by size (PLAN.md O8)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/base.c"
@@ -1317,7 +1318,7 @@ path = "src/lib/OpenEXRCore/compression.c"
 kind = "src"
 status = "partial"
 target = "crates/openexr-core/src/compression.rs"
-note = "lines_per_chunk, is_valid_for_deep, exr_compression_name, the decompression dispatch, exr_uncompress_buffer and the cached deflate context, exr_rle_*_buffer; exr_compress_max_buffer_size, exr_compress_buffer, the compression dispatch (exr_compress_chunk); NONE to DWAB and ZSTD both ways; HTJ2K with Phase 5f (FEATURE_NOT_IMPLEMENTED until then), the deep sample table's compression with Phase 7"
+note = "ported whole: the dispatch both ways for every codec, the buffers, the cached deflate context; the deep sample table's compression waits for Phase 7"
 
 [[file]]
 path = "src/lib/OpenEXRCore/context.c"
@@ -1402,7 +1403,9 @@ note = "pixel conversions and Imath half done; pipeline declarations with coding
 [[file]]
 path = "src/lib/OpenEXRCore/internal_compress.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/compression.rs"
+note = "declarations of the codecs' compressors, ported with each codec"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_constants.h"
@@ -1420,7 +1423,9 @@ note = "done on Windows; the Linux path (xgetbv through feature detection) runs 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_decompress.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/compression.rs"
+note = "declarations of the codecs' decompressors, ported with each codec"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa.c"
@@ -1534,24 +1539,28 @@ target = "crates/openexr-core/src/internal_ht_quality.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_huf.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_huf.rs"
-note = "ported whole: the coder, the classic and the fast decoder (testHUF; the bytes are checked against the wheel with PIZ)"
+note = "ported whole: the coder, the classic and the fast decoder (testHUF; the bytes checked against the wheel with PIZ (heavy tier, gate --full))"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_huf.h"
 kind = "src"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/internal_huf.rs"
+note = "declarations, ported with internal_huf.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_legacy_structs.h"
 kind = "src"
-status = "todo"
+status = "n/a"
+note = "the v1 decode and encode pipelines, C structs versioned by size (PLAN.md O8)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_memory.h"
 kind = "src"
-status = "todo"
+status = "n/a"
+note = "the allocation hooks (PLAN.md O8)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_opaque.h"
@@ -1562,9 +1571,9 @@ target = "crates/openexr-core/src/opaque.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_piz.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_piz.rs"
-note = "ported whole; decodes as the wheel does and encodes the wheel's files byte for byte (heavy tier, tests/heavy_decode.rs, and testPIZCompression's C++ half); heavy-tier check pending gate --full"
+note = "ported whole; decodes as the wheel does and encodes the wheel's files byte for byte, with testPIZCompression's C++ half (heavy tier, gate --full)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_posix_file_impl.h"
@@ -1582,16 +1591,16 @@ target = "crates/openexr-core/src/preview.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_pxr24.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_pxr24.rs"
-note = "ported whole; decodes as the wheel does and encodes the wheel's files byte for byte (heavy tier, and testPXR24Compression's C++ half); keeps the packed bytes for a stream of their size (D-18); heavy-tier check pending gate --full"
+note = "ported whole; decodes as the wheel does and encodes the wheel's files byte for byte, with testPXR24Compression's C++ half; keeps the packed bytes for a stream of their size (D-18) (heavy tier, gate --full)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_rle.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_rle.rs"
-note = "ported whole. Decoding matches the wheel bit for bit and encoding writes the C++ library's files byte for byte (heavy tier, tests/heavy_decode.rs)"
+note = "ported whole; decodes as the wheel does and encodes the C++ library's files byte for byte (heavy tier, gate --full)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_string.h"
@@ -1622,7 +1631,8 @@ note = "context and part fields grow with each phase; locks are Rust borrows (&m
 [[file]]
 path = "src/lib/OpenEXRCore/internal_thread.h"
 kind = "src"
-status = "todo"
+status = "n/a"
+note = "once flags and locks: Rust's OnceLock and borrows"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_util.h"
@@ -1646,9 +1656,9 @@ target = "crates/openexr-core/src/internal_xdr.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zip.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_zip.rs"
-note = "ported whole (scalar reconstruct and interleave); the SSE2/SSE4.1/NEON kernels give the same bytes (performance, PLAN.md O3). Decoding matches the wheel bit for bit, and encoding writes the wheel's files byte for byte (heavy tier)"
+note = "ported whole (scalar reconstruct and interleave; the SSE2/SSE4.1/NEON kernels give the same bytes, performance work in docs/deferred.md); decodes as the wheel does and encodes its files byte for byte (heavy tier, gate --full)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd.c"
@@ -1686,7 +1696,8 @@ target = "crates/openexr-core/src/opaque.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr.h"
 kind = "api"
-status = "todo"
+status = "n/a"
+note = "the umbrella include"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_attr.h"
@@ -1726,12 +1737,15 @@ note = "as color_metadata.c"
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_compression.h"
 kind = "api"
-status = "todo"
+status = "done"
+target = "crates/openexr-core/src/compression.rs"
+note = "exr_compress_max_buffer_size, exr_compress_buffer, exr_uncompress_buffer, the RLE buffers: ported with compression.c"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_config.h"
 kind = "api"
-status = "todo"
+status = "n/a"
+note = "export and visibility macros"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_context.h"
@@ -1757,7 +1771,9 @@ note = "exr_decode_pipeline_t; pipe_size, the custom allocators and free_compres
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_encode.h"
 kind = "api"
-status = "todo"
+status = "partial"
+target = "crates/openexr-core/src/encoding.rs"
+note = "the encode pipeline and its flags, as encoding.c; the deep flags are tested with Phase 7"
 
 [[file]]
 path = "src/lib/OpenEXRCore/openexr_errors.h"
@@ -1787,9 +1803,9 @@ target = "crates/openexr-core/src/version.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/pack.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/pack.rs"
-note = "ported whole (upstream has no deep packer); checked by the re-encode tests of encoding.c; heavy-tier check pending gate --full"
+note = "ported whole (upstream has no deep packer); checked by the re-encode tests of every codec (heavy tier, gate --full)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/parse_header.c"
