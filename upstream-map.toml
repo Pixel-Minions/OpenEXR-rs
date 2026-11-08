@@ -270,16 +270,16 @@ note = "ported; checked through Core's HTJ2K decoder and encoder against the whe
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_avx2.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/block_decoder_avx2.rs"
-note = "ported whole, in AVX2, chosen from X86_CPU_EXT_LEVEL_AVX2 as upstream chooses it; decodes as the wheel's and the harness's (heavy_decode, heavy_harness's reads of damaged files); heavy-tier check pending gate --full"
+note = "ported whole, in AVX2, chosen from X86_CPU_EXT_LEVEL_AVX2 as upstream chooses it; decodes as the wheel's and the harness's (heavy_decode, heavy_harness's reads of damaged files)"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_ssse3.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/block_decoder_ssse3.rs"
-note = "ported whole, in SSSE3, chosen from X86_CPU_EXT_LEVEL_SSSE3 below AVX2 as upstream chooses it; forced on this machine, its chunk digests equal Core's under SDE -snb (where OpenJPH takes it) for the decode check's 240 HTJ2K/LJ2K files, damaged copies included; heavy-tier check pending gate --full and SDE"
+note = "ported whole, in SSSE3, chosen from X86_CPU_EXT_LEVEL_SSSE3 below AVX2 as upstream chooses it; forced on this machine, its chunk digests equal Core's under SDE -snb (where OpenJPH takes it) for the decode check's 240 HTJ2K/LJ2K files, damaged copies included and SDE"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder_vsx.cpp"
@@ -310,9 +310,9 @@ note = "ported"
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_encoder_avx2.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/block_encoder_avx2.rs"
-note = "ported whole, in AVX2, chosen from X86_CPU_EXT_LEVEL_AVX2 below AVX-512 as upstream chooses it; encodes as the wheel's (heavy_decode's encode checks and heavy_harness, run with it forced); its unchecked MEL, VLC and MagSgn writes are refused past their buffers (unreachable); heavy-tier check pending gate --full"
+note = "ported whole, in AVX2, chosen from X86_CPU_EXT_LEVEL_AVX2 below AVX-512 as upstream chooses it; encodes as the wheel's (heavy_decode's encode checks and heavy_harness, run with it forced); its unchecked MEL, VLC and MagSgn writes are refused past their buffers (unreachable)"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_encoder_avx2_apple.h"
@@ -323,9 +323,9 @@ note = "Apple's build of the AVX2 encoder; the port has no macOS x86-64 target (
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_encoder_avx512.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/block_encoder_avx512.rs"
-note = "ported whole, in AVX-512F/CD, chosen at X86_CPU_EXT_LEVEL_AVX512 as upstream chooses it; encodes as the wheel's (heavy_decode's encode checks); its unchecked MEL and VLC writes are refused past their buffers (unreachable); heavy-tier check pending gate --full"
+note = "ported whole, in AVX-512F/CD, chosen at X86_CPU_EXT_LEVEL_AVX512 as upstream chooses it; encodes as the wheel's (heavy_decode's encode checks); its unchecked MEL and VLC writes are refused past their buffers (unreachable)"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/table0.h"
@@ -685,9 +685,9 @@ note = "non-x86 CPU paths: only when ARM becomes a reference platform (D11)"
 [[file]]
 path = "external/deflate/lib/bt_matchfinder.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/bt_matchfinder.rs"
-note = "ported whole, for the near-optimal compressor (levels 10-12), whose streams equal Core's (tests/heavy_compress_levels.rs, the O1 harness); heavy-tier check pending gate --full"
+note = "ported whole, for the near-optimal compressor (levels 10-12), whose streams equal Core's (tests/heavy_compress_levels.rs, the O1 harness)"
 
 [[file]]
 path = "external/deflate/lib/cpu_features_common.h"
@@ -722,9 +722,9 @@ note = "the decode loop, 64-bit x86 build"
 [[file]]
 path = "external/deflate/lib/deflate_compress.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/deflate_compress.rs"
-note = "ported whole: the Huffman codes, block flushing and splitting, and every level, 0 to 12 (uncompressed, fastest, greedy, lazy, lazy2, near-optimal); level 4, the default, matches the wheel's ZIP and ZIPS streams byte for byte, and every level's zlib streams equal Core's exr_compress_buffer (tests/heavy_compress_levels.rs, the O1 harness); heavy-tier check pending gate --full"
+note = "ported whole: the Huffman codes, block flushing and splitting, and every level, 0 to 12 (uncompressed, fastest, greedy, lazy, lazy2, near-optimal); level 4, the default, matches the wheel's ZIP and ZIPS streams byte for byte, and every level's zlib streams equal Core's exr_compress_buffer (tests/heavy_compress_levels.rs, the O1 harness)"
 
 [[file]]
 path = "external/deflate/lib/deflate_compress.h"
@@ -741,7 +741,7 @@ note = "the constants the decompressor uses; the rest with the compressor"
 [[file]]
 path = "external/deflate/lib/deflate_decompress.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/deflate_decompress.rs"
 note = "ported whole (portable path); checked against the platform zlib's streams (heavy tier) and, with ZIP, against the wheel"
 
@@ -766,16 +766,16 @@ note = "not compiled into OpenEXRCore (compression.c:43-53)"
 [[file]]
 path = "external/deflate/lib/hc_matchfinder.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/hc_matchfinder.rs"
-note = "ported whole; the greedy compressor's streams match the wheel's (heavy tier); heavy-tier check pending gate --full"
+note = "ported whole; the greedy compressor's streams match the wheel's (heavy tier)"
 
 [[file]]
 path = "external/deflate/lib/ht_matchfinder.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/ht_matchfinder.rs"
-note = "ported whole (buckets of 2); level 1 round-trips (its streams need the O1 harness); heavy-tier check pending gate --full"
+note = "ported whole (buckets of 2); every level's streams equal Core's (the O1 harness)"
 
 [[file]]
 path = "external/deflate/lib/lib_common.h"
@@ -785,9 +785,9 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/matchfinder_common.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/matchfinder_common.rs"
-note = "ported whole; heavy-tier check pending gate --full"
+note = "ported whole"
 
 [[file]]
 path = "external/deflate/lib/riscv/matchfinder_impl.h"
@@ -803,14 +803,14 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/x86/adler32_impl.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/adler32_x86.rs, crates/openexr-deflate/src/adler32_vnni.rs"
 note = "arch_select_adler32_func whole: AVX-512 VNNI (512- and 256-bit vectors, as libdeflate allows ZMM), AVX-VNNI, AVX2, SSE2; every variant the CPU can run checked against Core's checksums (adler32_vnni.rs heavy test); SSE2-only CPUs under SDE pending"
 
 [[file]]
 path = "external/deflate/lib/x86/adler32_template.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/adler32_x86.rs, crates/openexr-deflate/src/adler32_vnni.rs"
 note = "both forms: USE_VNNI 0 for VL 16 (SSE2) and 32 (AVX2), USE_VNNI 1 for VL 32 (AVX-VNNI, AVX-512) and 64 (AVX-512)"
 
@@ -839,9 +839,9 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/x86/decompress_impl.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/decompress_bmi2.rs"
-note = "the template compiled for BMI2 and arch_select_decompress_func's choice of it (both wheels: GCC's target attribute, MSVC >= 1930's bzhi); the same results, checked through the decode checks; heavy-tier check pending gate --full"
+note = "the template compiled for BMI2 and arch_select_decompress_func's choice of it (both wheels: GCC's target attribute, MSVC >= 1930's bzhi); the same results, checked through the decode checks"
 
 [[file]]
 path = "external/deflate/lib/x86/matchfinder_impl.h"
@@ -853,9 +853,9 @@ note = "the SSE2 and AVX2 matchfinder_init and matchfinder_rebase store the same
 [[file]]
 path = "external/deflate/lib/zlib_compress.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/zlib_compress.rs"
-note = "ported whole; heavy-tier check pending gate --full"
+note = "ported whole"
 
 [[file]]
 path = "external/deflate/lib/zlib_constants.h"
@@ -866,9 +866,9 @@ target = "crates/openexr-deflate/src/zlib_constants.rs"
 [[file]]
 path = "external/deflate/lib/zlib_decompress.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/zlib_decompress.rs"
-note = "ported whole; heavy-tier check pending gate --full"
+note = "ported whole"
 
 [[file]]
 path = "external/deflate/libdeflate.h"
@@ -937,7 +937,7 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/common/entropy_common.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/entropy_common.rs"
 note = "ported whole; checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier)"
 
@@ -963,7 +963,7 @@ note = "its decoding half ported; checked through Core's ZSTD decoder: the wheel
 [[file]]
 path = "external/zstd/lib/common/fse_decompress.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/fse_decompress.rs"
 note = "ported whole; checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier)"
 
@@ -1180,7 +1180,7 @@ note = "the declarations zstd_ldm.c's ported part needs"
 [[file]]
 path = "external/zstd/lib/compress/zstd_ldm_geartab.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_ldm_geartab.rs"
 note = "the gear table, value for value (a unit test reads it from the header)"
 
@@ -1503,7 +1503,7 @@ note = "ported whole; partial with the codec; checked on Rocky Linux 9 too (gate
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_simd.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa_simd.rs, crates/openexr-core/src/internal_dwa_avx.rs, crates/openexr-core/src/f16c_simd.rs"
 note = "ported whole: the SSE2 paths as exact emulations, checked against the Windows wheel; the AVX inverse DCT and the F16C conversions (Linux) with the instructions themselves (internal_dwa_avx.rs, f16c_simd.rs), their emulations the fallback and checked against them (and the CPU, openexr-testkit cpu.rs); the kernels' Linux run against the Linux wheel pending"
 
@@ -1879,7 +1879,7 @@ target = "crates/openexr-core/src/string_vector.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/unpack.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/unpack.rs, crates/openexr-core/src/f16c_simd.rs"
 note = "ported whole: the image and deep unpackers, internal_exr_match_decode, and half_to_float_buffer's kernels as upstream chooses them (the F16C kernel on GCC builds, with the instructions themselves: f16c_simd.rs); deep decoding checked against the wheel's deep files (heavy_deep)"
 
