@@ -30,6 +30,11 @@ pub(crate) fn delta_encode_row_u16(p: &mut [u8], n: u64) {
 /// Port of `delta_decode_row_u16_scalar` (src/lib/OpenEXRCore/internal_zstd_delta.c:28-37
 /// @ v3.5.3): the running sum, each value plus the (decoded) one before it.
 pub(crate) fn delta_decode_row_u16(p: &mut [u8], n: u64) {
+    // the AVX2 kernel where the CPU has AVX2, as GCC's builds take it (`internal_zstd_simd`)
+    #[cfg(target_arch = "x86_64")]
+    if crate::internal_zstd_simd::delta_decode_row_u16(p, n) {
+        return;
+    }
     if n <= 1 {
         return;
     }
@@ -59,6 +64,10 @@ pub(crate) fn delta_encode_row_u32(p: &mut [u8], n: u64) {
 /// Port of `delta_decode_row_u32_scalar` (src/lib/OpenEXRCore/internal_zstd_delta.c:51-60
 /// @ v3.5.3), as [`delta_decode_row_u16`].
 pub(crate) fn delta_decode_row_u32(p: &mut [u8], n: u64) {
+    #[cfg(target_arch = "x86_64")]
+    if crate::internal_zstd_simd::delta_decode_row_u32(p, n) {
+        return;
+    }
     if n <= 1 {
         return;
     }

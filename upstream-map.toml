@@ -638,7 +638,7 @@ path = "external/deflate/lib/adler32.c"
 kind = "vendored"
 status = "partial"
 target = "crates/openexr-deflate/src/adler32.rs"
-note = "adler32_generic; the x86 vector versions give the same sums (performance, PLAN.md O3)"
+note = "adler32_generic, and libdeflate_adler32's dispatch to the x86 vector versions (adler32_x86.rs) on x86-64"
 
 [[file]]
 path = "external/deflate/lib/arm/adler32_impl.h"
@@ -803,12 +803,16 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/x86/adler32_impl.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/adler32_x86.rs"
+note = "arch_select_adler32_func between AVX2 and SSE2; the AVX-VNNI and AVX-512 VNNI variants (the same checksum) are not ported; checked through Core's zlib streams (heavy tier), SSE2 under SDE pending"
 
 [[file]]
 path = "external/deflate/lib/x86/adler32_template.h"
 kind = "vendored"
-status = "todo"
+status = "partial"
+target = "crates/openexr-deflate/src/adler32_x86.rs"
+note = "USE_VNNI 0 for VL 16 (SSE2) and 32 (AVX2); the VNNI form is not ported"
 
 [[file]]
 path = "external/deflate/lib/x86/cpu_features.c"
@@ -833,8 +837,9 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/x86/decompress_impl.h"
 kind = "vendored"
-status = "n/a"
-note = "the BMI2 build of the same decode loop; same results (performance, PLAN.md O3)"
+status = "partial"
+target = "crates/openexr-deflate/src/decompress_bmi2.rs"
+note = "the template compiled for BMI2 and arch_select_decompress_func's choice of it (both wheels: GCC's target attribute, MSVC >= 1930's bzhi); the same results, checked through the decode checks; heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/deflate/lib/x86/matchfinder_impl.h"
@@ -1494,9 +1499,9 @@ note = "ported whole; partial with the codec; checked on Rocky Linux 9 too (gate
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_simd.h"
 kind = "src"
-status = "done"
-target = "crates/openexr-core/src/internal_dwa_simd.rs"
-note = "ported whole as exact scalar emulations; the SSE2 paths checked against the Windows wheel; the AVX inverse DCT and F16C conversions (Linux) equal the Linux wheel's and the CPU's (openexr-testkit cpu.rs); checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
+status = "partial"
+target = "crates/openexr-core/src/internal_dwa_simd.rs, crates/openexr-core/src/internal_dwa_avx.rs, crates/openexr-core/src/f16c_simd.rs"
+note = "ported whole: the SSE2 paths as exact emulations, checked against the Windows wheel; the AVX inverse DCT and the F16C conversions (Linux) with the instructions themselves (internal_dwa_avx.rs, f16c_simd.rs), their emulations the fallback and checked against them (and the CPU, openexr-testkit cpu.rs); the kernels' Linux run against the Linux wheel pending"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_table.c"
@@ -1672,8 +1677,8 @@ target = "crates/openexr-core/src/internal_xdr.rs"
 path = "src/lib/OpenEXRCore/internal_zip.c"
 kind = "src"
 status = "done"
-target = "crates/openexr-core/src/internal_zip.rs"
-note = "ported whole (scalar reconstruct and interleave; the SSE2/SSE4.1/NEON kernels give the same bytes, performance work in docs/deferred.md); decodes as the wheel does and encodes its files byte for byte (heavy tier, gate --full)"
+target = "crates/openexr-core/src/internal_zip.rs, crates/openexr-core/src/internal_zip_simd.rs"
+note = "ported whole: the SSE4.1 reconstruct and SSE2 interleave (internal_zip_simd.rs, where the CPU has them; MSVC's build always, GCC's interleave only), the scalar ones elsewhere (the NEON kernels are for ARM, D11); decodes as the wheel does and encodes its files byte for byte (heavy tier, gate --full)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd.c"
@@ -1686,15 +1691,15 @@ note = "both ways: flat and deep parts decode as the wheel does, and the wheel's
 path = "src/lib/OpenEXRCore/internal_zstd_delta.c"
 kind = "src"
 status = "done"
-target = "crates/openexr-core/src/internal_zstd_delta.rs"
-note = "the scalar deltas ported (GCC's AVX2 decode computes the same sums, O3); both ways checked with Core's ZSTD codec (heavy tier)"
+target = "crates/openexr-core/src/internal_zstd_delta.rs, crates/openexr-core/src/internal_zstd_simd.rs"
+note = "the scalar deltas, and the AVX2 decode GCC's builds take (internal_zstd_simd.rs, where the CPU has AVX2: the same sums); both ways checked with Core's ZSTD codec and the wheel (heavy tier)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_zstd_shuffle.c"
 kind = "src"
 status = "done"
-target = "crates/openexr-core/src/internal_zstd_shuffle.rs"
-note = "the scalar shuffles ported (GCC's AVX2 unshuffle moves the same bytes, O3); both ways checked with Core's ZSTD codec (heavy tier)"
+target = "crates/openexr-core/src/internal_zstd_shuffle.rs, crates/openexr-core/src/internal_zstd_simd.rs"
+note = "the scalar shuffles, and the AVX2 unshuffle GCC's builds take (internal_zstd_simd.rs, where the CPU has AVX2: the same bytes; the AVX-512 ones are commented out upstream); both ways checked with Core's ZSTD codec and the wheel (heavy tier)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/memory.c"
@@ -1871,8 +1876,8 @@ target = "crates/openexr-core/src/string_vector.rs"
 path = "src/lib/OpenEXRCore/unpack.c"
 kind = "src"
 status = "partial"
-target = "crates/openexr-core/src/unpack.rs"
-note = "ported whole: the image and deep unpackers, internal_exr_match_decode, and half_to_float_buffer's kernels as upstream chooses them (the F16C kernel on GCC builds); deep decoding checked against the wheel's deep files (heavy_deep); the F16C emulation awaits a CPU check (docs/deferred.md)"
+target = "crates/openexr-core/src/unpack.rs, crates/openexr-core/src/f16c_simd.rs"
+note = "ported whole: the image and deep unpackers, internal_exr_match_decode, and half_to_float_buffer's kernels as upstream chooses them (the F16C kernel on GCC builds, with the instructions themselves: f16c_simd.rs); deep decoding checked against the wheel's deep files (heavy_deep)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/validation.c"

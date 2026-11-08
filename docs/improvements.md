@@ -444,6 +444,20 @@ section. An entry says:
 - **Status:** matched (`crates/openexr-zstd/src/zstd_ldm.rs`, `gear_reset`); checked by
   `crates/openexr-core/tests/heavy_zstd_big.rs` against Core (`core_harness zstd-big`).
 
+### I-32. Each build leaves out a SIMD kernel the other takes
+
+- **Upstream:** ZIP's SSE4.1 `reconstruct` is built only with `__SSE4_1__` or MSVC
+  (src/lib/OpenEXRCore/internal_zip.c:23-26, 49-94 @ v3.5.3), so GCC's x86-64 build, the
+  Linux wheel's, runs the scalar loop; the ZSTD codec's AVX2 unshuffle and delta decode are
+  built only by GCC (src/lib/OpenEXRCore/internal_zstd_shuffle.c:75-300,
+  internal_zstd_delta.c:63-276 @ v3.5.3), so MSVC's build, the Windows wheel's, runs them
+  scalar on every CPU.
+- **Who notices:** no one in the results: the kernels compute the scalar loops' bytes
+  (integer prefix sums, byte shuffles and deltas). Only the time differs.
+- **A fix:** take each kernel wherever the CPU has its instructions.
+- **Status:** **fixed**, deviation D-21; checked against the wheels and Core on Windows and
+  Rocky Linux 9 (heavy tier).
+
 ## Undefined behaviour the port does not copy
 
 ### U-1. A string created from no data has an unset terminator
@@ -734,3 +748,15 @@ section. An entry says:
   deadlock nor release anything.
 - **Status:** the port's choice (`internal_structs.h`'s locks are Rust borrows,
   `upstream-map.toml`).
+
+### U-22. OpenJPH's AVX-512 block encoder writes its MEL and VLC buffers unchecked
+
+- **Upstream:** the AVX-512 block encoder's `mel_emit_bit` and `vlc_encode`
+  (`external/OpenJPH/src/core/coding/ojph_block_encoder_avx512.cpp` @ OpenJPH 0.32.0) store into
+  their buffers without a bound check; the buffers are sized "more than enough" (192 and 2880
+  bytes for 4096 samples), so no codeblock reaches the end.
+- **Who notices:** no one with a valid codeblock: no OpenEXR codeblock comes near the sizes.
+- **The port:** refuses a store past either buffer with the generic encoder's messages
+  (0x00020001, 0x00020002) (`crates/openexr-openjph/src/block_encoder_avx512.rs`).
+- **Status:** the port's choice, as U-9.
+

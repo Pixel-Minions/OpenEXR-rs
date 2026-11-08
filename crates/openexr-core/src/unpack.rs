@@ -80,6 +80,24 @@ impl Conv {
     }
 }
 
+/// Buffer `buf` of the outputs when it holds the `len` bytes from `lo` and the `elem` bytes at
+/// `hi` (the row's first and last store), else `None`: a row the fast paths may store without
+/// checking each store (they already checked the whole write set, U-9; the per-store loops
+/// stay for anything else).
+fn span<'b>(
+    outs: &'b mut [&mut [u8]],
+    buf: usize,
+    lo: i64,
+    hi: i64,
+    elem: usize,
+) -> Option<&'b mut [u8]> {
+    let b = outs.get_mut(buf)?;
+    if lo < 0 || hi < lo || (hi as u64).saturating_add(elem as u64) > b.len() as u64 {
+        return None;
+    }
+    Some(&mut b[..])
+}
+
 /// `unpack_16bit_{3,4}chan_interleave[_rev]` and `unpack_half_to_float_{3,4}chan_interleave
 /// [_rev]` (src/lib/OpenEXRCore/unpack.c:209-389, 549-757 @ v3.5.3): `n` channels of halves
 /// stored pixel by pixel from one pointer, channel 0's (or, reversed, channel `n - 1`'s,
@@ -133,13 +151,31 @@ fn interleave(
         let row = src_at(src, srcoff, line.max(0) as usize)?;
         srcoff += line;
         let mut out = out0;
-        for x in 0..w.max(0) as usize {
-            for k in 0..n {
-                let ch = if rev { n - 1 - k } else { k };
-                let v = unaligned_load16(&row[(ch * w as usize + x) * 2..]);
-                conv.store(outs, buffer, out + k as i64 * conv.out_size(), v)?;
+        let wu = w.max(0) as usize;
+        let os = conv.out_size() as usize;
+        let len = (wu * n * os) as i64;
+        if let Some(b) = span(outs, buffer, out, out + len - os as i64, os).filter(|_| wu > 0) {
+            let dst = &mut b[out as usize..out as usize + len as usize];
+            for (x, px) in dst.chunks_exact_mut(n * os).enumerate() {
+                for k in 0..n {
+                    let ch = if rev { n - 1 - k } else { k };
+                    let v = unaligned_load16(&row[(ch * wu + x) * 2..]);
+                    match conv {
+                        Conv::Copy16 => px[k * 2..k * 2 + 2].copy_from_slice(&v.to_ne_bytes()),
+                        Conv::HalfToFloat => px[k * 4..k * 4 + 4]
+                            .copy_from_slice(&half_to_float(v).to_bits().to_ne_bytes()),
+                    }
+                }
             }
-            out += n as i64 * conv.out_size();
+        } else {
+            for x in 0..wu {
+                for k in 0..n {
+                    let ch = if rev { n - 1 - k } else { k };
+                    let v = unaligned_load16(&row[(ch * wu + x) * 2..]);
+                    conv.store(outs, buffer, out + k as i64 * conv.out_size(), v)?;
+                }
+                out += n as i64 * conv.out_size();
+            }
         }
         out0 = out0.wrapping_add(linc0);
     }
@@ -259,9 +295,20 @@ fn half_to_float_buffer_impl(out: &mut [u8], inp: &[u8]) {
 fn half_to_float_buffer_f16c(out: &mut [u8], inp: &[u8]) {
     use crate::internal_dwa_simd::vcvtph2ps;
 
+    let w = (inp.len() / 2).min(out.len() / 4);
+    // the instructions themselves (`f16c_simd`) where the CPU has them, the rest one by one
+    if let Some(done) = crate::f16c_simd::half_to_float_buffer(out, inp, w) {
+        let halves = inp.as_chunks::<2>().0;
+        let floats = out.as_chunks_mut::<4>().0;
+        for (o, i) in floats[done..w].iter_mut().zip(&halves[done..w]) {
+            *o = half_to_float(u16::from_ne_bytes(*i))
+                .to_bits()
+                .to_ne_bytes();
+        }
+        return;
+    }
     let halves = inp.as_chunks::<2>().0;
     let floats = out.as_chunks_mut::<4>().0;
-    let w = halves.len().min(floats.len());
     let simd = if w % 8 >= 4 { w - w % 8 + 4 } else { w - w % 8 };
     for (x, (o, i)) in floats[..w].iter_mut().zip(&halves[..w]).enumerate() {
         let h = u16::from_ne_bytes(*i);
@@ -326,9 +373,26 @@ fn nchan16(decode: &DecodePipeline<'_>, outs: &mut [&mut [u8]], n: usize) -> Res
         let row = src_at(src, srcoff, line.max(0) as usize)?;
         srcoff += line;
         for (c, (buf, pos, inc, linc)) in outp.iter_mut().enumerate() {
-            for x in 0..w.max(0) as usize {
-                let v = unaligned_load16(&row[(c * w as usize + x) * 2..]);
-                put16(outs, *buf, pos.wrapping_add(x as i64 * *inc), v)?;
+            let wu = w.max(0) as usize;
+            let last = (wu as i64 - 1)
+                .checked_mul(*inc)
+                .and_then(|d| pos.checked_add(d));
+            let (lo, hi) = match last {
+                Some(l) if *inc < 0 => (l, *pos),
+                Some(l) => (*pos, l),
+                None => (-1, -1),
+            };
+            if let Some(b) = span(outs, *buf, lo, hi, 2).filter(|_| wu > 0) {
+                for x in 0..wu {
+                    let v = unaligned_load16(&row[(c * wu + x) * 2..]);
+                    let p = (*pos + x as i64 * *inc) as usize;
+                    b[p..p + 2].copy_from_slice(&v.to_ne_bytes());
+                }
+            } else {
+                for x in 0..wu {
+                    let v = unaligned_load16(&row[(c * wu + x) * 2..]);
+                    put16(outs, *buf, pos.wrapping_add(x as i64 * *inc), v)?;
+                }
             }
             *pos = pos.wrapping_add(*linc);
         }
@@ -384,15 +448,30 @@ fn same_size(decode: &DecodePipeline<'_>, outs: &mut [&mut [u8]], bpc: usize) ->
             if pixincrement == bpc as i64 {
                 out_bytes(outs, buffer, cdata, w * bpc)?.copy_from_slice(inp);
             } else {
-                for x in 0..w {
-                    let s = &inp[x * bpc..(x + 1) * bpc];
-                    out_bytes(
-                        outs,
-                        buffer,
-                        cdata.wrapping_add(x as i64 * pixincrement),
-                        bpc,
-                    )?
-                    .copy_from_slice(s);
+                let last = (w as i64 - 1)
+                    .checked_mul(pixincrement)
+                    .and_then(|d| cdata.checked_add(d));
+                let (lo, hi) = match last {
+                    Some(l) if pixincrement < 0 => (l, cdata),
+                    Some(l) => (cdata, l),
+                    None => (-1, -1),
+                };
+                if let Some(b) = span(outs, buffer, lo, hi, bpc).filter(|_| w > 0) {
+                    for x in 0..w {
+                        let p = (cdata + x as i64 * pixincrement) as usize;
+                        b[p..p + bpc].copy_from_slice(&inp[x * bpc..(x + 1) * bpc]);
+                    }
+                } else {
+                    for x in 0..w {
+                        let s = &inp[x * bpc..(x + 1) * bpc];
+                        out_bytes(
+                            outs,
+                            buffer,
+                            cdata.wrapping_add(x as i64 * pixincrement),
+                            bpc,
+                        )?
+                        .copy_from_slice(s);
+                    }
                 }
             }
             srcoff += (w * bpc) as i64;

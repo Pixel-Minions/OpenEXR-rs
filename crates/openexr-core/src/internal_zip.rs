@@ -25,8 +25,9 @@ fn add_bytes(a: u64, b: u64) -> u64 {
     ((a & LOW7) + (b & LOW7)) ^ ((a ^ b) & !LOW7)
 }
 
-/// Port of `reconstruct` (src/lib/OpenEXRCore/internal_zip.c:50-94 @ v3.5.3, the SSE2 version
-/// MSVC's x86-64 builds use), in eight-byte words: undoes the delta predictor, each byte the
+/// Port of `reconstruct` (src/lib/OpenEXRCore/internal_zip.c:50-94 @ v3.5.3, the SSE4.1 version
+/// MSVC's x86-64 builds use): that kernel (`internal_zip_simd`) where the CPU has it, else in
+/// eight-byte words: undoes the delta predictor, each byte the
 /// previous one plus its difference, offset by 128 (the scalar version, lines 145-156). As
 /// upstream's SSE2 loop, the first byte is pre-flipped so that every byte is offset alike; a
 /// word's bytes are prefix-summed in three shifted adds and the previous word's last byte
@@ -34,7 +35,7 @@ fn add_bytes(a: u64, b: u64) -> u64 {
 /// order: the scalar version's bytes.
 fn reconstruct(buf: &mut [u8]) {
     const ONES: u64 = 0x0101_0101_0101_0101;
-    if buf.is_empty() {
+    if buf.is_empty() || crate::internal_zip_simd::reconstruct(buf) {
         return;
     }
     buf[0] = buf[0].wrapping_add(128);
@@ -66,9 +67,12 @@ fn reconstruct(buf: &mut [u8]) {
 }
 
 /// Port of `interleave` (src/lib/OpenEXRCore/internal_zip.c:161-190 @ v3.5.3, the SSE2 version;
-/// the scalar one is lines 222-243): the first half of `source` (the larger, for an odd size)
+/// the scalar one is lines 222-243), the kernel itself on x86-64 (`internal_zip_simd`): the first half of `source` (the larger, for an odd size)
 /// into the even bytes of `out`, the second into the odd ones, two bytes at a time.
 fn interleave(out: &mut [u8], source: &[u8]) {
+    if crate::internal_zip_simd::interleave(out, source) {
+        return;
+    }
     let out_size = out.len();
     let (a, b) = source[..out_size].split_at(out_size.div_ceil(2));
     for ((o, x), y) in out.as_chunks_mut::<2>().0.iter_mut().zip(a).zip(b) {

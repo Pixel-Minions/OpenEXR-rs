@@ -9,7 +9,7 @@ const DIVISOR: u32 = 65521;
 
 /// The most bytes that can be processed without the possibility of s2 overflowing when it is
 /// represented as an unsigned 32-bit integer.
-const MAX_CHUNK_LEN: usize = 5552;
+pub(crate) const MAX_CHUNK_LEN: usize = 5552;
 
 /// Port of `ADLER32_CHUNK` (external/deflate/lib/adler32.c:75-103 @ libdeflate v1.26): updates
 /// s1 and s2 with `p` and reduces them mod DIVISOR, four bytes at a time first.
@@ -23,7 +23,7 @@ const MAX_CHUNK_LEN: usize = 5552;
 /// lane is summed across until the end, so the loop vectorizes. Sums of products modulo 2^32
 /// are exact here: `MAX_CHUNK_LEN` keeps the true s2 below 2^32, which is what lets the
 /// macro's own grouping wrap.
-fn adler32_chunk(s1: &mut u32, s2: &mut u32, mut p: &[u8]) {
+pub(crate) fn adler32_chunk(s1: &mut u32, s2: &mut u32, mut p: &[u8]) {
     if p.len() >= 16 {
         let mut lanes = [0u32; 16];
         let mut prev = [0u32; 16];
@@ -81,6 +81,7 @@ fn adler32_chunk(s1: &mut u32, s2: &mut u32, mut p: &[u8]) {
 }
 
 /// Port of `adler32_generic` (external/deflate/lib/adler32.c:105-119 @ libdeflate v1.26).
+#[cfg_attr(target_arch = "x86_64", allow(dead_code))]
 fn adler32_generic(adler: u32, mut p: &[u8]) -> u32 {
     let mut s1 = adler & 0xFFFF;
     let mut s2 = adler >> 16;
@@ -93,10 +94,15 @@ fn adler32_generic(adler: u32, mut p: &[u8]) -> u32 {
 }
 
 /// Port of `libdeflate_adler32` (external/deflate/lib/adler32.c:156-162 @ libdeflate v1.26):
-/// updates the running Adler-32 `adler` with `buffer`; `None` gives the initial value, 1.
+/// updates the running Adler-32 `adler` with `buffer`; `None` gives the initial value, 1. On
+/// x86-64, by the vector variant `arch_select_adler32_func` chooses (`adler32_x86`), as
+/// upstream's dispatch does; elsewhere `adler32_generic`.
 pub fn adler32(adler: u32, buffer: Option<&[u8]>) -> u32 {
     match buffer {
         None => 1,
+        #[cfg(target_arch = "x86_64")]
+        Some(b) => crate::adler32_x86::adler32(adler, b),
+        #[cfg(not(target_arch = "x86_64"))]
         Some(b) => adler32_generic(adler, b),
     }
 }
