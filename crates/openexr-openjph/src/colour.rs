@@ -293,6 +293,40 @@ pub(crate) fn rev_convert(
     shift: i64,
     width: u32,
 ) {
+    #[cfg(target_arch = "x86_64")]
+    if get_cpu_ext_level() >= x86_level::AVX2
+        && crate::colour_avx2::rev_convert(
+            src_line,
+            src_line_offset,
+            dst_line,
+            dst_line_offset,
+            shift,
+            width,
+        )
+    {
+        return;
+    }
+    rev_convert_gen(
+        src_line,
+        src_line_offset,
+        dst_line,
+        dst_line_offset,
+        shift,
+        width,
+    );
+}
+
+/// [`rev_convert`]'s generic kernel (the values of `avx2_rev_convert`, lines 70-139 of
+/// ojph_colour_avx2.cpp, and of SSE2's), inlined into the AVX2 build too.
+#[inline(always)]
+pub(crate) fn rev_convert_gen(
+    src_line: &LineBuf,
+    src_line_offset: u32,
+    dst_line: &mut LineBuf,
+    dst_line_offset: u32,
+    shift: i64,
+    width: u32,
+) {
     let (so, d_o, w) = (
         src_line_offset as usize,
         dst_line_offset as usize,
@@ -322,6 +356,40 @@ pub(crate) fn rev_convert(
 /// Port of `gen_rev_convert_nlt_type3`
 /// (external/OpenJPH/src/core/transform/ojph_colour.cpp:519-557 @ OpenJPH 0.32.0): the binary complement of negative integers (`-v - shift`).
 pub(crate) fn rev_convert_nlt_type3(
+    src_line: &LineBuf,
+    src_line_offset: u32,
+    dst_line: &mut LineBuf,
+    dst_line_offset: u32,
+    shift: i64,
+    width: u32,
+) {
+    #[cfg(target_arch = "x86_64")]
+    if get_cpu_ext_level() >= x86_level::AVX2
+        && crate::colour_avx2::rev_convert_nlt_type3(
+            src_line,
+            src_line_offset,
+            dst_line,
+            dst_line_offset,
+            shift,
+            width,
+        )
+    {
+        return;
+    }
+    rev_convert_nlt_type3_gen(
+        src_line,
+        src_line_offset,
+        dst_line,
+        dst_line_offset,
+        shift,
+        width,
+    );
+}
+
+/// [`rev_convert_nlt_type3`]'s generic kernel (the values of `avx2_rev_convert_nlt_type3`, lines 142-242 of
+/// ojph_colour_avx2.cpp, and of SSE2's), inlined into the AVX2 build too.
+#[inline(always)]
+pub(crate) fn rev_convert_nlt_type3_gen(
     src_line: &LineBuf,
     src_line_offset: u32,
     dst_line: &mut LineBuf,
@@ -371,6 +439,7 @@ pub(crate) fn rev_convert_nlt_type3(
 /// Port of `local_gen_irv_convert_to_integer_nlt0or3`
 /// (external/OpenJPH/src/core/transform/ojph_colour.cpp:560-611 @ OpenJPH 0.32.0): floats to
 /// integers of `bit_depth` bits, clamped, with the binary complement for type 3.
+#[inline(always)]
 fn irv_convert_to_integer_nlt0or3(
     nlt_type3: bool,
     src_line: &LineBuf,
@@ -429,6 +498,43 @@ pub(crate) fn irv_convert_to_integer(
     is_signed: bool,
     width: u32,
 ) {
+    #[cfg(target_arch = "x86_64")]
+    if get_cpu_ext_level() >= x86_level::AVX2
+        && crate::colour_avx2::irv_convert_to_integer(
+            nlt_type3,
+            src_line,
+            dst_line,
+            dst_line_offset,
+            bit_depth,
+            is_signed,
+            width,
+        )
+    {
+        return;
+    }
+    irv_convert_to_integer_gen(
+        nlt_type3,
+        src_line,
+        dst_line,
+        dst_line_offset,
+        bit_depth,
+        is_signed,
+        width,
+    );
+}
+
+/// [`irv_convert_to_integer`]'s generic kernel (the values of `avx2_irv_convert_to_integer` and `avx2_irv_convert_to_integer_nlt_type3`, lines 271-351 of
+/// ojph_colour_avx2.cpp, and of SSE2's), inlined into the AVX2 build too.
+#[inline(always)]
+pub(crate) fn irv_convert_to_integer_gen(
+    nlt_type3: bool,
+    src_line: &LineBuf,
+    dst_line: &mut LineBuf,
+    dst_line_offset: u32,
+    bit_depth: u32,
+    is_signed: bool,
+    width: u32,
+) {
     irv_convert_to_integer_nlt0or3(
         nlt_type3,
         src_line,
@@ -444,6 +550,43 @@ pub(crate) fn irv_convert_to_integer(
 /// (external/OpenJPH/src/core/transform/ojph_colour.cpp:632-667 @ OpenJPH 0.32.0), with
 /// `gen_irv_convert_to_float` (lines 670-676) and `gen_irv_convert_to_float_nlt_type3` (lines 679-685): integers of `bit_depth` bits to floats.
 pub(crate) fn irv_convert_to_float(
+    nlt_type3: bool,
+    src_line: &LineBuf,
+    src_line_offset: u32,
+    dst_line: &mut LineBuf,
+    bit_depth: u32,
+    is_signed: bool,
+    width: u32,
+) {
+    #[cfg(target_arch = "x86_64")]
+    if get_cpu_ext_level() >= x86_level::AVX2
+        && crate::colour_avx2::irv_convert_to_float(
+            nlt_type3,
+            src_line,
+            src_line_offset,
+            dst_line,
+            bit_depth,
+            is_signed,
+            width,
+        )
+    {
+        return;
+    }
+    irv_convert_to_float_gen(
+        nlt_type3,
+        src_line,
+        src_line_offset,
+        dst_line,
+        bit_depth,
+        is_signed,
+        width,
+    );
+}
+
+/// [`irv_convert_to_float`]'s generic kernel (the values of `avx2_irv_convert_to_float` and `avx2_irv_convert_to_float_nlt_type3`, lines 455-520 of
+/// ojph_colour_avx2.cpp, and of SSE2's), inlined into the AVX2 build too.
+#[inline(always)]
+pub(crate) fn irv_convert_to_float_gen(
     nlt_type3: bool,
     src_line: &LineBuf,
     src_line_offset: u32,
@@ -488,6 +631,27 @@ pub(crate) fn rct_forward(
     cr: &mut LineBuf,
     repeat: u32,
 ) {
+    #[cfg(target_arch = "x86_64")]
+    if get_cpu_ext_level() >= x86_level::AVX2
+        && crate::colour_avx2::rct_forward(r, g, b, y, cb, cr, repeat)
+    {
+        return;
+    }
+    rct_forward_gen(r, g, b, y, cb, cr, repeat);
+}
+
+/// [`rct_forward`]'s generic kernel (the values of `avx2_rct_forward`, lines 620-707 of
+/// ojph_colour_avx2.cpp, and of SSE2's), inlined into the AVX2 build too.
+#[inline(always)]
+pub(crate) fn rct_forward_gen(
+    r: &LineBuf,
+    g: &LineBuf,
+    b: &LineBuf,
+    y: &mut LineBuf,
+    cb: &mut LineBuf,
+    cr: &mut LineBuf,
+    repeat: u32,
+) {
     let n = repeat as usize;
     let (rp, gp, bp) = (r.i32(), g.i32(), b.i32());
     if (y.flags & LFT_32BIT) != 0 {
@@ -512,6 +676,27 @@ pub(crate) fn rct_forward(
 /// Port of `gen_rct_backward` (external/OpenJPH/src/core/transform/ojph_colour.cpp:738-787
 /// @ OpenJPH 0.32.0).
 pub(crate) fn rct_backward(
+    y: &LineBuf,
+    cb: &LineBuf,
+    cr: &LineBuf,
+    r: &mut LineBuf,
+    g: &mut LineBuf,
+    b: &mut LineBuf,
+    repeat: u32,
+) {
+    #[cfg(target_arch = "x86_64")]
+    if get_cpu_ext_level() >= x86_level::AVX2
+        && crate::colour_avx2::rct_backward(y, cb, cr, r, g, b, repeat)
+    {
+        return;
+    }
+    rct_backward_gen(y, cb, cr, r, g, b, repeat);
+}
+
+/// [`rct_backward`]'s generic kernel (the values of `avx2_rct_backward`, lines 710-820 of
+/// ojph_colour_avx2.cpp, and of SSE2's), inlined into the AVX2 build too.
+#[inline(always)]
+pub(crate) fn rct_backward_gen(
     y: &LineBuf,
     cb: &LineBuf,
     cr: &LineBuf,
