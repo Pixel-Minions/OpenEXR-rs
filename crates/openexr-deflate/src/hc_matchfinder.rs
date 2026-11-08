@@ -74,6 +74,15 @@ impl HcMatchfinder {
         matchfinder_rebase(&mut self.tabs[..]);
     }
 
+    /// `prefetchw` of the next string's two buckets (external/deflate/lib/hc_matchfinder.h:238-239,
+    /// 395-396 @ libdeflate v1.26): an ordinary load of each, which nothing waits for, brings
+    /// its cache line in ahead of use as upstream's prefetch does; nothing else changes.
+    #[inline]
+    fn prefetch(&self, next_hashes: &[u32; 2]) {
+        std::hint::black_box(self.tabs[h3(next_hashes[0] as usize)]);
+        std::hint::black_box(self.tabs[h4(next_hashes[1] as usize)]);
+    }
+
     #[inline]
     fn next(&self, node: MfPos) -> MfPos {
         self.tabs[nx((i32::from(node) & (WINDOW as i32 - 1)) as usize)]
@@ -87,6 +96,7 @@ impl HcMatchfinder {
     /// by the next one's. Returns the length, with the offset in `offset_ret`; a length not
     /// above the given `best_len` means no match was found.
     #[allow(clippy::too_many_arguments)]
+    #[inline(always)] // forceinline upstream
     pub(crate) fn longest_match(
         &mut self,
         data: &[u8],
@@ -140,6 +150,7 @@ impl HcMatchfinder {
             let next_hashseq = load_u32(data, in_next + 1);
             next_hashes[0] = lz_hash(next_hashseq & 0xFFFFFF, HC_MATCHFINDER_HASH3_ORDER);
             next_hashes[1] = lz_hash(next_hashseq, HC_MATCHFINDER_HASH4_ORDER);
+            self.prefetch(next_hashes);
 
             if best_len < 4 {
                 // No match of length >= 4 found yet?
@@ -247,6 +258,7 @@ impl HcMatchfinder {
     /// @ libdeflate v1.26): advances the matchfinder past `count` strings from `in_next` of
     /// `data` (whose end is `in_end`), inserting each without searching; nothing is done when
     /// fewer than `count + 5` bytes remain.
+    #[inline(always)] // forceinline upstream
     pub(crate) fn skip_bytes(
         &mut self,
         data: &[u8],
@@ -288,5 +300,6 @@ impl HcMatchfinder {
 
         next_hashes[0] = hash3 as u32;
         next_hashes[1] = hash4 as u32;
+        self.prefetch(next_hashes);
     }
 }

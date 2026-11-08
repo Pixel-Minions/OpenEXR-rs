@@ -81,7 +81,7 @@ fn load_word(data: &[u8], p: usize) -> u64 {
 /// Port of `lz_extend` (external/deflate/lib/matchfinder_common.h:178-222 @ libdeflate v1.26):
 /// how far the match at `matchptr` agrees with the string at `strptr`, from `start_len` up to
 /// `max_len`, a word at a time.
-#[inline]
+#[inline(always)] // forceinline upstream
 pub(crate) fn lz_extend(
     data: &[u8],
     strptr: usize,

@@ -482,6 +482,116 @@ routine!(
     unpack_32bit, |d, o| same_size(d, o, 4)
 );
 
+/// The samples of [`unpack_samples`] when all of them are in bounds, `NI` bytes read each
+/// (little-endian) and `NO` stored (native order), `conv` between: its loop without the
+/// per-sample checks, which cannot fail here, and with the conversion inlined.
+#[inline]
+fn unpack_run<const NI: usize, const NO: usize>(
+    out: &mut [u8],
+    pos: usize,
+    step: i64,
+    inp: &[u8],
+    conv: impl Fn(u32) -> u32,
+) {
+    let read = |b: &[u8]| -> u32 {
+        if NI == 2 {
+            u32::from(u16::from_le_bytes([b[0], b[1]]))
+        } else {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let store = |o: &mut [u8], v: u32| {
+        if NO == 2 {
+            o.copy_from_slice(&(v as u16).to_ne_bytes());
+        } else {
+            o.copy_from_slice(&v.to_ne_bytes());
+        }
+    };
+    if step == NO as i64 {
+        let n = inp.len() / NI;
+        let d = &mut out[pos..pos + n * NO];
+        for (o, i) in d
+            .as_chunks_mut::<NO>()
+            .0
+            .iter_mut()
+            .zip(inp.as_chunks::<NI>().0)
+        {
+            store(o, conv(read(i)));
+        }
+    } else {
+        for (s, i) in inp.as_chunks::<NI>().0.iter().enumerate() {
+            let p = (pos as i64 + s as i64 * step) as usize;
+            store(&mut out[p..p + NO], conv(read(i)));
+        }
+    }
+}
+
+/// [`unpack_samples`]'s samples when every store lands inside output `buf` and the input
+/// holds them all. Returns false, having done nothing, otherwise, leaving them to the
+/// per-sample loop, whose results, refusals and partial stores are upstream's. In bounds,
+/// both store the same bytes.
+#[allow(clippy::too_many_arguments)]
+fn unpack_samples_fast(
+    outs: &mut [&mut [u8]],
+    buf: usize,
+    cdata: i64,
+    ubpc: i64,
+    data_type: u16,
+    ut: u16,
+    inp: &[u8],
+    samps: usize,
+) -> bool {
+    let (half, float) = (PixelType::HALF.0 as u16, PixelType::FLOAT.0 as u16);
+    let ni = if data_type == half { 2usize } else { 4 };
+    let no = if ut == half { 2usize } else { 4 };
+    let Some(out) = outs.get_mut(buf) else {
+        return false;
+    };
+    if samps == 0 || samps.checked_mul(ni).is_none_or(|n| n > inp.len()) {
+        return false;
+    }
+    let Some(last) = i64::try_from(samps - 1)
+        .ok()
+        .and_then(|n| n.checked_mul(ubpc))
+        .and_then(|d| cdata.checked_add(d))
+    else {
+        return false;
+    };
+    let (lo, hi) = if ubpc < 0 {
+        (last, cdata)
+    } else {
+        (cdata, last)
+    };
+    if lo < 0 || (hi as u64).saturating_add(no as u64) > out.len() as u64 {
+        return false;
+    }
+    let inp = &inp[..samps * ni];
+    let p = cdata as usize;
+    if data_type == ut && ubpc == ni as i64 && cfg!(target_endian = "little") {
+        // the same type, samples side by side: the bytes as they are
+        out[p..p + inp.len()].copy_from_slice(inp);
+        return true;
+    }
+    match (data_type, ut) {
+        (d, u) if d == half && u == half => unpack_run::<2, 2>(out, p, ubpc, inp, |v| v),
+        (d, u) if d == half && u == float => {
+            unpack_run::<2, 4>(out, p, ubpc, inp, |v| half_to_float_int(v as u16))
+        }
+        (d, _) if d == half => unpack_run::<2, 4>(out, p, ubpc, inp, |v| half_to_uint(v as u16)),
+        (d, u) if d == float && u == half => {
+            unpack_run::<4, 2>(out, p, ubpc, inp, |v| u32::from(float_to_half_int(v)))
+        }
+        (d, u) if d == float && u == float => unpack_run::<4, 4>(out, p, ubpc, inp, |v| v),
+        (d, _) if d == float => unpack_run::<4, 4>(out, p, ubpc, inp, float_to_uint_int),
+        (_, u) if u == half => {
+            unpack_run::<4, 2>(out, p, ubpc, inp, |v| u32::from(uint_to_half(v)))
+        }
+        (_, u) if u == float => unpack_run::<4, 4>(out, p, ubpc, inp, uint_to_float_int),
+        _ => unpack_run::<4, 4>(out, p, ubpc, inp, |v| v),
+    }
+    true
+}
+
 /// `UNPACK_SAMPLES` (src/lib/OpenEXRCore/unpack.c:1092-1237 @ v3.5.3): `samps` values of
 /// `data_type` at `inp` to `user_data_type` values `ubpc` bytes apart from `cdata`.
 fn unpack_samples(
@@ -506,6 +616,9 @@ fn unpack_samples(
         || (ut != half && ut != float && ut != uint)
     {
         return Err(invalid());
+    }
+    if unpack_samples_fast(outs, buf, cdata, ubpc, data_type, ut, inp, samps) {
+        return Ok(());
     }
     for s in 0..samps {
         if data_type == half {

@@ -1756,11 +1756,11 @@ impl Compressor {
     /// `deflate_compress_lazy2` (external/deflate/lib/deflate_compress.c:2604-2834 @ libdeflate
     /// v1.26): before choosing a match, look for a better one at the next position (and, in
     /// `lazy2` mode, the one after); if there is one, output a literal and go on from there.
-    fn deflate_compress_lazy_generic(
+    /// `LAZY2` is a constant, as upstream's `forceinline` makes it in each caller.
+    fn deflate_compress_lazy_generic<const LAZY2: bool>(
         &mut self,
         data: &[u8],
         os: &mut OutputBitstream<'_>,
-        lazy2: bool,
     ) {
         let in_end = data.len();
         let mut in_next = 0usize;
@@ -1865,7 +1865,7 @@ impl Compressor {
                             continue;
                         }
 
-                        if lazy2 {
+                        if LAZY2 {
                             // In lazy2 mode, look ahead another position
                             adjust_max_and_nice_len(&mut max_len, &mut nice_len, in_end - in_next);
                             next_len = mf.longest_match(
@@ -1973,8 +1973,8 @@ impl Compressor {
         match self.strategy {
             Strategy::None => unreachable!("level 0 passes every input through"),
             Strategy::Greedy => self.deflate_compress_greedy(input, &mut os),
-            Strategy::Lazy => self.deflate_compress_lazy_generic(input, &mut os, false),
-            Strategy::Lazy2 => self.deflate_compress_lazy_generic(input, &mut os, true),
+            Strategy::Lazy => self.deflate_compress_lazy_generic::<false>(input, &mut os),
+            Strategy::Lazy2 => self.deflate_compress_lazy_generic::<true>(input, &mut os),
             Strategy::Fastest => self.deflate_compress_fastest(input, &mut os),
             Strategy::NearOptimal => self.deflate_compress_near_optimal(input, &mut os),
         }
