@@ -537,9 +537,9 @@ note = "the reversible lifting computes as the generic one"
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx512.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/transform.rs"
-note = "the irreversible lifting computes as the generic one where it is not contracted: MSVC (the Windows wheel) does not contract; the Linux build (-mavx512f, which enables FMA, and GCC's default -ffp-contract=fast) is to be checked in the Rocky run (docs/deferred.md)"
+note = "the irreversible lifting as the generic one, fused where GCC contracts it: the Linux wheel's object holds exactly five FMAs (vfmadd213ps x3 in irv_vert_step and irv_horz_ana, vfnmadd213ps x2 in irv_horz_syn), which the port computes with mul_add on GCC-built x86-64 at AVX-512 (transform.rs fused_irv_lifting); MSVC does not contract; LJ2K equals both wheels"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_local.h"
@@ -1204,15 +1204,16 @@ status = "todo"
 [[file]]
 path = "external/zstd/lib/decompress/huf_decompress.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/huf_decompress.rs"
-note = "the portable decoders and the fast four-stream C loops, chosen as upstream's build chooses them (the C loop on Windows; on Linux the assembly loop on a BMI2 CPU, its translation, else the portable body); checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them, and damaged ones as Core decodes them (tests/heavy_harness.rs); the Linux assembly path waits for the Rocky run"
+note = "the portable decoders and the fast four-stream C loops, chosen as upstream's build chooses them (the C loop on Windows; on Linux the assembly loop on a BMI2 CPU, its translation, else the portable body); damaged ZSTD chunks decode as Core decodes them on both platforms (tests/heavy_harness.rs, the Linux one through huf_decompress_amd64.S)"
 
 [[file]]
 path = "external/zstd/lib/decompress/huf_decompress_amd64.S"
 kind = "vendored"
-status = "todo"
-note = "Linux x86-64 only (not MSVC); Huffman decode fast path, its output is format-defined"
+status = "done"
+target = "crates/openexr-zstd/src/huf_decompress.rs"
+note = "the C fast loops' translation (Linux x86-64 on a BMI2 CPU): ported as those loops; damaged ZSTD chunks decode as the Linux harness (this assembly) decodes them (tests/heavy_harness.rs on Rocky Linux 9)"
 
 [[file]]
 path = "external/zstd/lib/decompress/zstd_ddict.c"
@@ -1369,23 +1370,23 @@ target = "crates/openexr-core/src/attributes.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_b44.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_b44.rs"
-note = "ported whole; decodes as the wheel does (heavy tier, linear channels included); encodes as the wheel does on the same pixels (testB44Compression, testB44ACompression and the linear check, their C++ halves by the wheel, and every layout of oracle/write_images.py); keeps the packed bytes for a result of their size (D-18); the Linux run pending"
+note = "ported whole; decodes as the wheel does (heavy tier, linear channels included); encodes as the wheel does on the same pixels (testB44Compression, testB44ACompression and the linear check, their C++ halves by the wheel, and every layout of oracle/write_images.py); keeps the packed bytes for a result of their size (D-18); checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_b44_table.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_b44_table.rs"
-note = "ported whole; the tables use the platform's expf and logf: checked on Windows by testB44Table, the Linux run pending"
+note = "ported whole; the tables use the platform's expf and logf: checked on Windows by testB44Table; checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_b44_table_init.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_b44_table.rs"
-note = "ported whole, with internal_b44_table.c"
+note = "ported whole, with internal_b44_table.c; checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_bytes.h"
@@ -1422,9 +1423,9 @@ target = "crates/openexr-core/src/internal_constants.rs"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_cpuid.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_cpuid.rs"
-note = "done on Windows; the Linux path (xgetbv through feature detection) runs in the heavy tier's Rocky Linux gate"
+note = "done on Windows; the Linux path (xgetbv through feature detection); checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_decompress.h"
@@ -1436,72 +1437,72 @@ note = "declarations of the codecs' decompressors, ported with each codec"
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa.rs"
-note = "ported whole; both ways; checked against the Windows wheel (heavy tier: the decode check, and the C++ half of testDWAACompression and testDWABCompression, byte for byte); the Linux run pending"
+note = "ported whole; both ways; checked against the Windows wheel (heavy tier: the decode check, and the C++ half of testDWAACompression and testDWABCompression, byte for byte); checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_channeldata.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa_channeldata.rs"
-note = "ported whole; partial with the codec"
+note = "ported whole; partial with the codec; checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_classifier.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa_classifier.rs"
-note = "ported whole; partial with the codec"
+note = "ported whole; partial with the codec; checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_compressor.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa_compressor.rs"
-note = "ported whole; both ways; checked against the Windows wheel (heavy tier: the decode check, and the C++ half of testDWAACompression and testDWABCompression, byte for byte); the Linux run pending"
+note = "ported whole; both ways; checked against the Windows wheel (heavy tier: the decode check, and the C++ half of testDWAACompression and testDWABCompression, byte for byte); checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_decoder.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa_decoder.rs"
-note = "ported whole; checked against the Windows wheel (heavy tier), the Linux run pending"
+note = "ported whole; checked against the Windows wheel (heavy tier); checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_encoder.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa_encoder.rs"
-note = "ported whole; countSetBits follows each platform (I-22); both ways; checked against the Windows wheel (heavy tier: the decode check, and the C++ half of testDWAACompression and testDWABCompression, byte for byte); the Linux run pending"
+note = "ported whole; countSetBits follows each platform (I-22); both ways; checked against the Windows wheel (heavy tier: the decode check, and the C++ half of testDWAACompression and testDWABCompression, byte for byte); checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_helpers.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa_helpers.rs"
-note = "ported whole; partial with the codec"
+note = "ported whole; partial with the codec; checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_simd.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa_simd.rs"
-note = "ported whole as exact scalar emulations; the SSE2 paths checked against the Windows wheel; the AVX inverse DCT and F16C conversions (Linux) wait for the Rocky run"
+note = "ported whole as exact scalar emulations; the SSE2 paths checked against the Windows wheel; the AVX inverse DCT and F16C conversions (Linux) equal the Linux wheel's and the CPU's (openexr-testkit cpu.rs); checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_table.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa_table.rs"
-note = "ported whole; the tables use the platform's powf and logf: checked on Windows by testDWATable, the Linux run pending"
+note = "ported whole; the tables use the platform's powf and logf: checked on Windows by testDWATable; checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_dwa_table_init.c"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/internal_dwa_table.rs"
-note = "ported whole, with internal_dwa_table.c"
+note = "ported whole, with internal_dwa_table.c; checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_file.h"
@@ -1584,9 +1585,9 @@ note = "ported whole; decodes as the wheel does and encodes the wheel's files by
 [[file]]
 path = "src/lib/OpenEXRCore/internal_posix_file_impl.h"
 kind = "src"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/file_impl.rs"
-note = "read and write streams, temp names, failed-write cleanup, the finished write's rename (D-20); checked on Linux in the heavy tier"
+note = "read and write streams, temp names, failed-write cleanup, the finished write's rename (D-20); checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/lib/OpenEXRCore/internal_preview.h"
@@ -1944,9 +1945,9 @@ note = "the declarations of its tests"
 [[file]]
 path = "src/test/OpenEXRCoreTest/compressionTables.cpp"
 kind = "test"
-status = "partial"
+status = "done"
 target = "crates/openexr-core/src/upstream_tests/compression_tables.rs"
-note = "testB44Table, testDWATable (testLutHeader, an exhaustive search, in the heavy tier), testDWAQuantize; partial until gate --full and the Linux run"
+note = "testB44Table, testDWATable (testLutHeader, an exhaustive search, in the heavy tier), testDWAQuantize; checked on Rocky Linux 9 too (gate --full, 2026-11-08)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/deep.cpp"

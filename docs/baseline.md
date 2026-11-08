@@ -117,8 +117,8 @@ reach, and only where it reproduces the wheel:
 
 | Check | Windows (2026-11-07) | Rocky Linux 9 |
 |---|---|---|
-| `oracle/native_accept.py`: every layout of `oracle/write_images.py`, rewritten from its uncompressed copy into each of the 14 compressions by Core alone, against the wheel's own file of that compression, chunk by chunk | 2145 chunks byte-identical; 46 not, all from two upstream bugs of Core's writer, where the harness is not accepted: I-14 (the `attrs` layout's bytes attribute, which Core refuses to write) and I-23 (B44 and B44A on parts without half channels) | pending |
-| `oracle/native_accept_messages.py`: the 53 images of upstream's test tree and the `write_images.py` set, each also cut, with 16 bytes of its first chunk set to 0xff, and with its first chunk's size set to 0x7fffffff: every Core message the wheel prints is printed by the harness, byte for byte | 1300 files, 627 with messages from the wheel, none missed | pending |
+| `oracle/native_accept.py`: every layout of `oracle/write_images.py`, rewritten from its uncompressed copy into each of the 14 compressions by Core alone, against the wheel's own file of that compression, chunk by chunk | 2145 chunks byte-identical; 46 not, all from two upstream bugs of Core's writer, where the harness is not accepted: I-14 (the `attrs` layout's bytes attribute, which Core refuses to write) and I-23 (B44 and B44A on parts without half channels) | 2026-11-08: the same, 2145 and 46 |
+| `oracle/native_accept_messages.py`: the 53 images of upstream's test tree and the `write_images.py` set, each also cut, with 16 bytes of its first chunk set to 0xff, and with its first chunk's size set to 0x7fffffff: every Core message the wheel prints is printed by the harness, byte for byte | 1300 files, 627 with messages from the wheel, none missed | 2026-11-08: 1292 files, 623 with messages, none missed |
 
 The port is checked against it by `crates/openexr-core/tests/heavy_harness.rs` (heavy tier,
 Windows, 2026-11-07): every image of upstream's test tree and of `write_images.py`, whole and
@@ -134,4 +134,21 @@ for byte and every chunk by index, 2909 rewrites identical; left out, D-10, D-17
 (124), and the ZSTD levels whose strategies are not yet ported (969). Upstream's pictures
 found a port bug the wheel's images could not: libdeflate's `min_lens` table had two entries
 wrong (fixed).
+
+## Rocky Linux 9 (2026-11-08)
+
+`scripts/rocky9.sh` runs the reference container (`docker/rocky9`, image `openexr-rs-rocky9:2`:
+Rocky Linux 9.8, GCC 11.5, uv, and rust-toolchain.toml's Rust 1.99.1), the checkout at `/work`,
+Linux build output (cargo's included) in a volume at `/work/target/rocky9`. On this machine (AMD
+Ryzen 9 9950X3D: AVX-512F, AVX2, F16C, BMI1 and BMI2) `scripts/rocky9.sh cargo xtask gate --full`
+passes: the fast tier and the heavy one, the wheel's decode and encode checks (DWA's AVX inverse
+DCT and F16C conversions, the F16C half kernel and zstd's assembly Huffman loop among the paths
+taken) and the comparison with the Linux harness.
+
+The run found one difference of the platforms, now ported: the Linux wheel's OpenJPH builds its
+AVX-512 irreversible lifting with GCC in `-std=gnu++14`, which contracts `p + f * (m + n)` and
+`p - f * (m + n)` into fused multiply-adds; the wheel's whole module holds exactly those five
+(`vfmadd213ps` three times, `vfnmadd213ps` twice), and the port computes them fused on GCC-built
+x86-64 at OpenJPH's AVX-512 level (`crates/openexr-openjph/src/transform.rs`). MSVC does not
+contract, so the Windows wheel lifts unfused.
 

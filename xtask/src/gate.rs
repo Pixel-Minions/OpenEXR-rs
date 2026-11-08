@@ -58,8 +58,8 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
             ],
         )?;
         println!(
-            "gate --full: not yet part of the heavy tier: Rocky Linux 9, oracle fixtures, \
-             corpus, SDE (PLAN.md §8)"
+            "gate --full: Rocky Linux 9 is `scripts/rocky9.sh cargo xtask gate --full`; not yet \
+             part of the heavy tier: oracle fixtures, corpus, SDE (PLAN.md §8)"
         );
     }
     println!(

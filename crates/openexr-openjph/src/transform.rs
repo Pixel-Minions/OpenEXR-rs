@@ -338,8 +338,36 @@ pub(crate) fn rev_horz_syn(
     }
 }
 
+/// Whether upstream's build lifts the irreversible transform with fused multiply-adds: its
+/// AVX-512 kernels (`avx512_irv_vert_step`, `avx512_irv_horz_ana`, `avx512_irv_horz_syn`,
+/// external/OpenJPH/src/core/transform/ojph_transform_avx512.cpp:220-400 @ OpenJPH 0.32.0),
+/// which `init_wavelet_transform_functions` (ojph_transform.cpp:155-167) picks on a CPU of
+/// level AVX-512, compute as the generic steps, but GCC builds them with `-mavx512f` (which
+/// brings FMA) in `-std=gnu++14`, which contracts: each `p + f * (m + n)` and `p - f * (m + n)`
+/// becomes one `vfmadd213ps` or `vfnmadd213ps`, rounded once (the Linux wheel's object holds
+/// exactly those five). MSVC does not contract (`/fp:precise`): the Windows wheel lifts as the
+/// generic steps. Once per process.
+fn fused_irv_lifting() -> bool {
+    static FUSED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FUSED.get_or_init(|| {
+        cfg!(all(target_arch = "x86_64", not(target_env = "msvc")))
+            && crate::arch::get_cpu_ext_level() >= crate::arch::x86_level::AVX512
+    })
+}
+
+/// `d + a * (s1 + s2)` as the kernel upstream's build chooses computes it ([`fused_irv_lifting`]).
+#[inline]
+fn irv_lift(d: f32, a: f32, sum: f32, fused: bool) -> f32 {
+    if fused {
+        a.mul_add(sum, d)
+    } else {
+        d + a * sum
+    }
+}
+
 /// Port of `gen_irv_vert_step` (external/OpenJPH/src/core/transform/ojph_transform.cpp:691-704
-/// @ OpenJPH 0.32.0).
+/// @ OpenJPH 0.32.0), and of `avx512_irv_vert_step` (ojph_transform_avx512.cpp:220-241), fused
+/// in GCC builds ([`fused_irv_lifting`]).
 pub(crate) fn irv_vert_step(
     s: &LiftingStep,
     sig: &LineBuf,
@@ -354,8 +382,9 @@ pub(crate) fn irv_vert_step(
     }
     let (src1, src2) = (sig.f32(), other.f32());
     let dst = aug.f32_mut();
+    let fused = fused_irv_lifting();
     for i in 0..repeat as usize {
-        dst[i] += a * (src1[i] + src2[i]);
+        dst[i] = irv_lift(dst[i], a, src1[i] + src2[i], fused);
     }
 }
 
@@ -368,7 +397,8 @@ pub(crate) fn irv_vert_times_k(k: f32, aug: &mut LineBuf, repeat: u32) {
 }
 
 /// Port of `gen_irv_horz_ana` (external/OpenJPH/src/core/transform/ojph_transform.cpp:715-783
-/// @ OpenJPH 0.32.0).
+/// @ OpenJPH 0.32.0), and of `avx512_irv_horz_ana` (ojph_transform_avx512.cpp:250-322), fused in
+/// GCC builds ([`fused_irv_lifting`]).
 pub(crate) fn irv_horz_ana(
     atk: &ParamAtk,
     ldst: Option<&mut LineBuf>,
@@ -422,8 +452,9 @@ pub(crate) fn irv_horz_ana(
             lbuf[l0 + l_width as usize] = lbuf[l0 + l_width as usize - 1];
             // lifting
             let sp0 = l0 + usize::from(even);
+            let fused = fused_irv_lifting();
             for i in 0..h_width as usize {
-                hbuf[h0 + i] += a * (lbuf[sp0 + i - 1] + lbuf[sp0 + i]);
+                hbuf[h0 + i] = irv_lift(hbuf[h0 + i], a, lbuf[sp0 + i - 1] + lbuf[sp0 + i], fused);
             }
             // swap buffers
             lp_is_l = !lp_is_l;
@@ -454,7 +485,8 @@ pub(crate) fn irv_horz_ana(
 }
 
 /// Port of `gen_irv_horz_syn` (external/OpenJPH/src/core/transform/ojph_transform.cpp:786-851
-/// @ OpenJPH 0.32.0).
+/// @ OpenJPH 0.32.0), and of `avx512_irv_horz_syn` (ojph_transform_avx512.cpp:325-400), fused
+/// in GCC builds ([`fused_irv_lifting`]): `p - f * (m + n)` as `vfnmadd213ps`.
 pub(crate) fn irv_horz_syn(
     atk: &ParamAtk,
     dst: &mut LineBuf,
@@ -499,8 +531,14 @@ pub(crate) fn irv_horz_syn(
             obuf[o0 + oth_width as usize] = obuf[o0 + oth_width as usize - 1];
             // lifting
             let sp0 = o0 + usize::from(!ev);
+            let fused = fused_irv_lifting();
             for i in 0..aug_width as usize {
-                abuf[a0 + i] -= a * (obuf[sp0 + i - 1] + obuf[sp0 + i]);
+                let sum = obuf[sp0 + i - 1] + obuf[sp0 + i];
+                abuf[a0 + i] = if fused {
+                    (-a).mul_add(sum, abuf[a0 + i]) // -(a * sum) + p, rounded once
+                } else {
+                    abuf[a0 + i] - a * sum
+                };
             }
             // swap buffers
             oth_is_h = !oth_is_h;

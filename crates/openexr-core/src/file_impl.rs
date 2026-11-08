@@ -16,8 +16,12 @@
 use std::fs::File;
 use std::io;
 
-use crate::cfmt::{self, Arg, Crt};
-use crate::context::{Context, ContextCore, Error, StreamErrors};
+use crate::cfmt::Arg;
+#[cfg(windows)]
+use crate::cfmt::{self, Crt};
+#[cfg(windows)]
+use crate::context::ContextCore;
+use crate::context::{Context, Error, StreamErrors};
 use crate::errors::ErrorCode;
 
 /// Port of `print_error_helper` (src/lib/OpenEXRCore/internal_win32_file_impl.h:22-71 @ v3.5.3):

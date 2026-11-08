@@ -10,7 +10,7 @@
 # Linux filesystem, never shared with Windows); the uv cache is a shared volume.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-image="openexr-rs-rocky9:1"
+image="openexr-rs-rocky9:2"
 if ! docker image inspect "$image" >/dev/null 2>&1; then
     docker build -t "$image" "$root/docker/rocky9"
 fi
