@@ -325,8 +325,13 @@ fn exr_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// them (`oracle/native_accept_messages.py`'s: cut, 16 bytes of a chunk set to 0xff, a chunk's
 /// size made huge), which the wheel decodes as far as it can. Files the C++ library wrote for
 /// another version, the corpus's, are not the encode checks' (their bytes are not 3.5.3's).
+/// Under SDE (`scripts/sde.sh`), only [`images`]: they hold every compression and layout,
+/// and an emulated CPU runs many times slower.
 fn decode_images(scratch: &Path) -> Vec<PathBuf> {
     let mut images = images(scratch);
+    if std::env::var_os("OPENEXR_RS_SDE").is_some() {
+        return images;
+    }
     let corpus = root().join("corpus/openexr-images");
     assert!(
         corpus.is_dir(),
