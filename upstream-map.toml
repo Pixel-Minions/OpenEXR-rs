@@ -837,8 +837,9 @@ status = "todo"
 [[file]]
 path = "external/deflate/lib/x86/decompress_impl.h"
 kind = "vendored"
-status = "n/a"
-note = "the BMI2 build of the same decode loop; same results (performance, PLAN.md O3)"
+status = "partial"
+target = "crates/openexr-deflate/src/decompress_bmi2.rs"
+note = "the template compiled for BMI2 and arch_select_decompress_func's choice of it (both wheels: GCC's target attribute, MSVC >= 1930's bzhi); the same results, checked through the decode checks; heavy-tier check pending gate --full"
 
 [[file]]
 path = "external/deflate/lib/x86/matchfinder_impl.h"
