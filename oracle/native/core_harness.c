@@ -34,6 +34,10 @@
  *   core_harness bench <in> <reps> [<compression> [--zip N] [--zstd N] [--dwa F]]
  *       Timing for comparing the port's speed with Core's (cmd_bench): part 0's chunks
  *       decoded, and with a compression encoded, reps times; the best times on stdout.
+ *
+ *   core_harness zstd-big <dir> <width> <level>...
+ *       A ZSTD chunk whose zstd frame passes ZSTD_CURRENT_MAX, so that zstd corrects its
+ *       indices within it (cmd_zstd_big), at each level; digests on stdout.
  */
 
 #include <openexr.h>
@@ -1085,6 +1089,122 @@ cmd_bench (int argc, char** argv)
     return 0;
 }
 
+/* A ZSTD chunk whose zstd frame passes ZSTD_CURRENT_MAX (3500 MiB), so that zstd corrects
+ * its indices within it: a scanline part one line high, <width> pixels wide, of two HALF
+ * channels (A, B) and one FLOAT (C), whose inner stream (the half segment, then the float
+ * one, each at most INT_MAX bytes) is 8 * <width> + 16 bytes. Its pixels are integer hashes
+ * of the column with several periods (zstd_big_value), so that every level's window holds
+ * matches. For each level in turn, in one process (the thread's zstd context reused, as
+ * Core's chunks reuse it): the chunk encoded through Core's pipeline with a write_fn that
+ * digests the compressed bytes (FNV-1a 64) and writes nothing; one line each,
+ * "zstd <level> <packed bytes> <compressed bytes> <digest>". */
+
+static uint32_t
+zstd_big_hash (uint32_t v)
+{
+    v ^= v >> 16;
+    v *= 0x7feb352dU;
+    v ^= v >> 15;
+    v *= 0x846ca68bU;
+    v ^= v >> 16;
+    return v;
+}
+
+/* channel c's value at column x: the low bits of a hash of x modulo a period, with a slow
+ * drift every so many columns, so that runs repeat but not forever */
+static uint32_t
+zstd_big_value (int c, uint32_t x)
+{
+    if (c == 0) return zstd_big_hash (x % 65521U) & 0x3FFFU;
+    if (c == 1) return (zstd_big_hash ((x % 40009U) + x / 1000003U) >> 7) & 0xFFFFU;
+    return 0x3F800000U | (zstd_big_hash (x % 30011U) & 0x007FFF00U) | ((x >> 13) & 0xFFU);
+}
+
+typedef struct
+{
+    uint64_t h;
+    uint64_t n;
+} zstd_big_state_t;
+
+static exr_result_t
+zstd_big_write (exr_encode_pipeline_t* enc)
+{
+    zstd_big_state_t* s = (zstd_big_state_t*) enc->encoding_user_data;
+    const uint8_t*    p = (const uint8_t*) enc->compressed_buffer;
+    for (uint64_t i = 0; i < enc->compressed_bytes; ++i)
+        s->h = (s->h ^ p[i]) * 1099511628211ULL;
+    s->n = enc->compressed_bytes;
+    return EXR_ERR_SUCCESS;
+}
+
+static int
+cmd_zstd_big (int argc, char** argv)
+{
+    char          path[4096];
+    exr_context_t f   = NULL;
+    int           p   = 0;
+    uint32_t      w;
+    uint8_t*      planes[3];
+    if (argc < 3) return fail ("zstd-big: <dir> <width> <level>...", EXR_ERR_INVALID_ARGUMENT);
+    w = (uint32_t) strtoul (argv[1], NULL, 10);
+    for (int c = 0; c < 3; ++c)
+    {
+        size_t bpe = c == 2 ? 4 : 2;
+        planes[c]  = (uint8_t*) malloc ((size_t) w * bpe);
+        if (!planes[c]) return fail ("out of memory", EXR_ERR_OUT_OF_MEMORY);
+        for (uint32_t x = 0; x < w; ++x)
+        {
+            uint32_t v = zstd_big_value (c, x);
+            for (size_t k = 0; k < bpe; ++k)
+                planes[c][(size_t) x * bpe + k] = (uint8_t) (v >> (8 * k));
+        }
+    }
+    snprintf (path, sizeof (path), "%s/zstd-big.exr", argv[0]);
+    for (int l = 2; l < argc; ++l)
+    {
+        int                   level = atoi (argv[l]);
+        exr_chunk_info_t      ci;
+        exr_encode_pipeline_t enc = EXR_ENCODE_PIPELINE_INITIALIZER;
+        zstd_big_state_t      s   = {14695981039346656037ULL, 0};
+        CHECK (exr_start_write (&f, path, EXR_WRITE_FILE_DIRECTLY, NULL));
+        CHECK (exr_add_part (f, "", EXR_STORAGE_SCANLINE, &p));
+        CHECK (exr_initialize_required_attr_simple (f, p, (int32_t) w, 1, EXR_COMPRESSION_ZSTD));
+        CHECK (exr_add_channel (f, p, "A", EXR_PIXEL_HALF, EXR_PERCEPTUALLY_LINEAR, 1, 1));
+        CHECK (exr_add_channel (f, p, "B", EXR_PIXEL_HALF, EXR_PERCEPTUALLY_LINEAR, 1, 1));
+        CHECK (exr_add_channel (f, p, "C", EXR_PIXEL_FLOAT, EXR_PERCEPTUALLY_LINEAR, 1, 1));
+        CHECK (exr_set_zstd_compression_level (f, p, level));
+        CHECK (exr_write_header (f));
+        CHECK (exr_write_scanline_chunk_info (f, p, 0, &ci));
+        CHECK (exr_encoding_initialize (f, p, &ci, &enc));
+        for (int c = 0; c < 3; ++c)
+        {
+            exr_coding_channel_info_t* ch = enc.channels + c;
+            ch->encode_from_ptr           = planes[c];
+            ch->user_pixel_stride         = ch->bytes_per_element;
+            ch->user_line_stride          = (int32_t) ((size_t) w * (size_t) ch->bytes_per_element);
+            ch->user_bytes_per_element    = ch->bytes_per_element;
+            ch->user_data_type            = ch->data_type;
+        }
+        CHECK (exr_encoding_choose_default_routines (f, p, &enc));
+        enc.write_fn           = zstd_big_write;
+        enc.encoding_user_data = &s;
+        CHECK (exr_encoding_run (f, p, &enc));
+        printf (
+            "zstd %d %llu %llu %016llx\n",
+            level,
+            (unsigned long long) enc.packed_bytes,
+            (unsigned long long) s.n,
+            (unsigned long long) s.h);
+        fflush (stdout);
+        CHECK (exr_encoding_destroy (f, &enc));
+        exr_finish (&f);
+        remove (path);
+    }
+    for (int c = 0; c < 3; ++c)
+        free (planes[c]);
+    return 0;
+}
+
 int
 main (int argc, char** argv)
 {
@@ -1093,6 +1213,7 @@ main (int argc, char** argv)
     if (argc >= 2 && !strcmp (argv[1], "info")) return cmd_info (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "convert")) return cmd_convert (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "bench")) return cmd_bench (argc - 2, argv + 2);
+    if (argc >= 2 && !strcmp (argv[1], "zstd-big")) return cmd_zstd_big (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "recompress"))
         return cmd_recompress (argc - 2, argv + 2);
     fprintf (
@@ -1101,6 +1222,7 @@ main (int argc, char** argv)
         "       core_harness recompress <in> <out> <compression> [--zip N] [--zstd N] [--dwa F]\n"
         "       core_harness compress-buffer <level> <in> <out>\n"
         "       core_harness convert <dir>\n"
-        "       core_harness bench <in> <reps> [<compression> [--zip N] [--zstd N] [--dwa F]]\n");
+        "       core_harness bench <in> <reps> [<compression> [--zip N] [--zstd N] [--dwa F]]\n"
+        "       core_harness zstd-big <dir> <width> <level>...\n");
     return 2;
 }

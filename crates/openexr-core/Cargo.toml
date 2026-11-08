@@ -44,3 +44,7 @@ required-features = ["heavy"]
 [[test]]
 name = "heavy_harness"
 required-features = ["heavy"]
+
+[[test]]
+name = "heavy_zstd_big"
+required-features = ["heavy"]

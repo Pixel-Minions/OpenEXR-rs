@@ -16,6 +16,7 @@ use crate::zstd_compress_internal::{
     zstd_count,
 };
 use crate::zstd_decompress_internal::{LL_BITS, MAX_LL, MAX_ML, MAX_OFF, ML_BITS};
+use crate::zstd_ldm::RawSeqStore;
 
 /// `ZSTD_LITFREQ_ADD` (external/zstd/lib/compress/zstd_opt.c:19 @ zstd v1.5.7): scaling
 /// factor for litFreq, so that frequencies adapt faster to new stats.
@@ -619,10 +620,170 @@ fn new_rep(rep: &[u32; 3], off_base: u32, ll0: bool) -> [u32; 3] {
     r
 }
 
+/// Port of `ZSTD_optLdm_t` (external/zstd/lib/compress/zstd_opt.c:906-912 @ zstd v1.5.7):
+/// what the parser needs to decide on a long distance match. Its store is the block's
+/// sequences with the parser's own reading position (upstream copies the store).
+struct OptLdm<'a> {
+    /// External match candidates store for this block.
+    seq: &'a [crate::zstd_ldm::RawSeq],
+    pos: usize,
+    pos_in_sequence: usize,
+    /// Start position of the current match candidate.
+    start_pos_in_block: u32,
+    /// End position of the current match candidate.
+    end_pos_in_block: u32,
+    /// Offset of the match candidate.
+    offset: u32,
+}
+
+impl OptLdm<'_> {
+    /// Port of `ZSTD_optLdm_skipRawSeqStoreBytes` (external/zstd/lib/compress/zstd_opt.c:918-933
+    /// @ zstd v1.5.7): `nb_bytes` further into the store.
+    fn skip_raw_seq_store_bytes(&mut self, nb_bytes: usize) {
+        let mut curr_pos = (self.pos_in_sequence + nb_bytes) as u32;
+        while curr_pos != 0 && self.pos < self.seq.len() {
+            let curr_seq = self.seq[self.pos];
+            if curr_pos >= curr_seq.lit_length + curr_seq.match_length {
+                curr_pos -= curr_seq.lit_length + curr_seq.match_length;
+                self.pos += 1;
+            } else {
+                self.pos_in_sequence = curr_pos as usize;
+                break;
+            }
+        }
+        if curr_pos == 0 || self.pos == self.seq.len() {
+            self.pos_in_sequence = 0;
+        }
+    }
+
+    /// Port of `ZSTD_opt_getNextMatchAndUpdateSeqStore`
+    /// (external/zstd/lib/compress/zstd_opt.c:940-989 @ zstd v1.5.7): the beginning and end of
+    /// the next match in the current block.
+    fn get_next_match_and_update_seq_store(
+        &mut self,
+        curr_pos_in_block: u32,
+        block_bytes_remaining: u32,
+    ) {
+        // Setting match end position to MAX to ensure we never use an LDM during this block
+        if self.seq.is_empty() || self.pos >= self.seq.len() {
+            self.start_pos_in_block = u32::MAX;
+            self.end_pos_in_block = u32::MAX;
+            return;
+        }
+        // Calculate appropriate bytes left in matchLength and litLength after adjusting
+        // based on ldmSeqStore->posInSequence
+        let curr_seq = self.seq[self.pos];
+        let curr_block_end_pos = curr_pos_in_block.wrapping_add(block_bytes_remaining);
+        let literals_bytes_remaining = if self.pos_in_sequence < curr_seq.lit_length as usize {
+            curr_seq.lit_length - self.pos_in_sequence as u32
+        } else {
+            0
+        };
+        let match_bytes_remaining = if literals_bytes_remaining == 0 {
+            curr_seq
+                .match_length
+                .wrapping_sub((self.pos_in_sequence as u32).wrapping_sub(curr_seq.lit_length))
+        } else {
+            curr_seq.match_length
+        };
+
+        // If there are more literal bytes than bytes remaining in block, no ldm is possible
+        if literals_bytes_remaining >= block_bytes_remaining {
+            self.start_pos_in_block = u32::MAX;
+            self.end_pos_in_block = u32::MAX;
+            self.skip_raw_seq_store_bytes(block_bytes_remaining as usize);
+            return;
+        }
+
+        // Matches may be < minMatch by this process. In that case, we will reject them when
+        // we are deciding whether or not to add the ldm
+        self.start_pos_in_block = curr_pos_in_block.wrapping_add(literals_bytes_remaining);
+        self.end_pos_in_block = self.start_pos_in_block.wrapping_add(match_bytes_remaining);
+        self.offset = curr_seq.offset;
+
+        if self.end_pos_in_block > curr_block_end_pos {
+            // Match ends after the block ends, we can't use the whole match
+            self.end_pos_in_block = curr_block_end_pos;
+            self.skip_raw_seq_store_bytes((curr_block_end_pos - curr_pos_in_block) as usize);
+        } else {
+            // Consume nb of bytes equal to size of sequence left
+            self.skip_raw_seq_store_bytes(
+                literals_bytes_remaining.wrapping_add(match_bytes_remaining) as usize,
+            );
+        }
+    }
+
+    /// Port of `ZSTD_optLdm_maybeAddMatch` (external/zstd/lib/compress/zstd_opt.c:996-1019
+    /// @ zstd v1.5.7): the match at `curr_pos_in_block`, if it is long enough, after the
+    /// others (they stay ordered by length).
+    fn maybe_add_match(
+        &self,
+        matches: &mut [OptMatch],
+        nb_matches: &mut u32,
+        curr_pos_in_block: u32,
+        min_match: u32,
+    ) {
+        let pos_diff = curr_pos_in_block.wrapping_sub(self.start_pos_in_block);
+        // Note: ZSTD_match_t actually contains offBase and matchLength (before subtracting MINMATCH)
+        let candidate_match_length = self
+            .end_pos_in_block
+            .wrapping_sub(self.start_pos_in_block)
+            .wrapping_sub(pos_diff);
+
+        // Ensure that current block position is not outside of the match
+        if curr_pos_in_block < self.start_pos_in_block
+            || curr_pos_in_block >= self.end_pos_in_block
+            || candidate_match_length < min_match
+        {
+            return;
+        }
+
+        if *nb_matches == 0
+            || ((candidate_match_length > matches[*nb_matches as usize - 1].len)
+                && (*nb_matches as usize) < ZSTD_OPT_NUM)
+        {
+            let candidate_off_base = offset_to_offbase(self.offset);
+            matches[*nb_matches as usize].len = candidate_match_length;
+            matches[*nb_matches as usize].off = candidate_off_base;
+            *nb_matches += 1;
+        }
+    }
+
+    /// Port of `ZSTD_optLdm_processMatchCandidate` (external/zstd/lib/compress/zstd_opt.c:1024-1046
+    /// @ zstd v1.5.7): the store moved on to `curr_pos_in_block`, and its match there added.
+    fn process_match_candidate(
+        &mut self,
+        matches: &mut [OptMatch],
+        nb_matches: &mut u32,
+        curr_pos_in_block: u32,
+        remaining_bytes: u32,
+        min_match: u32,
+    ) {
+        if self.seq.is_empty() || self.pos >= self.seq.len() {
+            return;
+        }
+
+        if curr_pos_in_block >= self.end_pos_in_block {
+            if curr_pos_in_block > self.end_pos_in_block {
+                // The position at which ZSTD_optLdm_processMatchCandidate() is called is not
+                // necessarily at the end of a match from the ldm seq store, and will often be
+                // some bytes over beyond matchEndPosInBlock. As such, we need to correct for
+                // these "overshoots"
+                let pos_overshoot = curr_pos_in_block - self.end_pos_in_block;
+                self.skip_raw_seq_store_bytes(pos_overshoot as usize);
+            }
+            self.get_next_match_and_update_seq_store(curr_pos_in_block, remaining_bytes);
+        }
+        self.maybe_add_match(matches, nb_matches, curr_pos_in_block, min_match);
+    }
+}
+
 /// Port of `ZSTD_compressBlock_opt_generic` (external/zstd/lib/compress/zstd_opt.c:1074-1441
-/// @ zstd v1.5.7), without a dictionary or long distance matches: the block
-/// `src[istart..iend]` parsed by pricing every way of reaching each position from the last
-/// match; returns the last literals' size. `opt_level` 0 is btopt's, 2 btultra's.
+/// @ zstd v1.5.7), without a dictionary: the block `src[istart..iend]` parsed by pricing every
+/// way of reaching each position from the last match, the long distance matcher's sequences
+/// `ldm` (upstream's `ms->ldmSeqStore`) among the candidates; returns the last literals' size.
+/// `opt_level` 0 is btopt's, 2 btultra's.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compress_block_opt_generic(
     ms: &mut MatchState,
     seq_store: &mut SeqStore,
@@ -631,6 +792,7 @@ pub(crate) fn compress_block_opt_generic(
     istart: usize,
     iend: usize,
     opt_level: i32,
+    ldm: Option<&RawSeqStore>,
 ) -> usize {
     let mut ip = istart;
     let mut anchor = istart;
@@ -646,6 +808,16 @@ pub(crate) fn compress_block_opt_generic(
     let mut opt = std::mem::take(&mut ms.opt.price_table);
     let mut matches = std::mem::take(&mut ms.opt.match_table);
     let mut last_stretch = Optimal::default();
+
+    let mut opt_ldm = OptLdm {
+        seq: ldm.map_or(&[][..], |l| &l.seq[..]),
+        pos: ldm.map_or(0, |l| l.pos),
+        pos_in_sequence: ldm.map_or(0, |l| l.pos_in_sequence),
+        start_pos_in_block: 0,
+        end_pos_in_block: 0,
+        offset: 0,
+    };
+    opt_ldm.get_next_match_and_update_seq_store((ip - istart) as u32, (iend - ip) as u32);
 
     // init
     rescale_freqs(&mut ms.opt, &src[istart..iend], opt_level);
@@ -665,7 +837,7 @@ pub(crate) fn compress_block_opt_generic(
         {
             let litlen = (ip - anchor) as u32;
             let ll0 = u32::from(litlen == 0);
-            let nb_matches = bt_get_all_matches(
+            let mut nb_matches = bt_get_all_matches(
                 &mut matches,
                 ms,
                 &mut next_to_update3,
@@ -674,6 +846,13 @@ pub(crate) fn compress_block_opt_generic(
                 iend,
                 rep,
                 ll0,
+                min_match,
+            );
+            opt_ldm.process_match_candidate(
+                &mut matches,
+                &mut nb_matches,
+                (ip - istart) as u32,
+                (iend - ip) as u32,
                 min_match,
             );
             if nb_matches == 0 {
@@ -809,7 +988,7 @@ pub(crate) fn compress_block_opt_generic(
                     let previous_price = opt[c].price;
                     let base_price = previous_price.wrapping_add(ll_price(&ms.opt, 0));
                     let cur_rep = opt[c].rep;
-                    let nb_matches = bt_get_all_matches(
+                    let mut nb_matches = bt_get_all_matches(
                         &mut matches,
                         ms,
                         &mut next_to_update3,
@@ -818,6 +997,13 @@ pub(crate) fn compress_block_opt_generic(
                         iend,
                         &cur_rep,
                         ll0,
+                        min_match,
+                    );
+                    opt_ldm.process_match_candidate(
+                        &mut matches,
+                        &mut nb_matches,
+                        (inr - istart) as u32,
+                        (iend - inr) as u32,
                         min_match,
                     );
 
@@ -983,15 +1169,16 @@ fn init_stats_ultra(
     src: &[u8],
     istart: usize,
     iend: usize,
+    ldm: Option<&RawSeqStore>,
 ) {
     let mut tmp_rep = *rep; // updated rep codes will sink here
-    compress_block_opt_generic(ms, seq_store, &mut tmp_rep, src, istart, iend, 2); // generate stats into ms->opt
+    compress_block_opt_generic(ms, seq_store, &mut tmp_rep, src, istart, iend, 2, ldm); // generate stats into ms->opt
 
     // invalidate first scan from history, only keep entropy stats
     seq_store.reset();
     let src_size = (iend - istart) as u32;
-    ms.window.base += src_size;
-    ms.window.next_src += src_size;
+    ms.window.base += i64::from(src_size);
+    ms.window.next_src += u64::from(src_size);
     ms.window.dict_limit += src_size;
     ms.window.low_limit = ms.window.dict_limit;
     ms.next_to_update = ms.window.dict_limit;
@@ -1009,10 +1196,11 @@ pub(crate) fn compress_block_opt(
     istart: usize,
     iend: usize,
     strategy: crate::zstd_compress_internal::Strategy,
+    ldm: Option<&RawSeqStore>,
 ) -> usize {
     use crate::zstd_compress_internal::{ZSTD_BTOPT, ZSTD_BTULTRA2};
     if strategy == ZSTD_BTOPT {
-        return compress_block_opt_generic(ms, seq_store, rep, src, istart, iend, 0);
+        return compress_block_opt_generic(ms, seq_store, rep, src, istart, iend, 0, ldm);
     }
     if strategy == ZSTD_BTULTRA2 {
         let curr = ms.window.idx(istart);
@@ -1024,8 +1212,8 @@ pub(crate) fn compress_block_opt(
             && (iend - istart > ZSTD_PREDEF_THRESHOLD)
         {
             // input large enough to not employ default stats
-            init_stats_ultra(ms, seq_store, rep, src, istart, iend);
+            init_stats_ultra(ms, seq_store, rep, src, istart, iend, ldm);
         }
     }
-    compress_block_opt_generic(ms, seq_store, rep, src, istart, iend, 2)
+    compress_block_opt_generic(ms, seq_store, rep, src, istart, iend, 2, ldm)
 }

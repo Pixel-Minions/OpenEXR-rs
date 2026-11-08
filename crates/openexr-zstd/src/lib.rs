@@ -40,6 +40,8 @@ mod zstd_double_fast;
 mod zstd_fast;
 #[allow(dead_code)] // the compressor's, used with zstd_compress.c
 mod zstd_lazy;
+mod zstd_ldm;
+mod zstd_ldm_geartab;
 mod zstd_opt;
 #[allow(dead_code)] // the compressor's, used with zstd_compress.c
 mod zstd_pre_split;
