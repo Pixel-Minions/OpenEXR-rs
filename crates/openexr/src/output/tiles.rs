@@ -195,6 +195,7 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
         dy: (i32, i32),
         level: (i32, i32),
     ) -> Result<()> {
+        self.check_failed()?;
         if self.file.parts[..self.index]
             .iter()
             .any(PartState::incomplete)
@@ -214,6 +215,18 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
         }
         let dx = if dx.1 < dx.0 { (dx.1, dx.0) } else { dx };
         let dy = if dy.1 < dy.0 { (dy.1, dy.0) } else { dy };
+        // a tile given before is refused before anything is done, the file unharmed
+        // (bufferedTileWrite's check, src/lib/OpenEXR/ImfTiledOutputFile.cpp:456-465 @ v3.5.3)
+        for ty in dy.0..=dy.1 {
+            for tx in dx.0..=dx.1 {
+                let at = (tx, ty, lx, ly);
+                if tiles.written.contains(&at) || tiles.pending.contains_key(&at) {
+                    return Err(invalid(format!(
+                        "Attempt to write tile ({tx}, {ty}, {lx}, {ly}) more than once."
+                    )));
+                }
+            }
+        }
         let decreasing = tiles.order == LineOrder::DecreasingY;
         let p = self.index as i32;
         let ctx = self.file.ctx.as_ref().expect("not finished");
@@ -290,7 +303,8 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
             let ChunkAt::Tile(at) = at else {
                 unreachable!("tiles")
             };
-            self.put_tile(at, TileData::Flat(bytes?))?;
+            let r = bytes.and_then(|b| self.put_tile(at, TileData::Flat(b)));
+            self.poison(r)?;
         }
         Ok(())
     }

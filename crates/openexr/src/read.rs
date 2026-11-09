@@ -18,7 +18,7 @@ use openexr_core::coding::BufferRef;
 use openexr_core::decoding::DecodePipeline;
 
 use crate::attribute::{Box2i, LevelMode, PixelType, Storage, V2};
-use crate::error::{Error, ErrorCode, Result};
+use crate::error::{Error, ErrorCode, Result, alloc, product};
 use crate::frame_buffer::{FrameBuffer, Slice, first_multiple, sample_count};
 use crate::header::Header;
 use crate::input::MultiPartInputFile;
@@ -292,11 +292,18 @@ impl<'f> InputPart<'f> {
             .collect();
         for j in dy1..=dy2 {
             let tile = self.data_window_for_tile(0, j, (0, 0))?;
-            let rows = tile.height() as usize;
             let mut bufs: Vec<Vec<u8>> = cached
                 .iter()
-                .map(|(_, s)| vec![0u8; rows * w * s.sample_size()])
-                .collect();
+                .map(|(_, s)| {
+                    let n = product(
+                        tile.height(),
+                        w as u64,
+                        s.sample_size() as u64,
+                        "a row of tiles",
+                    )?;
+                    alloc(n, "a row of tiles")
+                })
+                .collect::<Result<_>>()?;
             if !cached.is_empty() {
                 let mut cache = FrameBuffer::new();
                 for ((name, s), buf) in cached.iter().zip(bufs.iter_mut()) {

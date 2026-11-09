@@ -48,3 +48,7 @@ required-features = ["heavy"]
 [[test]]
 name = "heavy_write"
 required-features = ["heavy"]
+
+[[test]]
+name = "heavy_fuzz"
+required-features = ["heavy"]

@@ -186,6 +186,7 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
     /// (src/lib/OpenEXR/ImfDeepScanLineOutputFile.cpp:1184-1428 @ v3.5.3), a chunk composed and written once
     /// all its lines are given.
     pub fn write_deep_pixels(&mut self, fb: &DeepFrameBuffer<'_>, lines: i32) -> Result<()> {
+        self.check_failed()?;
         self.check_deep(fb, Storage::DeepScanline)?;
         let state = &self.file.parts[self.index];
         if i64::from(lines) > state.lines_left {
@@ -193,6 +194,12 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
                 "Tried to write more scan lines than specified by the data window.",
             ));
         }
+        let r = self.deep_lines(fb, lines);
+        self.poison(r)
+    }
+
+    /// The deep lines staged, the chunks they complete composed and written.
+    fn deep_lines(&mut self, fb: &DeepFrameBuffer<'_>, lines: i32) -> Result<()> {
         let p = self.index as i32;
         for _ in 0..lines.max(0) {
             let file = &mut *self.file;
@@ -296,6 +303,7 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
         dy: (i32, i32),
         level: (i32, i32),
     ) -> Result<()> {
+        self.check_failed()?;
         self.check_deep(fb, Storage::DeepTiled)?;
         let p = self.index as i32;
         let (lx, ly) = level;
@@ -306,6 +314,17 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
         let decreasing = tiles.order == LineOrder::DecreasingY;
         let dx = if dx.1 < dx.0 { (dx.1, dx.0) } else { dx };
         let dy = if dy.1 < dy.0 { (dy.1, dy.0) } else { dy };
+        // a tile given before is refused before anything is done, the file unharmed
+        for ty in dy.0..=dy.1 {
+            for tx in dx.0..=dx.1 {
+                let at = (tx, ty, lx, ly);
+                if tiles.written.contains(&at) || tiles.pending.contains_key(&at) {
+                    return Err(invalid(format!(
+                        "Attempt to write tile ({tx}, {ty}, {lx}, {ly}) more than once."
+                    )));
+                }
+            }
+        }
         let rows: Vec<i32> = if decreasing {
             (dy.0..=dy.1).rev().collect()
         } else {

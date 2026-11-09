@@ -32,6 +32,8 @@ pub struct ReadOptions {
     silent_header: bool,
     reconstruct_chunk_table: bool,
     threads: Threads,
+    max_image: (i32, i32),
+    max_tile: (i32, i32),
 }
 
 impl Default for ReadOptions {
@@ -41,6 +43,8 @@ impl Default for ReadOptions {
             silent_header: false,
             reconstruct_chunk_table: true,
             threads: Threads::Serial,
+            max_image: (0, 0),
+            max_tile: (0, 0),
         }
     }
 }
@@ -78,6 +82,22 @@ impl ReadOptions {
         self
     }
 
+    /// The largest data window a part may have, in pixels across and down (Core's
+    /// `max_image_width` and `max_image_height`); a header past them is refused when the file
+    /// is opened. 0 is no limit (Core's default, and the C++ library's). For files from
+    /// sources you do not trust: their headers size the buffers a read makes.
+    pub fn max_image_size(mut self, width: i32, height: i32) -> ReadOptions {
+        self.max_image = (width, height);
+        self
+    }
+
+    /// The largest tile a tiled part may have (Core's `max_tile_width` and
+    /// `max_tile_height`); 0 is no limit.
+    pub fn max_tile_size(mut self, width: i32, height: i32) -> ReadOptions {
+        self.max_tile = (width, height);
+        self
+    }
+
     fn initializer(&self) -> Initializer {
         let mut flags = 0;
         if self.strict_header {
@@ -93,6 +113,10 @@ impl ReadOptions {
             // Errors come back as values: nothing is printed.
             error_handler: Some(Arc::new(|_| {})),
             flags,
+            max_image_width: self.max_image.0,
+            max_image_height: self.max_image.1,
+            max_tile_width: self.max_tile.0,
+            max_tile_height: self.max_tile.1,
             ..Initializer::default()
         }
     }

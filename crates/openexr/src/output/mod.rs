@@ -295,7 +295,10 @@ fn compress_flat(
     if packed.len() as u64 != winfo.unpacked_size {
         return Err(invalid("A chunk packs to another size than Core gives it"));
     }
-    if h.compression() == crate::attribute::Compression::None {
+    // no compression, or nothing to compress (every channel sampled out of the chunk's
+    // lines): the chunk goes as packed (`exr_encoding_run`, src/lib/OpenEXRCore/
+    // encoding.c:211-225 @ v3.5.3)
+    if h.compression() == crate::attribute::Compression::None || packed.is_empty() {
         return Ok(packed);
     }
     enc.packed_bytes = packed.len() as u64;
@@ -413,6 +416,9 @@ pub struct MultiPartOutputFile<W: Write + Seek + Send + 'static = std::fs::File>
     headers: Vec<Header>,
     parts: Vec<PartState>,
     pool: Pool,
+    /// The error of a write that failed part-way: the file is past repair, and every later
+    /// write, and `finish`, returns it.
+    failed: Option<Error>,
 }
 
 impl<W: Write + Seek + Send + 'static> std::fmt::Debug for MultiPartOutputFile<W> {
@@ -570,6 +576,7 @@ impl<W: Write + Seek + Send + 'static> MultiPartOutputFile<W> {
             headers: headers.to_vec(),
             parts,
             pool: Pool::new(opts.threads)?,
+            failed: None,
         })
     }
 
@@ -595,6 +602,9 @@ impl<W: Write + Seek + Send + 'static> MultiPartOutputFile<W> {
         let ctx = self.ctx.take().expect("not finished");
         let unwritten = self.parts.iter().position(PartState::incomplete);
         let rv = ctx.finish().map_err(core);
+        if let Some(e) = self.failed.take() {
+            return Err(e);
+        }
         if let Some(p) = unwritten {
             return Err(Error::new(
                 ErrorCode::IncompleteChunkTable,
@@ -642,6 +652,7 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
     /// type and sampling (`setFrameBuffer`, lines 876-985). A chunk goes to the file once
     /// all its lines are given.
     pub fn write_pixels(&mut self, fb: &FrameBuffer<'_>, lines: i32) -> Result<()> {
+        self.check_failed()?;
         let h = &self.file.headers[self.index];
         if h.storage() != Storage::Scanline {
             return Err(invalid("write_pixels writes scanline parts"));
@@ -684,6 +695,12 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
             let b = a + state.step * (lines - 1);
             check_slice(fb, &c.name, s, dw.min.x, dw.max.x, a.min(b), a.max(b))?;
         }
+        let r = self.write_lines(fb, lines);
+        self.poison(r)
+    }
+
+    /// The lines staged, the chunks they complete compressed and written.
+    fn write_lines(&mut self, fb: &FrameBuffer<'_>, lines: i32) -> Result<()> {
         let mut whole = Vec::new();
         for _ in 0..lines {
             if let Some(chunk) = self.stage_line(fb)? {
@@ -701,6 +718,22 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
             write_flat(ctx, p, at, &bytes?)?;
         }
         Ok(())
+    }
+
+    /// `r`, a write's result after it has changed the file: an error marks the file failed.
+    pub(super) fn poison<T>(&mut self, r: Result<T>) -> Result<T> {
+        if let Err(e) = &r {
+            self.file.failed = Some(e.clone());
+        }
+        r
+    }
+
+    /// The error of an earlier write that failed part-way, if any.
+    pub(super) fn check_failed(&self) -> Result<()> {
+        match &self.file.failed {
+            Some(e) => Err(e.clone()),
+            None => Ok(()),
+        }
     }
 
     /// Copies the next line into its chunk's staging; gives the chunk once whole.

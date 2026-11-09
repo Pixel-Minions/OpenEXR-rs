@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::attribute::{PixelType, Storage};
 use crate::deep::DeepFrameBuffer;
-use crate::error::{Error, ErrorCode, Result};
+use crate::error::{Error, ErrorCode, Result, alloc, product};
 use crate::frame_buffer::{FrameBuffer, Slice, sample_count};
 use crate::header::Header;
 use crate::input::MultiPartInputFile;
@@ -25,12 +25,12 @@ pub enum Pixels {
 }
 
 impl Pixels {
-    fn zeroed(t: PixelType, n: usize) -> Pixels {
-        match t {
-            PixelType::Half => Pixels::Half(vec![0; n]),
-            PixelType::Float => Pixels::Float(vec![0.0; n]),
-            _ => Pixels::Uint(vec![0; n]),
-        }
+    fn zeroed(t: PixelType, n: usize, what: &str) -> Result<Pixels> {
+        Ok(match t {
+            PixelType::Half => Pixels::Half(alloc(n, what)?),
+            PixelType::Float => Pixels::Float(alloc(n, what)?),
+            _ => Pixels::Uint(alloc(n, what)?),
+        })
     }
 
     /// The type.
@@ -210,12 +210,13 @@ fn read_part(part: &InputPart<'_>) -> Result<ImagePart> {
             y_sampling: c.y_sampling,
             width: sample_count(dw.min.x, dw.max.x, c.x_sampling),
             height: sample_count(dw.min.y, dw.max.y, c.y_sampling),
-            pixels: Pixels::zeroed(c.pixel_type, 0),
+            pixels: Pixels::Half(Vec::new()),
         })
         .collect();
     let mut sample_counts = None;
     if storage.is_deep() {
-        let mut counts = vec![0u32; (dw.width() * dw.height()) as usize];
+        let n = product(dw.width(), dw.height(), 1, "a deep part's sample counts")?;
+        let mut counts: Vec<u32> = alloc(n, "a deep part's sample counts")?;
         let tiles = if storage == Storage::DeepTiled {
             Some(part.num_tiles((0, 0))?)
         } else {
@@ -229,7 +230,13 @@ fn read_part(part: &InputPart<'_>) -> Result<ImagePart> {
         }
         let total: u64 = counts.iter().map(|&c| u64::from(c)).sum();
         for (ch, c) in channels.iter_mut().zip(h.channels()) {
-            ch.pixels = Pixels::zeroed(c.pixel_type, total as usize);
+            let n = usize::try_from(total).map_err(|_| {
+                Error::new(
+                    ErrorCode::OutOfMemory,
+                    "A deep channel's samples are too many",
+                )
+            })?;
+            ch.pixels = Pixels::zeroed(c.pixel_type, n, "a deep channel's samples")?;
         }
         let mut fb = DeepFrameBuffer::new(&counts, dw)?;
         for ch in channels.iter_mut() {
@@ -247,7 +254,8 @@ fn read_part(part: &InputPart<'_>) -> Result<ImagePart> {
         sample_counts = Some(counts);
     } else {
         for (ch, c) in channels.iter_mut().zip(h.channels()) {
-            ch.pixels = Pixels::zeroed(c.pixel_type, ch.width * ch.height);
+            let n = product(ch.width as u64, ch.height as u64, 1, "a channel's samples")?;
+            ch.pixels = Pixels::zeroed(c.pixel_type, n, "a channel's samples")?;
         }
         let mut fb = FrameBuffer::new();
         for ch in channels.iter_mut() {

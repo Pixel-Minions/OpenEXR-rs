@@ -100,6 +100,15 @@
 //!
 //! Every call returns a [`Result`]; an [`Error`] carries Core's error code and Core's message,
 //! word for word.
+//!
+//! # Files you do not trust
+//!
+//! A file's header sizes the buffers a read makes. Nothing a file holds makes the crate panic
+//! or abort (a fuzzer of every read and write path runs on every full check), and a buffer
+//! too large to allocate is an [`ErrorCode::OutOfMemory`] error; but a header may ask for a
+//! window large enough to be allocated and still be far more than you meant to spend. Set
+//! [`ReadOptions::max_image_size`] and [`ReadOptions::max_tile_size`] for files from sources
+//! you do not trust.
 
 #![forbid(unsafe_code)]
 

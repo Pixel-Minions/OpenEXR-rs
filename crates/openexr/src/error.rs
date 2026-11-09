@@ -63,3 +63,33 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+/// `n` default values, or an error where they cannot be allocated: a size taken from a file's
+/// header may be vast, and an allocation that fails is an error here, not an abort.
+pub(crate) fn alloc<T: Clone + Default>(n: usize, what: &str) -> Result<Vec<T>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(n).map_err(|_| {
+        Error::new(
+            ErrorCode::OutOfMemory,
+            format!(
+                "Unable to allocate {n} values of {} bytes for {what}",
+                std::mem::size_of::<T>()
+            ),
+        )
+    })?;
+    v.resize(n, T::default());
+    Ok(v)
+}
+
+/// `a * b * c`, or an error where it overflows: sizes taken from a header.
+pub(crate) fn product(a: u64, b: u64, c: u64, what: &str) -> Result<usize> {
+    a.checked_mul(b)
+        .and_then(|v| v.checked_mul(c))
+        .and_then(|v| usize::try_from(v).ok())
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::OutOfMemory,
+                format!("{what}: {a} by {b} by {c} is too large to allocate"),
+            )
+        })
+}
