@@ -15,27 +15,13 @@
 mod common;
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-use common::{deep_images, images, root, unhex};
+use common::{deep_images, harness, images, unhex};
 use openexr::{
     DeepFrameBuffer, FrameBuffer, InputPart, MultiPartInputFile, PixelType, Slice, Storage,
 };
-
-fn harness() -> PathBuf {
-    let p = if cfg!(windows) {
-        root().join("target/oracle-native/msvc-Release/core_harness.exe")
-    } else {
-        root().join("target/rocky9/oracle-native/gcc-Release/core_harness")
-    };
-    assert!(
-        p.exists(),
-        "{} is missing: build it with scripts/oracle-native-build",
-        p.display()
-    );
-    p
-}
 
 /// A level of a part in a type: `(part, lx, ly, type)`.
 type Key = (usize, i32, i32, String);

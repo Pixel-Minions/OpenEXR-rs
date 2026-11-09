@@ -236,3 +236,63 @@ impl OpenBytes for MultiPartInputFile {
         ReadOptions::new().open_bytes("<memory>", bytes).unwrap()
     }
 }
+
+#[test]
+fn tiles_written_in_any_order_read_back_as_written() {
+    use openexr::{LevelMode, RoundingMode, TileDescription};
+    let dw = window(37, 21);
+    let n = (dw.width() * dw.height()) as usize;
+    let halves: Vec<u16> = values(n, 9)
+        .iter()
+        .map(|&v| (v >> 16) as u16 & 0x7bff)
+        .collect();
+    for order in [
+        LineOrder::IncreasingY,
+        LineOrder::DecreasingY,
+        LineOrder::RandomY,
+    ] {
+        let mut h = Header::new(dw);
+        h.insert_channel(Channel::new("Y", PixelType::Half));
+        h.set_line_order(order);
+        h.set_tiles(TileDescription {
+            x_size: 8,
+            y_size: 5,
+            level_mode: LevelMode::One,
+            rounding_mode: RoundingMode::Down,
+        });
+        let mut out = WriteOptions::new()
+            .create_writer(
+                "<memory>",
+                Cursor::new(Vec::new()),
+                std::slice::from_ref(&h),
+            )
+            .unwrap();
+        let mut fb = FrameBuffer::new();
+        fb.insert_plane("Y", &halves, dw).unwrap();
+        let mut part = out.part(0).unwrap();
+        assert!(
+            part.write_pixels(&fb, 1).is_err(),
+            "scanline writes of a tiled part"
+        );
+        let (nx, ny) = part.num_tiles((0, 0)).unwrap();
+        // the middle row first, then the rest backwards
+        part.write_tiles(&fb, (0, nx - 1), (ny / 2, ny / 2), (0, 0))
+            .unwrap();
+        for ty in (0..ny).rev().filter(|&t| t != ny / 2) {
+            for tx in (0..nx).rev() {
+                part.write_tile(&fb, tx, ty, (0, 0)).unwrap();
+            }
+        }
+        assert!(
+            part.write_tile(&fb, 0, 0, (0, 0)).is_err(),
+            "a tile written twice"
+        );
+        let bytes = out.finish().unwrap().into_inner();
+        let img =
+            openexr::Image::from_file(&ReadOptions::new().open_bytes("m", bytes).unwrap()).unwrap();
+        assert_eq!(
+            img.parts[0].channels[0].pixels,
+            openexr::Pixels::Half(halves.clone())
+        );
+    }
+}

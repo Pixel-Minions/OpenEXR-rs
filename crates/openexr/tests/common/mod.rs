@@ -200,3 +200,19 @@ pub(crate) fn deep_images(scratch: &Path) -> Vec<PathBuf> {
     );
     all
 }
+
+/// The source-built Core harness (PLAN.md O1), built by `scripts/oracle-native-build.cmd`
+/// (Windows) or `scripts/oracle-native-build.sh` (Linux).
+pub(crate) fn harness() -> PathBuf {
+    let p = if cfg!(windows) {
+        root().join("target/oracle-native/msvc-Release/core_harness.exe")
+    } else {
+        root().join("target/rocky9/oracle-native/gcc-Release/core_harness")
+    };
+    assert!(
+        p.exists(),
+        "{} is missing: build it with scripts/oracle-native-build",
+        p.display()
+    );
+    p
+}
