@@ -41,6 +41,8 @@ mod zstd_double_fast;
 mod zstd_fast;
 #[allow(dead_code)] // the compressor's, used with zstd_compress.c
 mod zstd_lazy;
+#[cfg(target_arch = "x86_64")]
+mod zstd_lazy_sse2;
 mod zstd_ldm;
 mod zstd_ldm_geartab;
 mod zstd_opt;

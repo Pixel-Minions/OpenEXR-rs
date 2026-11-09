@@ -47,6 +47,8 @@ const UNSAFE_ALLOWLIST: &[&str] = &[
     "crates/openexr-deflate/src/adler32_x86.rs",
     "crates/openexr-deflate/src/adler32_vnni.rs",
     "crates/openexr-deflate/src/decompress_bmi2.rs",
+    // zstd's SSE2 row tag comparison (ZSTD_row_getSSEMask).
+    "crates/openexr-zstd/src/zstd_lazy_sse2.rs",
     "crates/openexr-zstd/src/bmi2.rs",
 ];
 

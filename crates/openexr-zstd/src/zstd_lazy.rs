@@ -187,17 +187,39 @@ fn row_next_cached_hash(ms: &mut MatchState, src: &[u8], idx: u32, mls: u32) -> 
 
 /// Port of `ZSTD_row_update_internalImpl` (external/zstd/lib/compress/zstd_lazy.c:883-910
 /// @ zstd v1.5.7): positions `[start, end)` inserted in their rows.
+/// (As upstream's template is instantiated, one copy for each match length and row log.)
 #[allow(clippy::too_many_arguments)]
 fn row_update_internal_impl(
     ms: &mut MatchState,
     src: &[u8],
-    mut update_start_idx: u32,
+    update_start_idx: u32,
     update_end_idx: u32,
     mls: u32,
     row_log: u32,
     row_mask: u32,
     use_cache: bool,
 ) {
+    debug_assert_eq!(row_mask, (1 << row_log) - 1);
+    macro_rules! inst {
+        ($($m:literal, $r:literal);*) => {
+            match (mls, row_log) {
+                $(($m, $r) => row_update_internal_impl_t::<$m, $r>(ms, src, update_start_idx, update_end_idx, use_cache),)*
+                _ => unreachable!("mls {mls}, row log {row_log}"),
+            }
+        };
+    }
+    inst!(4, 4; 4, 5; 4, 6; 5, 4; 5, 5; 5, 6; 6, 4; 6, 5; 6, 6)
+}
+
+#[inline(always)]
+fn row_update_internal_impl_t<const MLS: u32, const ROW_LOG: u32>(
+    ms: &mut MatchState,
+    src: &[u8],
+    mut update_start_idx: u32,
+    update_end_idx: u32,
+    use_cache: bool,
+) {
+    let (mls, row_log, row_mask) = (MLS, ROW_LOG, (1u32 << ROW_LOG) - 1);
     while update_start_idx < update_end_idx {
         let hash = if use_cache {
             row_next_cached_hash(ms, src, update_start_idx, mls)
@@ -252,11 +274,28 @@ fn row_update_internal(
 
 /// Port of `ZSTD_row_getMatchMask` (external/zstd/lib/compress/zstd_lazy.c:1059-1123
 /// @ zstd v1.5.7), with `ZSTD_row_getSSEMask` (lines 986-1004): bit `n` set when the row's
-/// `n`th entry after the head has the tag (the x86-64 group width is 1). The mask is computed
-/// as the function's SWAR branch computes it (lines 1080-1101, little-endian), eight tags a
-/// word: the same mask as the SSE2 version's, whose group width is 1 too.
+/// `n`th entry after the head has the tag (the x86-64 group width is 1). On x86-64 the SSE2
+/// version, as upstream's `ZSTD_ARCH_X86_SSE2` builds take it (`zstd_lazy_sse2.rs`);
+/// elsewhere the function's SWAR branch (lines 1080-1101, little-endian), eight tags a word,
+/// which gives the same mask.
 #[inline]
 fn row_get_match_mask(tag_row: &[u8], tag: u8, head_grouped: u32, row_entries: u32) -> u64 {
+    // x86-64 (`ZSTD_ARCH_X86_SSE2`): the SSE2 comparison, 16 tags at a time
+    #[cfg(target_arch = "x86_64")]
+    return crate::zstd_lazy_sse2::row_get_sse_mask(
+        (row_entries / 16) as usize,
+        tag_row,
+        tag,
+        head_grouped,
+    );
+    #[cfg(not(target_arch = "x86_64"))]
+    row_get_match_mask_swar(tag_row, tag, head_grouped, row_entries)
+}
+
+/// The function's SWAR branch, for other architectures.
+#[cfg_attr(target_arch = "x86_64", allow(dead_code))]
+#[inline]
+fn row_get_match_mask_swar(tag_row: &[u8], tag: u8, head_grouped: u32, row_entries: u32) -> u64 {
     const CHUNK: usize = 8;
     const SHIFT: u32 = (CHUNK * 8 - CHUNK) as u32;
     const X01: u64 = u64::MAX / 0xFF;
