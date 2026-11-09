@@ -12,6 +12,7 @@
 //! as C lays it out (the `#[repr(C)]` copy below). The heap of the encoder holds pointers into
 //! the frequency table upstream; here it holds their indices, which compare as the pointers do.
 
+use crate::buffer_pool::Kept;
 use crate::cfmt::Arg;
 use crate::context::{Context, Error};
 use crate::errors::ErrorCode;
@@ -110,13 +111,13 @@ struct FastHufDecoder {
     max_code_length: u8,
     /// Maps Ids to symbols. Ids are a symbol ordering sorted first in terms of code length,
     /// and by code within the same length. Ids run from 0 to mNumSymbols-1.
-    id_to_symbol: Vec<u32>,
+    id_to_symbol: Kept<u32>,
     /// The 'left justified base' table, with a sentinel terminator.
     lj_base: [u64; MAX_CODE_LEN + 1 + 1],
     /// The 'left justified' offset constants, by code length.
     lj_offset: [u64; MAX_CODE_LEN + 1],
-    table_symbol: Vec<i32>,
-    table_code_len: Vec<u8>,
+    table_symbol: Kept<i32>,
+    table_code_len: Kept<u8>,
     table_min: u64,
 }
 
@@ -815,11 +816,12 @@ impl FastHufDecoder {
             num_symbols: 0,
             min_code_length: 0,
             max_code_length: 0,
-            id_to_symbol: vec![0; 65536 + 1],
+            // zeroed, as new ones, from the thread's pool (speed only: docs/baseline.md)
+            id_to_symbol: Kept::zeroed(65536 + 1),
             lj_base: [0; MAX_CODE_LEN + 1 + 1],
             lj_offset: [0; MAX_CODE_LEN + 1],
-            table_symbol: vec![0; 1 << TABLE_LOOKUP_BITS],
-            table_code_len: vec![0; 1 << TABLE_LOOKUP_BITS],
+            table_symbol: Kept::zeroed(1 << TABLE_LOOKUP_BITS),
+            table_code_len: Kept::zeroed(1 << TABLE_LOOKUP_BITS),
             table_min: 0,
         }
     }

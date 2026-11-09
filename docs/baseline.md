@@ -328,3 +328,13 @@ One thread on the left, 32 on the right:
   NONE, ZIPS, DWAA, DWAB, HTJ2K256 and LJ2K, slower for the rest (up to 1.43 times, PIZ,
   whose tiled image is staged: `docs/deferred.md`).
 
+After the table, PIZ and B44 (owner, 2026-11-09, the PIZ and B44 proposal): PIZ's working
+buffers (its words, bitmap and lookup table, and the fast Huffman decoder's tables) come from
+the per-thread pool (`buffer_pool::Kept`), zeroed as new ones, encoder and decoder; B44 decodes
+a chunk of unsampled channels straight into its lines (I-36, D-23). Core's decode alone
+(`crates/openexr-core/examples/bench.rs`, best of 9, ms, before and after): PIZ Blobbies
+36.7 to 32.1, Ocean 21.6 to 16.8, singlepart.0001 35.2 to 31.1; B44 4.38 to 3.37, 3.17 to
+2.36, 14.7 to 11.3; B44A 3.56 to 2.53, 3.15 to 2.40, 10.7 to 7.0. The API's whole-file reads
+(the three images summed, ms, 1 and 32 threads): PIZ 100 to 87 and 27 to 17; B44 27 to 22
+and 15.5 to 11.3; B44A 23 to 17 and 14.5 to 11.
+

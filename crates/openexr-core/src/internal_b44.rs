@@ -554,6 +554,154 @@ fn uncompress_b44_impl(
     Ok(())
 }
 
+/// The bytes of a chunk line, every channel's samples of it, when the chunk's channels are
+/// all unsampled, of the chunk's height, and `uncompressed` is exactly its lines: the chunks
+/// [`uncompress_b44_direct`] decodes. `None` for the others, which upstream's path decodes.
+fn direct_line_bytes(decode: &DecodePipeline<'_>, uncompressed: &[u8]) -> Option<usize> {
+    let mut line = 0usize;
+    for c in &decode.channels {
+        if c.x_samples != 1 || c.y_samples != 1 || c.height != decode.chunk.height {
+            return None;
+        }
+        let bpl = usize::try_from(c.width)
+            .ok()?
+            .checked_mul(usize::try_from(c.bytes_per_element).ok()?)?;
+        line = line.checked_add(bpl)?;
+    }
+    let height = usize::try_from(decode.chunk.height).ok()?;
+    (line.checked_mul(height)? == uncompressed.len()).then_some(line)
+}
+
+/// [`uncompress_b44_impl`] for the chunks [`direct_line_bytes`] takes (I-36, D-23): each block
+/// decoded straight into its lines of `uncompressed`, four lines at a time across the
+/// channels, without the scratch buffer of whole channels and the second pass that
+/// interleaves them into lines. The same bytes: the samples
+/// a block decodes to are upstream's, and land where upstream's second pass copies them. The
+/// block headers are walked first, with upstream's checks in upstream's order, so a chunk
+/// upstream refuses is refused with the same error before anything is written, as upstream
+/// writes `uncompressed` only after decoding every block.
+fn uncompress_b44_direct(
+    decode: &mut DecodePipeline<'_>,
+    compressed: &[u8],
+    uncompressed: &mut [u8],
+    line_bytes: usize,
+) -> Result<(), Error> {
+    let tables = exrcore_ensure_b44_tables();
+    let comp_buf_size = compressed.len() as u64;
+    let oom = || Error::bare(ErrorCode::OutOfMemory);
+
+    // the walk: upstream's first pass, without its writes; where each channel's data starts
+    let mut starts = Vec::with_capacity(decode.channels.len());
+    let mut b_in: u64 = 0;
+    for curc in &decode.channels {
+        starts.push(b_in as usize);
+        let (nx, ny) = (curc.width, curc.height);
+        let n_bytes = (ny as u64)
+            .wrapping_mul(nx as u64)
+            .wrapping_mul(curc.bytes_per_element as u64);
+        if n_bytes == 0 {
+            continue;
+        }
+        if curc.data_type != PixelType::HALF.0 as u16 {
+            if b_in + n_bytes > comp_buf_size {
+                return Err(oom());
+            }
+            b_in += n_bytes;
+            continue;
+        }
+        for _ in (0..ny).step_by(4) {
+            for _ in (0..nx).step_by(4) {
+                if b_in + 3 > comp_buf_size {
+                    return Err(oom());
+                }
+                if compressed[b_in as usize + 2] >= (13 << 2) {
+                    b_in += 3;
+                } else {
+                    if b_in + 14 > comp_buf_size {
+                        return Err(oom());
+                    }
+                    b_in += 14;
+                }
+            }
+        }
+    }
+
+    // the decode, which can no longer fail: four lines at a time (a row of blocks; every
+    // channel has the chunk's lines), each channel's part of them from where its data has
+    // got to, so that the lines are written one window after another, as upstream's second
+    // pass writes them
+    let height = decode.chunk.height as usize;
+    let mut y = 0usize;
+    while y < height {
+        // the block's rows that are lines of the chunk (upstream's `y + 1 < ny`, ...)
+        let rows = (height - y).min(4);
+        let mut at = y * line_bytes;
+        for (curc, inp) in decode.channels.iter().zip(starts.iter_mut()) {
+            let nx = curc.width;
+            let bpl = nx as usize * curc.bytes_per_element as usize;
+            if bpl == 0 {
+                continue;
+            }
+            if curc.data_type != PixelType::HALF.0 as u16 {
+                for r in 0..rows {
+                    let o = at + r * line_bytes;
+                    uncompressed[o..o + bpl].copy_from_slice(&compressed[*inp..*inp + bpl]);
+                    *inp += bpl;
+                }
+                at += bpl;
+                continue;
+            }
+            let mut x = 0;
+            while x < nx {
+                let mut s = [0u16; 16];
+                // check if 3-byte encoded flat field
+                if compressed[*inp + 2] >= (13 << 2) {
+                    unpack3(&compressed[*inp..], &mut s);
+                    *inp += 3;
+                } else {
+                    unpack14(&compressed[*inp..], &mut s);
+                    *inp += 14;
+                }
+                if curc.p_linear != 0 {
+                    // convertToLinear
+                    for v in &mut s {
+                        *v = tables.log_table[usize::from(*v)];
+                    }
+                }
+                // priv_from_native16: the words are stored little-endian
+                let n = if x + 3 < nx { 4 } else { (nx - x) as usize };
+                let col = at + 2 * x as usize;
+                if n == 4 && rows == 4 {
+                    // a whole block: four rows of four samples
+                    for r in 0..4 {
+                        let o = col + r * line_bytes;
+                        let dst: &mut [u8; 8] = (&mut uncompressed[o..o + 8])
+                            .try_into()
+                            .expect("eight bytes");
+                        for k in 0..4 {
+                            dst[2 * k..2 * k + 2].copy_from_slice(&s[4 * r + k].to_le_bytes());
+                        }
+                    }
+                } else {
+                    for r in 0..rows {
+                        let o = col + r * line_bytes;
+                        let dst = &mut uncompressed[o..o + 2 * n];
+                        for (k, d) in dst.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+                            *d = s[4 * r + k].to_le_bytes();
+                        }
+                    }
+                }
+                x += 4;
+            }
+            at += bpl;
+        }
+        y += 4;
+    }
+
+    decode.bytes_decompressed = uncompressed.len() as u64;
+    Ok(())
+}
+
 /// Port of `compute_scratch_buffer_size` (src/lib/OpenEXRCore/internal_b44.c:661-692 @ v3.5.3):
 /// the larger of the unpacked size and the channels' sizes padded to whole blocks; `None` for
 /// a size that overflows (upstream's `UINT64_MAX`).
@@ -596,6 +744,10 @@ pub(crate) fn internal_exr_undo_b44(
     };
     if usize::try_from(scratch_sz).is_err() || scratch_sz == u64::MAX {
         return Err(Error::bare(ErrorCode::OutOfMemory));
+    }
+    // chunks of unsampled channels decode straight into their lines (I-36, D-23)
+    if let Some(line_bytes) = direct_line_bytes(decode, uncompressed) {
+        return uncompress_b44_direct(decode, compressed, uncompressed, line_bytes);
     }
     internal_decode_alloc_buffer(&mut decode.scratch_buffer_1, scratch_sz as usize);
     // the scratch buffer is lent out of the pipeline for the call

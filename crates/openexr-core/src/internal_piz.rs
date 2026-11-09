@@ -9,6 +9,7 @@
 //! Upstream works in the pipeline's scratch buffers, cast to `uint16_t`; the port uses arrays
 //! of its own (an allocation detail), as large as upstream's. Pointers into them are indices.
 
+use crate::buffer_pool::Kept;
 use crate::context::Error;
 use crate::decoding::DecodePipeline;
 use crate::encoding::{
@@ -377,9 +378,10 @@ pub(crate) fn internal_exr_apply_piz(
         encode.chunk.unpacked_size as usize,
     )?;
     let unpacked = encode.chunk.unpacked_size as usize;
-    let mut scratch1 = vec![0u16; unpacked / 2];
-    let mut bitmap = vec![0u8; BITMAP_SIZE];
-    let mut lut = vec![0u16; USHORT_RANGE];
+    // zeroed, as new ones, from the thread's pool (speed only: docs/baseline.md)
+    let mut scratch1 = Kept::<u16>::zeroed(unpacked / 2);
+    let mut bitmap = Kept::<u8>::zeroed(BITMAP_SIZE);
+    let mut lut = Kept::<u16>::zeroed(USHORT_RANGE);
 
     let bad = || Error::bare(ErrorCode::InvalidArgument);
     let packed = encode
@@ -526,9 +528,10 @@ pub(crate) fn internal_exr_undo_piz(
     let corrupt = || Error::bare(ErrorCode::CorruptChunk);
 
     // upstream's scratch buffer 1 holds outsz + hufSpareBytes bytes of words
-    let mut scratch1 = vec![0u16; ((outsz + huf_spare_bytes) / 2) as usize];
-    let mut bitmap = vec![0u8; BITMAP_SIZE];
-    let mut lut = vec![0u16; USHORT_RANGE];
+    // zeroed, as new ones, from the thread's pool (speed only: docs/baseline.md)
+    let mut scratch1 = Kept::<u16>::zeroed(((outsz + huf_spare_bytes) / 2) as usize);
+    let mut bitmap = Kept::<u8>::zeroed(BITMAP_SIZE);
+    let mut lut = Kept::<u16>::zeroed(USHORT_RANGE);
 
     // Read range compression data
     let mut n_bytes: u64 = 0;

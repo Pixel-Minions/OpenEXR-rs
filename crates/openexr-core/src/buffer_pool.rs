@@ -27,6 +27,8 @@ pub(crate) trait Pooled: Copy + Default + 'static {
 thread_local! {
     static POOL_U8: RefCell<Vec<Vec<u8>>> = const { RefCell::new(Vec::new()) };
     static POOL_U16: RefCell<Vec<Vec<u16>>> = const { RefCell::new(Vec::new()) };
+    static POOL_U32: RefCell<Vec<Vec<u32>>> = const { RefCell::new(Vec::new()) };
+    static POOL_I32: RefCell<Vec<Vec<i32>>> = const { RefCell::new(Vec::new()) };
 }
 
 impl Pooled for u8 {
@@ -39,6 +41,54 @@ impl Pooled for u8 {
 impl Pooled for u16 {
     fn with_pool<R>(f: impl FnOnce(&mut Vec<Vec<u16>>) -> R) -> Option<R> {
         POOL_U16.try_with(|p| f(&mut p.borrow_mut())).ok()
+    }
+}
+
+impl Pooled for u32 {
+    fn with_pool<R>(f: impl FnOnce(&mut Vec<Vec<u32>>) -> R) -> Option<R> {
+        POOL_U32.try_with(|p| f(&mut p.borrow_mut())).ok()
+    }
+}
+
+impl Pooled for i32 {
+    fn with_pool<R>(f: impl FnOnce(&mut Vec<Vec<i32>>) -> R) -> Option<R> {
+        POOL_I32.try_with(|p| f(&mut p.borrow_mut())).ok()
+    }
+}
+
+/// `n` zeros from the thread's pool ([`zeroed`]), given back when dropped: for a codec's
+/// working buffers, which upstream `malloc`s (or keeps on the stack) for each chunk. The same
+/// contents as `vec![0; n]`, which it falls back to (and aborts as) when no buffer can be had.
+pub(crate) struct Kept<T: Pooled>(Vec<T>);
+
+impl<T: Pooled> Kept<T> {
+    pub(crate) fn zeroed(n: usize) -> Kept<T> {
+        Kept(zeroed(n).unwrap_or_else(|_| vec![T::default(); n]))
+    }
+}
+
+impl<T: Pooled> Drop for Kept<T> {
+    fn drop(&mut self) {
+        give_back(std::mem::take(&mut self.0));
+    }
+}
+
+impl<T: Pooled> std::ops::Deref for Kept<T> {
+    type Target = Vec<T>;
+    fn deref(&self) -> &Vec<T> {
+        &self.0
+    }
+}
+
+impl<T: Pooled> std::ops::DerefMut for Kept<T> {
+    fn deref_mut(&mut self) -> &mut Vec<T> {
+        &mut self.0
+    }
+}
+
+impl<T: Pooled + std::fmt::Debug> std::fmt::Debug for Kept<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -139,5 +189,17 @@ mod tests {
         x.fill(7);
         give_back(x);
         assert_eq!(zeroed::<u16>(10).unwrap(), vec![0u16; 10]);
+    }
+
+    /// A [`Kept`] buffer goes back to the pool when dropped and comes again as zeros.
+    #[test]
+    fn a_kept_guard_gives_its_buffer_back() {
+        let mut k = Kept::<u32>::zeroed(5000);
+        k.fill(9);
+        let cap = k.capacity();
+        drop(k);
+        let k = Kept::<u32>::zeroed(4000);
+        assert_eq!(k.capacity(), cap);
+        assert!(k.iter().all(|&v| v == 0));
     }
 }

@@ -501,9 +501,6 @@ section. An entry says:
   the safe API (`crates/openexr`) reads tiles as the C++ library does and never sets the
   skips on them.
 
-## Undefined behaviour the port does not copy
-
-
 ### I-35. Core cannot write a deep tile without samples
 
 - **Upstream:** `exr_write_tile_chunk` and `exr_write_deep_tile_chunk` refuse a chunk without
@@ -519,6 +516,25 @@ section. An entry says:
   fix") (`crates/openexr-core/src/chunk_write.rs`); checked by
   `crates/openexr/tests/heavy_write.rs`, whose deep MIP- and RIP-mapped files, tiles without
   samples among them, read back through Core 3.5.3 as written.
+### I-36. B44 decodes every chunk through a buffer of whole channels and a second pass
+
+- **Upstream:** `uncompress_b44_impl` decodes each channel's 4-by-4 blocks into a scratch
+  buffer of whole channels, then copies each line of each channel from it to the chunk's
+  lines (src/lib/OpenEXRCore/internal_b44.c:522-657 @ v3.5.3).
+- **Who notices:** no one in the results; it costs a second pass over every chunk, and the
+  scratch buffer's memory traffic, which grows with the threads decoding at once.
+- **A fix:** for a chunk whose channels are all unsampled (each of the chunk's lines), walk
+  the block headers first, with upstream's checks in its order, then decode four lines at a
+  time across the channels straight into the chunk's lines; chunks with sampled channels keep
+  upstream's path. The same bytes, the same errors, and nothing written on an error, as
+  upstream writes the lines only after decoding every block.
+- **Status:** **fixed**, deviation D-23 (owner, 2026-11-09: the PIZ and B44 proposal)
+  (`crates/openexr-core/src/internal_b44.rs`); checked against the wheel's pixels and refusals,
+  damaged files among them (`crates/openexr-core/tests/heavy_decode.rs`), on Windows and Rocky
+  Linux 9. B44 decodes 22 to 35% faster on one thread (`docs/baseline.md`).
+
+## Undefined behaviour the port does not copy
+
 ### U-1. A string created from no data has an unset terminator
 
 - **Upstream:** `exr_attr_string_create_with_length` with NULL data and a positive length
