@@ -19,20 +19,24 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use openexr_core::Context;
-use openexr_core::bytes::AttrBytes;
 use openexr_core::cfmt::Arg;
 use openexr_core::coding::BufferRef;
 use openexr_core::context::{
     DefaultWriteMode, EXR_CONTEXT_FLAG_WRITE_LEGACY_HEADER, Initializer, StreamErrors,
 };
-use openexr_core::openexr_attr as ca;
-use openexr_core::preview::AttrPreview;
 
 use crate::attribute::{Attribute, LineOrder, Storage};
 use crate::error::{Error, ErrorCode, Result};
 use crate::frame_buffer::{FrameBuffer, first_multiple, sample_count};
 use crate::header::Header;
 use crate::read::check_slice;
+
+mod attributes;
+mod deep;
+mod tiles;
+
+use attributes::{core_storage, set_attribute, type_string, utf8};
+use tiles::{Tiles, part_tiles};
 
 fn core(e: openexr_core::Error) -> Error {
     Error::from_core(&e)
@@ -203,215 +207,6 @@ fn cpp_header(core: &[u8], inserts: &[(&[u8], &[u8])]) -> Vec<u8> {
     out
 }
 
-fn utf8<'s>(b: &'s [u8], what: &str) -> Result<&'s str> {
-    std::str::from_utf8(b)
-        .map_err(|_| invalid(format!("{what} is not UTF-8, which Core needs to write it")))
-}
-
-/// Sets attribute `name` of part `p` to `a` through Core's setters.
-fn set_attribute(ctx: &mut Context, p: i32, name: &str, a: &Attribute) -> Result<()> {
-    let n = Some(name);
-    let r = match a {
-        Attribute::Box2i(b) => ctx.attr_set_box2i(
-            p,
-            n,
-            Some(&ca::Box2i {
-                min: ca::V2i {
-                    x: b.min.x,
-                    y: b.min.y,
-                },
-                max: ca::V2i {
-                    x: b.max.x,
-                    y: b.max.y,
-                },
-            }),
-        ),
-        Attribute::Box2f(b) => ctx.attr_set_box2f(
-            p,
-            n,
-            Some(&ca::Box2f {
-                min: ca::V2f {
-                    x: b.min.x,
-                    y: b.min.y,
-                },
-                max: ca::V2f {
-                    x: b.max.x,
-                    y: b.max.y,
-                },
-            }),
-        ),
-        Attribute::Bytes { type_hint, data } => {
-            ctx.attr_set_bytes(p, n, Some(&AttrBytes::borrowed(type_hint, data)))
-        }
-        Attribute::Channels(chans) => {
-            if name != "channels" {
-                return Err(invalid(format!(
-                    "Attribute \"{name}\": a channel list other than \"channels\" cannot be written"
-                )));
-            }
-            for c in chans {
-                let cname = utf8(&c.name, "A channel name")?;
-                ctx.add_channel(
-                    p,
-                    Some(cname),
-                    ca::PixelType(c.pixel_type.value()),
-                    ca::PerceptualTreatment(i32::from(c.p_linear)),
-                    c.x_sampling,
-                    c.y_sampling,
-                )
-                .map_err(core)?;
-            }
-            Ok(())
-        }
-        Attribute::Chromaticities(c) => ctx.attr_set_chromaticities(
-            p,
-            n,
-            Some(&ca::Chromaticities {
-                red_x: c.red.x,
-                red_y: c.red.y,
-                green_x: c.green.x,
-                green_y: c.green.y,
-                blue_x: c.blue.x,
-                blue_y: c.blue.y,
-                white_x: c.white.x,
-                white_y: c.white.y,
-            }),
-        ),
-        Attribute::Compression(c) => {
-            ctx.attr_set_compression(p, n, ca::Compression(i32::from(c.value())))
-        }
-        Attribute::Double(v) => ctx.attr_set_double(p, n, *v),
-        Attribute::Envmap(e) => ctx.attr_set_envmap(p, n, ca::Envmap(i32::from(e.value()))),
-        Attribute::Float(v) => ctx.attr_set_float(p, n, *v),
-        Attribute::FloatVector(v) => ctx.attr_set_float_vector(p, n, v.len() as i32, Some(v)),
-        Attribute::Int(v) => ctx.attr_set_int(p, n, *v),
-        Attribute::KeyCode(k) => ctx.attr_set_keycode(
-            p,
-            n,
-            Some(&ca::Keycode {
-                film_mfc_code: k.film_mfc_code,
-                film_type: k.film_type,
-                prefix: k.prefix,
-                count: k.count,
-                perf_offset: k.perf_offset,
-                perfs_per_frame: k.perfs_per_frame,
-                perfs_per_count: k.perfs_per_count,
-            }),
-        ),
-        Attribute::LineOrder(l) => {
-            ctx.attr_set_lineorder(p, n, ca::LineOrder(i32::from(l.value())))
-        }
-        Attribute::M33f(m) => ctx.attr_set_m33f(p, n, Some(&ca::M33f { m: *m })),
-        Attribute::M33d(m) => ctx.attr_set_m33d(p, n, Some(&ca::M33d { m: *m })),
-        Attribute::M44f(m) => ctx.attr_set_m44f(p, n, Some(&ca::M44f { m: *m })),
-        Attribute::M44d(m) => ctx.attr_set_m44d(p, n, Some(&ca::M44d { m: *m })),
-        Attribute::Preview(pv) => ctx.attr_set_preview(
-            p,
-            n,
-            Some(&AttrPreview::borrowed(pv.width, pv.height, Some(&pv.rgba))),
-        ),
-        Attribute::Rational(r) => ctx.attr_set_rational(
-            p,
-            n,
-            Some(&ca::Rational {
-                num: r.num,
-                denom: r.denom,
-            }),
-        ),
-        Attribute::String(s) => ctx.attr_set_string(p, n, Some(utf8(s, "A string attribute")?)),
-        Attribute::StringVector(v) => {
-            let strs = v
-                .iter()
-                .map(|s| utf8(s, "A string vector attribute").map(Some))
-                .collect::<Result<Vec<Option<&str>>>>()?;
-            ctx.attr_set_string_vector(p, n, strs.len() as i32, Some(&strs))
-        }
-        Attribute::Tiles(t) => ctx.attr_set_tiledesc(
-            p,
-            n,
-            Some(&ca::TileDesc {
-                x_size: t.x_size,
-                y_size: t.y_size,
-                level_and_round: (t.level_mode.value() & 0xF) | (t.rounding_mode.value() << 4),
-            }),
-        ),
-        Attribute::TimeCode(t) => ctx.attr_set_timecode(
-            p,
-            n,
-            Some(&ca::Timecode {
-                time_and_flags: t.time_and_flags,
-                user_data: t.user_data,
-            }),
-        ),
-        Attribute::V2i(v) => ctx.attr_set_v2i(p, n, Some(&ca::V2i { x: v.x, y: v.y })),
-        Attribute::V2f(v) => ctx.attr_set_v2f(p, n, Some(&ca::V2f { x: v.x, y: v.y })),
-        Attribute::V2d(v) => ctx.attr_set_v2d(p, n, Some(&ca::V2d { x: v.x, y: v.y })),
-        Attribute::V3i(v) => ctx.attr_set_v3i(
-            p,
-            n,
-            Some(&ca::V3i {
-                x: v.x,
-                y: v.y,
-                z: v.z,
-            }),
-        ),
-        Attribute::V3f(v) => ctx.attr_set_v3f(
-            p,
-            n,
-            Some(&ca::V3f {
-                x: v.x,
-                y: v.y,
-                z: v.z,
-            }),
-        ),
-        Attribute::V3d(v) => ctx.attr_set_v3d(
-            p,
-            n,
-            Some(&ca::V3d {
-                x: v.x,
-                y: v.y,
-                z: v.z,
-            }),
-        ),
-        Attribute::DeepImageState(s) => {
-            let id = ctx
-                .attr_declare(p, n, ca::AttributeType::DEEP_IMAGE_STATE)
-                .map_err(core)?;
-            *ctx.declared_value_mut(p, id).map_err(core)? =
-                openexr_core::attributes::AttrValue::DeepImageState(s.value());
-            Ok(())
-        }
-        Attribute::Opaque { type_name, data } => ctx.attr_set_user(
-            p,
-            n,
-            Some(utf8(type_name, "An attribute type name")?),
-            data.len() as i32,
-            None,
-            Some(data),
-        ),
-    };
-    r.map_err(core)
-}
-
-fn core_storage(s: Storage) -> Result<ca::Storage> {
-    Ok(match s {
-        Storage::Scanline => ca::Storage::SCANLINE,
-        Storage::Tiled => ca::Storage::TILED,
-        Storage::DeepScanline => ca::Storage::DEEP_SCANLINE,
-        Storage::DeepTiled => ca::Storage::DEEP_TILED,
-        Storage::Unknown => return Err(invalid("A part of unknown type cannot be written")),
-    })
-}
-
-fn type_string(s: Storage) -> &'static [u8] {
-    match s {
-        Storage::Scanline => b"scanlineimage",
-        Storage::Tiled => b"tiledimage",
-        Storage::DeepScanline => b"deepscanline",
-        _ => b"deeptile",
-    }
-}
-
 /// A chunk of lines on its way to the file: each channel's samples, in the file's type, as
 /// the C++ library's line buffer holds them until the chunk is whole.
 struct Staged {
@@ -458,91 +253,6 @@ fn encode_chunk(
     r
 }
 
-/// A tile's coordinates: `(dx, dy, lx, ly)`.
-type TileCoord = (i32, i32, i32, i32);
-
-/// A tiled part's levels and tiles, and what is left to write of them.
-struct Tiles {
-    mode: crate::attribute::LevelMode,
-    order: LineOrder,
-    num_levels: (i32, i32),
-    /// Tiles in x and y of each level, by `lx` and by `ly`.
-    num_x: Vec<i32>,
-    num_y: Vec<i32>,
-    /// The tile the file takes next (`TiledOutputFile::Data::nextTileToWrite`).
-    next: TileCoord,
-    written: std::collections::HashSet<TileCoord>,
-    /// Tiles given ahead of their turn, their planes kept until it comes (the C++ library
-    /// keeps them compressed: `bufferedTileWrite`).
-    pending: std::collections::BTreeMap<TileCoord, Vec<Vec<u8>>>,
-    left: u64,
-}
-
-impl Tiles {
-    /// Port of `TiledOutputFile::Data::nextTileCoord`
-    /// (src/lib/OpenEXR/ImfTiledOutputFile.cpp:280-378 @ v3.5.3).
-    fn next_tile_coord(&self, a: TileCoord) -> TileCoord {
-        let (mut dx, mut dy, mut lx, mut ly) = a;
-        let next_level = |lx: &mut i32, ly: &mut i32| match self.mode {
-            crate::attribute::LevelMode::Ripmap => {
-                *lx += 1;
-                if *lx >= self.num_levels.0 {
-                    *lx = 0;
-                    *ly += 1;
-                }
-            }
-            _ => {
-                *lx += 1;
-                *ly += 1;
-            }
-        };
-        let nx = |lx: i32| self.num_x.get(lx as usize).copied().unwrap_or(0);
-        let ny = |ly: i32| self.num_y.get(ly as usize).copied().unwrap_or(0);
-        if self.order == LineOrder::IncreasingY {
-            dx += 1;
-            if dx >= nx(lx) {
-                dx = 0;
-                dy += 1;
-                if dy >= ny(ly) {
-                    dy = 0;
-                    next_level(&mut lx, &mut ly);
-                }
-            }
-        } else if self.order == LineOrder::DecreasingY {
-            dx += 1;
-            if dx >= nx(lx) {
-                dx = 0;
-                dy -= 1;
-                if dy < 0 {
-                    next_level(&mut lx, &mut ly);
-                    if ly < self.num_levels.1 {
-                        dy = ny(ly) - 1;
-                    }
-                }
-            }
-        }
-        (dx, dy, lx, ly)
-    }
-
-    /// Port of `TiledOutputFile::isValidLevel`
-    /// (src/lib/OpenEXR/ImfTiledOutputFile.cpp:1664-1674 @ v3.5.3).
-    fn valid_level(&self, lx: i32, ly: i32) -> bool {
-        lx >= 0
-            && ly >= 0
-            && !(self.mode == crate::attribute::LevelMode::Mipmap && lx != ly)
-            && lx < self.num_levels.0
-            && ly < self.num_levels.1
-    }
-
-    fn valid_tile(&self, dx: i32, dy: i32, lx: i32, ly: i32) -> bool {
-        self.valid_level(lx, ly)
-            && dx >= 0
-            && dy >= 0
-            && dx < self.num_x[lx as usize]
-            && dy < self.num_y[ly as usize]
-    }
-}
-
 /// What is left to write of a part.
 struct PartState {
     /// The next line to write, and the step to the one after (scanline parts).
@@ -551,6 +261,10 @@ struct PartState {
     lines_left: i64,
     staged: Option<Staged>,
     tiles: Option<Tiles>,
+    /// A deep scanline part's lines given toward the next chunk.
+    deep_lines: Option<deep::DeepLines>,
+    /// A deep tiled part's sample count table buffer, reused from tile to tile.
+    deep_table: Vec<u8>,
 }
 
 impl PartState {
@@ -558,46 +272,9 @@ impl PartState {
     fn incomplete(&self) -> bool {
         self.lines_left > 0
             || self.staged.is_some()
+            || self.deep_lines.is_some()
             || self.tiles.as_ref().is_some_and(|t| t.left > 0)
     }
-}
-
-/// The levels and tile counts of tiled part `p`, as Core computed them writing the header.
-fn part_tiles(ctx: &Context, p: i32, h: &Header) -> Result<Tiles> {
-    use crate::attribute::LevelMode;
-    let td = h
-        .tiles()
-        .ok_or_else(|| invalid("A tiled part needs tiles"))?;
-    let (nlx, nly) = ctx.get_tile_levels(p).map_err(core)?;
-    let rip = td.level_mode == LevelMode::Ripmap;
-    let mut num_x = Vec::new();
-    for lx in 0..nlx {
-        let ly = if rip { 0 } else { lx.min(nly - 1) };
-        num_x.push(ctx.get_tile_counts(p, lx, ly).map_err(core)?.0);
-    }
-    let mut num_y = Vec::new();
-    for ly in 0..nly {
-        let lx = if rip { 0 } else { ly.min(nlx - 1) };
-        num_y.push(ctx.get_tile_counts(p, lx, ly).map_err(core)?.1);
-    }
-    let order = h.line_order();
-    // TiledOutputFile::initialize (src/lib/OpenEXR/ImfTiledOutputFile.cpp:995-997 @ v3.5.3)
-    let next = if order == LineOrder::IncreasingY {
-        (0, 0, 0, 0)
-    } else {
-        (0, num_y[0] - 1, 0, 0)
-    };
-    Ok(Tiles {
-        mode: td.level_mode,
-        order,
-        num_levels: (nlx, nly),
-        num_x,
-        num_y,
-        next,
-        written: Default::default(),
-        pending: Default::default(),
-        left: ctx.get_chunk_count(p).map_err(core)? as u64,
-    })
 }
 
 /// A file being written, every part of it: the C++ library's `MultiPartOutputFile`.
@@ -754,6 +431,10 @@ impl<W: Write + Seek + Send + 'static> MultiPartOutputFile<W> {
                     },
                     staged: None,
                     tiles,
+                    deep_lines: None,
+                    deep_table: h.tiles().map_or(Vec::new(), |t| {
+                        vec![0u8; t.x_size as usize * t.y_size as usize * 4]
+                    }),
                 })
             })
             .collect::<Result<_>>()?;
@@ -822,29 +503,6 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
         &self.file.headers[self.index]
     }
 
-    /// The number of tiles of level `level` in x and y (a tiled part).
-    pub fn num_tiles(&self, level: (i32, i32)) -> Result<(i32, i32)> {
-        let tiles = self.file.parts[self.index]
-            .tiles
-            .as_ref()
-            .ok_or_else(|| invalid("The part is not tiled"))?;
-        if !tiles.valid_level(level.0, level.1) {
-            return Err(invalid(format!(
-                "Level coordinate ({}, {}) is invalid.",
-                level.0, level.1
-            )));
-        }
-        Ok((tiles.num_x[level.0 as usize], tiles.num_y[level.1 as usize]))
-    }
-
-    /// The width and height of level `level` (a tiled part).
-    pub fn level_size(&self, level: (i32, i32)) -> Result<(i32, i32)> {
-        self.num_tiles(level)?;
-        let ctx = self.file.ctx.as_ref().expect("not finished");
-        ctx.get_level_sizes(self.index as i32, level.0, level.1)
-            .map_err(core)
-    }
-
     /// The next line [`write_pixels`](Self::write_pixels) writes.
     pub fn current_scan_line(&self) -> i32 {
         self.file.parts[self.index].next_y
@@ -901,166 +559,6 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
         }
         for _ in 0..lines {
             self.stage_line(fb)?;
-        }
-        Ok(())
-    }
-
-    /// Writes tile `(dx, dy)` of level `level` of a tiled part from `fb`
-    /// ([`write_tiles`](Self::write_tiles)).
-    pub fn write_tile(
-        &mut self,
-        fb: &FrameBuffer<'_>,
-        dx: i32,
-        dy: i32,
-        level: (i32, i32),
-    ) -> Result<()> {
-        self.write_tiles(fb, (dx, dx), (dy, dy), level)
-    }
-
-    /// Writes tiles `dx` (first, last) by `dy` of `level` of a tiled part from `fb`, whose
-    /// slices address the level's pixels: port of `TiledOutputFile::writeTiles`
-    /// (src/lib/OpenEXR/ImfTiledOutputFile.cpp:1191-1395 @ v3.5.3), a row at a time in the
-    /// part's line order. A tile given before its turn (in increasing or decreasing Y) is
-    /// kept until the tiles before it are written, as `bufferedTileWrite` keeps it (lines
-    /// 442-546); a tile given twice is refused.
-    pub fn write_tiles(
-        &mut self,
-        fb: &FrameBuffer<'_>,
-        dx: (i32, i32),
-        dy: (i32, i32),
-        level: (i32, i32),
-    ) -> Result<()> {
-        if self.file.parts[..self.index]
-            .iter()
-            .any(PartState::incomplete)
-        {
-            return Err(Error::new(
-                ErrorCode::IncorrectPart,
-                openexr_core::base::get_default_error_message(ErrorCode::IncorrectPart.code()),
-            ));
-        }
-        let h = &self.file.headers[self.index];
-        let Some(tiles) = self.file.parts[self.index].tiles.as_ref() else {
-            return Err(invalid("write_tiles writes tiled parts"));
-        };
-        let (lx, ly) = level;
-        if !tiles.valid_tile(dx.0, dy.0, lx, ly) || !tiles.valid_tile(dx.1, dy.1, lx, ly) {
-            return Err(invalid("Tile coordinates are invalid."));
-        }
-        let dx = if dx.1 < dx.0 { (dx.1, dx.0) } else { dx };
-        let dy = if dy.1 < dy.0 { (dy.1, dy.0) } else { dy };
-        let decreasing = tiles.order == LineOrder::DecreasingY;
-        let p = self.index as i32;
-        let ctx = self.file.ctx.as_ref().expect("not finished");
-        let (tw, th) = ctx.get_tile_sizes(p, lx, ly).map_err(core)?;
-        let (lw, lh) = ctx.get_level_sizes(p, lx, ly).map_err(core)?;
-        let dw = h.data_window();
-        let tile_window = |tx: i32, ty: i32| {
-            let x0 = dw.min.x + tx * tw;
-            let y0 = dw.min.y + ty * th;
-            (
-                x0,
-                (x0 + tw - 1).min(dw.min.x + lw - 1),
-                y0,
-                (y0 + th - 1).min(dw.min.y + lh - 1),
-            )
-        };
-        for c in h.channels() {
-            let Some(s) = fb.slice(&c.name) else {
-                continue;
-            };
-            let cname = String::from_utf8_lossy(&c.name);
-            if s.pixel_type != c.pixel_type {
-                return Err(invalid(format!(
-                    "Pixel type of \"{cname}\" channel is not compatible with the frame buffer's pixel type."
-                )));
-            }
-            if s.x_sampling != 1 || s.y_sampling != 1 {
-                return Err(invalid(format!(
-                    "X and/or y subsampling factors of \"{cname}\" channel are not compatible with the frame buffer's subsampling factors."
-                )));
-            }
-            let (x1, _, y1, _) = tile_window(dx.0, dy.0);
-            let (_, x2, _, y2) = tile_window(dx.1, dy.1);
-            check_slice(fb, &c.name, s, x1, x2, y1, y2)?;
-        }
-        let rows: Vec<i32> = if decreasing {
-            (dy.0..=dy.1).rev().collect()
-        } else {
-            (dy.0..=dy.1).collect()
-        };
-        for ty in rows {
-            for tx in dx.0..=dx.1 {
-                let (x0, x1, y0, y1) = tile_window(tx, ty);
-                let h = &self.file.headers[self.index];
-                let planes: Vec<Vec<u8>> = h
-                    .channels()
-                    .iter()
-                    .map(|c| {
-                        let size = c.pixel_type.size();
-                        let w = (x1 - x0 + 1) as usize;
-                        let mut plane = vec![0u8; w * (y1 - y0 + 1) as usize * size];
-                        if let Some(s) = fb.slice(&c.name) {
-                            let src = fb.buffer(s.buffer);
-                            for y in y0..=y1 {
-                                for x in x0..=x1 {
-                                    // checked by check_slice
-                                    let o = s.offset_of(x, y).expect("checked") as usize;
-                                    let d = ((y - y0) as usize * w + (x - x0) as usize) * size;
-                                    plane[d..d + size].copy_from_slice(&src[o..o + size]);
-                                }
-                            }
-                        }
-                        plane
-                    })
-                    .collect();
-                self.put_tile((tx, ty, lx, ly), planes)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Port of `bufferedTileWrite` (src/lib/OpenEXR/ImfTiledOutputFile.cpp:442-546
-    /// @ v3.5.3): the tile goes to the file if its turn has come, then the kept tiles whose
-    /// turn follows; else it is kept.
-    fn put_tile(&mut self, at: TileCoord, planes: Vec<Vec<u8>>) -> Result<()> {
-        let p = self.index as i32;
-        let file = &mut *self.file;
-        let h = &file.headers[self.index];
-        let ctx = file.ctx.as_mut().expect("not finished");
-        let tiles = file.parts[self.index].tiles.as_mut().expect("tiled");
-        if tiles.written.contains(&at) || tiles.pending.contains_key(&at) {
-            return Err(invalid(format!(
-                "Attempt to write tile ({}, {}, {}, {}) more than once.",
-                at.0, at.1, at.2, at.3
-            )));
-        }
-        let write = |ctx: &mut Context, at: TileCoord, planes: &[Vec<u8>]| -> Result<()> {
-            let winfo = ctx
-                .write_tile_chunk_info(p, at.0, at.1, at.2, at.3)
-                .map_err(core)?;
-            encode_chunk(ctx, p, &winfo, h, planes)
-        };
-        if tiles.order == LineOrder::RandomY {
-            write(ctx, at, &planes)?;
-            tiles.written.insert(at);
-            tiles.left -= 1;
-            return Ok(());
-        }
-        if tiles.next != at {
-            tiles.pending.insert(at, planes);
-            return Ok(());
-        }
-        write(ctx, at, &planes)?;
-        tiles.written.insert(at);
-        tiles.left -= 1;
-        tiles.next = tiles.next_tile_coord(tiles.next);
-        while let Some(planes) = tiles.pending.remove(&tiles.next) {
-            let at = tiles.next;
-            write(ctx, at, &planes)?;
-            tiles.written.insert(at);
-            tiles.left -= 1;
-            tiles.next = tiles.next_tile_coord(tiles.next);
         }
         Ok(())
     }

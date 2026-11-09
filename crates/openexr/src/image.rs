@@ -9,10 +9,11 @@ use std::path::Path;
 
 use crate::attribute::{PixelType, Storage};
 use crate::deep::DeepFrameBuffer;
-use crate::error::Result;
-use crate::frame_buffer::{FrameBuffer, sample_count};
+use crate::error::{Error, ErrorCode, Result};
+use crate::frame_buffer::{FrameBuffer, Slice, sample_count};
 use crate::header::Header;
 use crate::input::MultiPartInputFile;
+use crate::output::{MultiPartOutputFile, WriteOptions};
 use crate::read::InputPart;
 
 /// A channel's samples, in its own type (halves as their bits).
@@ -109,6 +110,90 @@ impl Image {
             .map(|p| read_part(&file.part(p)?))
             .collect::<Result<_>>()?;
         Ok(Image { parts })
+    }
+
+    /// Writes the image to the file at `path` ([`write_to`](Self::write_to)).
+    pub fn write(&self, path: impl AsRef<Path>) -> Result<()> {
+        let headers: Vec<Header> = self.parts.iter().map(|p| p.header.clone()).collect();
+        let mut out = WriteOptions::new().create(path, &headers)?;
+        self.write_parts(&mut out)?;
+        out.finish().map(drop)
+    }
+
+    /// Writes the image to `writer` with `options`, as the wheel's `OpenEXR.File.write`
+    /// writes it (PyOpenEXR.cpp:891-987, 1121-1200 @ v3.5.3): a scanline part's lines in one
+    /// call, a tiled part's level 0 tiles in one call, a deep part's lines in one call or
+    /// its tiles one at a time, row by row; and gives the writer back. `name` is the file
+    /// name Core's messages give. An image holds level 0 alone: a part of several levels
+    /// is refused (the C++ library would leave its other levels unwritten), and is written
+    /// through [`OutputPart`](crate::OutputPart) instead.
+    pub fn write_to<W: std::io::Write + std::io::Seek + Send + 'static>(
+        &self,
+        name: &str,
+        writer: W,
+        options: &WriteOptions,
+    ) -> Result<W> {
+        let headers: Vec<Header> = self.parts.iter().map(|p| p.header.clone()).collect();
+        let mut out = options.create_writer(name, writer, &headers)?;
+        self.write_parts(&mut out)?;
+        out.finish()
+    }
+
+    fn write_parts<W: std::io::Write + std::io::Seek + Send + 'static>(
+        &self,
+        out: &mut MultiPartOutputFile<W>,
+    ) -> Result<()> {
+        for (p, ip) in self.parts.iter().enumerate() {
+            let h = &ip.header;
+            let dw = h.data_window();
+            let mut part = out.part(p)?;
+            if h.storage().is_deep() {
+                let counts = ip.sample_counts.as_deref().ok_or_else(|| {
+                    Error::new(
+                        ErrorCode::InvalidArgument,
+                        "A deep part needs its sample counts",
+                    )
+                })?;
+                let mut fb = DeepFrameBuffer::new(counts, dw)?;
+                for ch in &ip.channels {
+                    fb.insert_bytes(&ch.name, ch.pixels.pixel_type(), ch.pixels.as_bytes())?;
+                }
+                if h.storage() == Storage::DeepTiled {
+                    let (nx, ny) = part.num_tiles((0, 0))?;
+                    for ty in 0..ny {
+                        for tx in 0..nx {
+                            part.write_deep_tile(&fb, tx, ty, (0, 0))?;
+                        }
+                    }
+                } else {
+                    part.write_deep_pixels(&fb, dw.height() as i32)?;
+                }
+                continue;
+            }
+            let mut fb = FrameBuffer::new();
+            for ch in &ip.channels {
+                let size = ch.pixels.pixel_type().size() as i64;
+                let id = fb.add_bytes(ch.pixels.as_bytes());
+                let mut s = Slice::new(
+                    ch.pixels.pixel_type(),
+                    id,
+                    0,
+                    dw.min,
+                    size,
+                    size * ch.width as i64,
+                );
+                s.x_sampling = ch.x_sampling;
+                s.y_sampling = ch.y_sampling;
+                fb.insert(&ch.name, s)?;
+            }
+            if h.storage() == Storage::Tiled {
+                let (nx, ny) = part.num_tiles((0, 0))?;
+                part.write_tiles(&fb, (0, nx - 1), (0, ny - 1), (0, 0))?;
+            } else {
+                part.write_pixels(&fb, dw.height() as i32)?;
+            }
+        }
+        Ok(())
     }
 }
 

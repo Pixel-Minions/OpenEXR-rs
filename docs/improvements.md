@@ -503,6 +503,22 @@ section. An entry says:
 
 ## Undefined behaviour the port does not copy
 
+
+### I-35. Core cannot write a deep tile without samples
+
+- **Upstream:** `exr_write_tile_chunk` and `exr_write_deep_tile_chunk` refuse a chunk without
+  packed data (`if (!packed_data || packed_size == 0)`, src/lib/OpenEXRCore/chunk.c:2161-2167
+  @ v3.5.3), where the scanline writer refuses only a size without data (lines 1710-1716). A
+  deep tile whose pixels all hold no samples has no packed data.
+- **Who notices:** writers of deep tiled files through Core: such a tile cannot be written, so
+  neither can the file, though the C++ library writes it (with its own writer) and Core reads
+  it back.
+- **A fix:** take a deep tile without packed data, as the scanline writer takes a scanline
+  chunk without it.
+- **Status:** **fixed**, deviation D-22 (owner, 2026-11-07: "anything that is a bug we can
+  fix") (`crates/openexr-core/src/chunk_write.rs`); checked by
+  `crates/openexr/tests/heavy_write.rs`, whose deep MIP- and RIP-mapped files, tiles without
+  samples among them, read back through Core 3.5.3 as written.
 ### U-1. A string created from no data has an unset terminator
 
 - **Upstream:** `exr_attr_string_create_with_length` with NULL data and a positive length

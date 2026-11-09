@@ -613,14 +613,17 @@ impl Context {
             return Err(self.standard_error(ErrorCode::IncorrectPart));
         }
         let packed_size = packed_data.map_or(0, |p| p.len() as u64);
-        if packed_size == 0 {
+        let deep = part.storage_mode == Storage::DEEP_TILED;
+        // a deep tile whose pixels hold no samples has no packed data, which the scanline
+        // writer takes and this one refuses upstream (`!packed_data || packed_size == 0`):
+        // deviation D-22 (docs/improvements.md, I-35) takes it here too
+        if packed_size == 0 && !deep {
             return Err(self.print_error(
                 ErrorCode::InvalidArgument,
                 "Invalid packed data argument size %llu pointer %p",
                 &[Arg::U64(packed_size), ptr(packed_data)],
             ));
         }
-        let deep = part.storage_mode == Storage::DEEP_TILED;
         if !deep && packed_size > i32::MAX as u64 {
             return Err(self.print_error(
                 ErrorCode::InvalidArgument,

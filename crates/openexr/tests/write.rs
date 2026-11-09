@@ -296,3 +296,79 @@ fn tiles_written_in_any_order_read_back_as_written() {
         );
     }
 }
+
+#[test]
+fn deep_parts_read_back_as_written() {
+    use openexr::{DeepFrameBuffer, Image, LevelMode, RoundingMode, Storage, TileDescription};
+    let dw = window(23, 17);
+    let n = (dw.width() * dw.height()) as usize;
+    // 0 to 3 samples a pixel, some pixels without any
+    let counts: Vec<u32> = values(n, 4).iter().map(|&v| v >> 30).collect();
+    let total: usize = counts.iter().map(|&c| c as usize).sum();
+    let halves: Vec<u16> = values(total, 5)
+        .iter()
+        .map(|&v| (v >> 16) as u16 & 0x7bff)
+        .collect();
+    let ids = values(total, 6);
+    for tiled in [false, true] {
+        for comp in [
+            Compression::None,
+            Compression::Rle,
+            Compression::Zips,
+            Compression::Zstd,
+        ] {
+            let mut h = Header::new(dw);
+            h.set_storage(Storage::DeepScanline);
+            h.insert_channel(Channel::new("A", PixelType::Half));
+            h.insert_channel(Channel::new("id", PixelType::Uint));
+            h.set_compression(comp);
+            if tiled {
+                h.set_tiles(TileDescription {
+                    x_size: 6,
+                    y_size: 4,
+                    level_mode: LevelMode::One,
+                    rounding_mode: RoundingMode::Down,
+                });
+            }
+            let mut out = WriteOptions::new()
+                .create_writer(
+                    "<memory>",
+                    Cursor::new(Vec::new()),
+                    std::slice::from_ref(&h),
+                )
+                .unwrap();
+            let mut fb = DeepFrameBuffer::new(&counts, dw).unwrap();
+            fb.insert("A", &halves).unwrap();
+            fb.insert("id", &ids).unwrap();
+            let mut part = out.part(0).unwrap();
+            if tiled {
+                let (nx, ny) = part.num_tiles((0, 0)).unwrap();
+                part.write_deep_tiles(&fb, (0, nx - 1), (0, ny - 1), (0, 0))
+                    .unwrap();
+            } else {
+                // in two calls, across chunk boundaries
+                part.write_deep_pixels(&fb, 5).unwrap();
+                part.write_deep_pixels(&fb, 12).unwrap();
+            }
+            let bytes = out.finish().unwrap().into_inner();
+            let img =
+                Image::from_file(&ReadOptions::new().open_bytes("m", bytes).unwrap()).unwrap();
+            let p = &img.parts[0];
+            assert_eq!(
+                p.sample_counts.as_ref(),
+                Some(&counts),
+                "{comp:?} tiled {tiled}"
+            );
+            assert_eq!(p.channels[0].pixels, openexr::Pixels::Half(halves.clone()));
+            assert_eq!(p.channels[1].pixels, openexr::Pixels::Uint(ids.clone()));
+            // and through Image::write, the same file again
+            let again = img
+                .write_to("m", Cursor::new(Vec::new()), &WriteOptions::new())
+                .unwrap()
+                .into_inner();
+            let img2 =
+                Image::from_file(&ReadOptions::new().open_bytes("m", again).unwrap()).unwrap();
+            assert_eq!(img2, img);
+        }
+    }
+}

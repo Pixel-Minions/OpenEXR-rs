@@ -23,7 +23,7 @@ use openexr_core::decoding::{
 
 use crate::attribute::{Box2i, PixelType, Storage};
 use crate::error::{Error, ErrorCode, Result};
-use crate::frame_buffer::Sample;
+use crate::frame_buffer::{Buffer, Sample, SampleData};
 use crate::read::InputPart;
 
 fn core(e: openexr_core::Error) -> Error {
@@ -53,7 +53,7 @@ fn index(window: &Box2i, x: i32, y: i32) -> Option<usize> {
 #[derive(Debug)]
 pub struct DeepSlice<'a> {
     pixel_type: PixelType,
-    data: &'a mut [u8],
+    data: Buffer<'a>,
     /// The value stored in every sample of a channel the part lacks (converted as for a flat
     /// [`Slice`](crate::Slice)).
     pub fill_value: f64,
@@ -118,14 +118,15 @@ impl<'a> DeepFrameBuffer<'a> {
         index(&self.window, x, y).map(|i| self.starts[i])
     }
 
-    /// Adds `data` as channel `name`'s samples. Refuses `data` shorter than
-    /// [`total_samples`](Self::total_samples), or past the 4 GiB a deep buffer may hold.
+    /// Adds `data` as channel `name`'s samples (`&mut` to read into, `&` or `&mut` to write
+    /// from). Refuses `data` shorter than [`total_samples`](Self::total_samples), or past the
+    /// 4 GiB a deep buffer may hold.
     pub fn insert<T: Sample>(
         &mut self,
         name: impl AsRef<[u8]>,
-        data: &'a mut [T],
+        data: impl Into<SampleData<'a, T>>,
     ) -> Result<&mut DeepSlice<'a>> {
-        self.insert_bytes(name, T::PIXEL_TYPE, bytemuck::cast_slice_mut(data))
+        self.insert_buffer(name, T::PIXEL_TYPE, data.into().into_bytes())
     }
 
     /// Adds `data`, samples of `pixel_type` as bytes, as channel `name`'s samples.
@@ -133,7 +134,16 @@ impl<'a> DeepFrameBuffer<'a> {
         &mut self,
         name: impl AsRef<[u8]>,
         pixel_type: PixelType,
-        data: &'a mut [u8],
+        data: impl Into<SampleData<'a, u8>>,
+    ) -> Result<&mut DeepSlice<'a>> {
+        self.insert_buffer(name, pixel_type, data.into().into_bytes())
+    }
+
+    fn insert_buffer(
+        &mut self,
+        name: impl AsRef<[u8]>,
+        pixel_type: PixelType,
+        data: Buffer<'a>,
     ) -> Result<&mut DeepSlice<'a>> {
         if matches!(pixel_type, PixelType::Other(_)) {
             return Err(invalid("Invalid pixel type."));
@@ -159,6 +169,22 @@ impl<'a> DeepFrameBuffer<'a> {
             },
         );
         Ok(self.slices.get_mut(&name).expect("just inserted"))
+    }
+
+    /// The sample count of pixel `(x, y)`, if it is in the window.
+    pub(crate) fn count_at(&self, x: i32, y: i32) -> Option<u32> {
+        index(&self.window, x, y).map(|i| self.counts[i])
+    }
+
+    /// The samples of pixel `(x, y)` in channel `name`'s buffer, and their type: `None`
+    /// without a slice of that name or outside the window.
+    pub(crate) fn samples_at(&self, name: &[u8], x: i32, y: i32) -> Option<(PixelType, &[u8])> {
+        let s = self.slices.get(name)?;
+        let i = index(&self.window, x, y)?;
+        let size = s.pixel_type.size() as u64;
+        let start = (self.starts[i] * size) as usize;
+        let n = (u64::from(self.counts[i]) * size) as usize;
+        Some((s.pixel_type, &s.data.bytes()[start..start + n]))
     }
 
     /// The slice of channel `name`, to change.
@@ -311,6 +337,11 @@ impl<'f> InputPart<'f> {
     /// Each channel the part has is sampled as its slice, 1 and 1 (`prepFillList`,
     /// src/lib/OpenEXR/ImfDeepScanLineInputFile.cpp:657-699 @ v3.5.3).
     fn check_deep_slices(&self, fb: &DeepFrameBuffer<'_>) -> Result<()> {
+        for (k, s) in fb.slices.values().enumerate() {
+            if s.data.bytes_mut_available().is_none() {
+                return Err(crate::frame_buffer::read_only(k));
+            }
+        }
         for name in fb.slices.keys() {
             if let Some(c) = self.header().channel(name)
                 && (c.x_sampling != 1 || c.y_sampling != 1)
@@ -496,7 +527,12 @@ impl<'f> InputPart<'f> {
             ctx.decoding_choose_default_routines(p, d).map_err(core)?;
         }
         {
-            let mut outs: Vec<&mut [u8]> = fb.slices.values_mut().map(|s| &mut *s.data).collect();
+            // checked writable by check_deep_slices
+            let mut outs: Vec<&mut [u8]> = fb
+                .slices
+                .values_mut()
+                .map(|s| s.data.bytes_mut().unwrap_or_default())
+                .collect();
             outs.extend(tables.iter_mut().map(|t| t.as_mut_slice()));
             ctx.decoding_run(p, d, &mut outs).map_err(core)?;
         }
@@ -541,7 +577,9 @@ impl<'f> InputPart<'f> {
                     let start = (fb.starts[i] * size as u64) as usize;
                     for k in 0..fb.counts[i] as usize {
                         let o = start + k * size;
-                        s.data[o..o + size].copy_from_slice(&bytes[..size]);
+                        if let Some(d) = s.data.bytes_mut() {
+                            d[o..o + size].copy_from_slice(&bytes[..size]);
+                        }
                     }
                 }
             }

@@ -80,7 +80,7 @@ fn files_write_as_the_wheel_wrote_them() {
         .collect();
     images.sort();
 
-    let mut compared = 0;
+    let (mut compared, mut images_rewritten) = (0, 0);
     for image in &images {
         let file = MultiPartInputFile::open(image).unwrap();
         let name = image.file_name().unwrap().to_string_lossy().into_owned();
@@ -102,8 +102,42 @@ fn files_write_as_the_wheel_wrote_them() {
             );
         }
         compared += 1;
+
+        // Image::read then Image::write, where decoding and encoding again changes nothing:
+        // the lossless compressions, PXR24 (24 bits twice are 24 bits) and HTJ2K
+        // (openexr-core's heavy_decode, ENCODES)
+        use openexr::Compression as C;
+        let idempotent = [
+            C::None,
+            C::Rle,
+            C::Zips,
+            C::Zip,
+            C::Piz,
+            C::Pxr24,
+            C::Htj2k256,
+            C::Htj2k32,
+            C::Zstd,
+        ];
+        if file
+            .headers()
+            .iter()
+            .all(|h| idempotent.contains(&h.compression()))
+        {
+            let img = openexr::Image::from_file(&file).unwrap();
+            let again = img
+                .write_to("<memory>", Cursor::new(Vec::new()), &WriteOptions::new())
+                .unwrap_or_else(|e| panic!("{name}: Image::write: {e}"))
+                .into_inner();
+            assert!(
+                again == wheel,
+                "{name}: Image::write differs from the wheel's file"
+            );
+            images_rewritten += 1;
+        }
     }
-    eprintln!("{compared} files written as the wheel wrote them");
+    eprintln!(
+        "{compared} files written as the wheel wrote them; {images_rewritten} through Image::write"
+    );
     assert!(compared > 100, "too few files compared");
     let _ = std::fs::remove_dir_all(&scratch);
 }
@@ -256,5 +290,233 @@ fn levels_written_read_back_through_core() {
         }
     }
     eprintln!("{checked} multi-level files read back through Core as written");
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+/// Heavy tier: every deep file the wheel writes (`oracle/write_deep.py`: scanlines and tiles,
+/// each compression a deep part may have, 1, 3 and 10 channels), read through the API and
+/// written back as the binding writes it (`writePixels (height)`; `writeTile` row by row, at
+/// level 0: PyOpenEXR.cpp:1121-1200 @ v3.5.3), byte for byte.
+#[test]
+fn deep_files_write_as_the_wheel_wrote_them() {
+    use openexr::{DeepFrameBuffer, Image};
+    let scratch = std::env::temp_dir().join(format!(
+        "openexr_rs_heavy_api_deep_write_{}",
+        std::process::id()
+    ));
+    let all = common::deep_images(&scratch);
+    let mut compared = 0;
+    for image in all
+        .iter()
+        .filter(|p| p.parent().is_some_and(|d| d.ends_with("generated")))
+    {
+        let name = image.file_name().unwrap().to_string_lossy().into_owned();
+        let file = MultiPartInputFile::open(image).unwrap();
+        let img = Image::from_file(&file).unwrap();
+        let mut out = WriteOptions::new()
+            .create_writer("<memory>", Cursor::new(Vec::new()), file.headers())
+            .unwrap();
+        for (p, ip) in img.parts.iter().enumerate() {
+            let h = &ip.header;
+            let dw = h.data_window();
+            let counts = ip.sample_counts.as_ref().expect("deep");
+            let mut fb = DeepFrameBuffer::new(counts, dw).unwrap();
+            for ch in &ip.channels {
+                fb.insert_bytes(&ch.name, ch.pixels.pixel_type(), ch.pixels.as_bytes())
+                    .unwrap();
+            }
+            let mut part = out.part(p).unwrap();
+            if h.storage() == Storage::DeepTiled {
+                let (nx, ny) = part.num_tiles((0, 0)).unwrap();
+                for ty in 0..ny {
+                    for tx in 0..nx {
+                        part.write_deep_tile(&fb, tx, ty, (0, 0))
+                            .unwrap_or_else(|e| panic!("{name}: {e}"));
+                    }
+                }
+            } else {
+                part.write_deep_pixels(&fb, dw.height() as i32)
+                    .unwrap_or_else(|e| panic!("{name}: {e}"));
+            }
+        }
+        let ours = out
+            .finish()
+            .unwrap_or_else(|e| panic!("{name}: {e}"))
+            .into_inner();
+        let again = img
+            .write_to("<memory>", Cursor::new(Vec::new()), &WriteOptions::new())
+            .unwrap_or_else(|e| panic!("{name}: Image::write: {e}"))
+            .into_inner();
+        assert!(
+            again == std::fs::read(image).unwrap(),
+            "{name}: Image::write differs from the wheel's file"
+        );
+        let wheel = std::fs::read(image).unwrap();
+        if ours != wheel {
+            let at = ours
+                .iter()
+                .zip(&wheel)
+                .position(|(a, b)| a != b)
+                .unwrap_or(ours.len().min(wheel.len()));
+            panic!(
+                "{name}: differs at byte {at} (the API's {} bytes, the wheel's {})",
+                ours.len(),
+                wheel.len()
+            );
+        }
+        compared += 1;
+    }
+    eprintln!("{compared} deep files written as the wheel wrote them");
+    assert_eq!(compared, 24);
+    let _ = std::fs::remove_dir_all(&scratch);
+}
+
+/// Heavy tier: every level of a deep MIP- or RIP-mapped tiled part, which no file of the
+/// decode set holds, written through the API tile by tile in scrambled order, in each line
+/// order and deep compression, reads back through Core 3.5.3 (`core_harness levels`) as the
+/// sample counts and samples written.
+#[test]
+fn deep_levels_written_read_back_through_core() {
+    use openexr::{
+        Channel, Compression, DeepFrameBuffer, Header, LevelMode, LineOrder, PixelType,
+        RoundingMode, Storage, TileDescription, V2,
+    };
+    let scratch = std::env::temp_dir().join(format!(
+        "openexr_rs_heavy_api_deep_levels_{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&scratch).unwrap();
+    let dw = openexr::Box2i {
+        min: V2 { x: 2, y: -4 },
+        max: V2 { x: 40, y: 22 },
+    };
+    let chans = [
+        ("A", PixelType::Half),
+        ("Z", PixelType::Float),
+        ("id", PixelType::Uint),
+    ];
+    let (mut checked, mut seed) = (0, 11);
+    for mode in [LevelMode::Mipmap, LevelMode::Ripmap] {
+        for order in [
+            LineOrder::IncreasingY,
+            LineOrder::DecreasingY,
+            LineOrder::RandomY,
+        ] {
+            for comp in [
+                Compression::None,
+                Compression::Rle,
+                Compression::Zips,
+                Compression::Zstd,
+            ] {
+                let mut h = Header::new(dw);
+                h.set_storage(Storage::DeepScanline);
+                for (n, t) in chans {
+                    h.insert_channel(Channel::new(n, t));
+                }
+                h.set_compression(comp);
+                h.set_line_order(order);
+                h.set_tiles(TileDescription {
+                    x_size: 9,
+                    y_size: 7,
+                    level_mode: mode,
+                    rounding_mode: RoundingMode::Down,
+                });
+                let mut out = WriteOptions::new()
+                    .create_writer(
+                        "<memory>",
+                        Cursor::new(Vec::new()),
+                        std::slice::from_ref(&h),
+                    )
+                    .unwrap();
+                let mut part = out.part(0).unwrap();
+                let levels: Vec<(i32, i32)> = (0..32)
+                    .flat_map(|ly| (0..32).map(move |lx| (lx, ly)))
+                    .filter(|&l| part.num_tiles(l).is_ok())
+                    .collect();
+                let mut written = std::collections::BTreeMap::new();
+                for &level in levels.iter().rev() {
+                    let (w, ht) = part.level_size(level).unwrap();
+                    let window = openexr::Box2i {
+                        min: dw.min,
+                        max: V2 {
+                            x: dw.min.x + w - 1,
+                            y: dw.min.y + ht - 1,
+                        },
+                    };
+                    seed += 1;
+                    let counts: Vec<u32> = values(w as usize * ht as usize, seed)
+                        .iter()
+                        .map(|&v| u32::from(v % 4))
+                        .collect();
+                    let total: usize = counts.iter().map(|&c| c as usize).sum();
+                    let samples: Vec<Vec<u8>> = chans
+                        .iter()
+                        .map(|(_, t)| {
+                            seed += 1;
+                            values(total * t.size(), seed)
+                        })
+                        .collect();
+                    let mut fb = DeepFrameBuffer::new(&counts, window).unwrap();
+                    for ((n, t), s) in chans.iter().zip(&samples) {
+                        fb.insert_bytes(n, *t, &s[..]).unwrap();
+                    }
+                    let (nx, ny) = part.num_tiles(level).unwrap();
+                    for ty in (0..ny).rev() {
+                        for tx in (0..nx).rev() {
+                            part.write_deep_tile(&fb, tx, ty, level).unwrap();
+                        }
+                    }
+                    drop(fb);
+                    written.insert(level, (counts, samples));
+                }
+                let bytes = out.finish().unwrap().into_inner();
+                let file = scratch.join(format!("{checked}.exr"));
+                std::fs::write(&file, &bytes).unwrap();
+                let dump = scratch.join(format!("{checked}"));
+                std::fs::create_dir_all(&dump).unwrap();
+                let status = std::process::Command::new(common::harness())
+                    .arg("levels")
+                    .arg(&file)
+                    .arg(&dump)
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+                let manifest = std::fs::read_to_string(dump.join("manifest.tsv")).unwrap();
+                let mut seen = 0;
+                for line in manifest.lines().filter(|l| !l.is_empty()) {
+                    let cols: Vec<&str> = line.split('\t').collect();
+                    let what = format!("{mode:?} {order:?} {comp:?}: {line}");
+                    assert_ne!(cols[4], "error", "{what}: Core cannot read the API's file");
+                    let level: (i32, i32) = (cols[1].parse().unwrap(), cols[2].parse().unwrap());
+                    let c: usize = cols[4].parse().unwrap();
+                    let native = match chans[c].1 {
+                        PixelType::Half => "HALF",
+                        PixelType::Float => "FLOAT",
+                        _ => "UINT",
+                    };
+                    if cols[3] != native {
+                        continue;
+                    }
+                    let (counts, samples) = &written[&level];
+                    let got_counts = std::fs::read(
+                        dump.join(format!("0.{}.{}.{}.counts", level.0, level.1, native)),
+                    )
+                    .unwrap();
+                    let want: Vec<u8> = counts.iter().flat_map(|c| c.to_ne_bytes()).collect();
+                    assert!(got_counts == want, "{what}: not the counts written");
+                    let got = std::fs::read(dump.join(cols[8])).unwrap();
+                    assert!(got == samples[c], "{what}: not the samples written");
+                    seen += 1;
+                }
+                assert_eq!(
+                    seen,
+                    levels.len() * chans.len(),
+                    "{mode:?} {order:?} {comp:?}"
+                );
+                checked += 1;
+            }
+        }
+    }
+    eprintln!("{checked} deep multi-level files read back through Core as written");
     let _ = std::fs::remove_dir_all(&scratch);
 }

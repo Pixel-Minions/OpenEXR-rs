@@ -121,6 +121,11 @@ impl Buffer<'_> {
         }
     }
 
+    /// Whether the buffer can be written to (`Some`), without borrowing it mutably.
+    pub(crate) fn bytes_mut_available(&self) -> Option<()> {
+        matches!(self, Buffer::Mut(_)).then_some(())
+    }
+
     pub(crate) fn bytes_mut(&mut self) -> Option<&mut [u8]> {
         match self {
             Buffer::Mut(d) => Some(d),
