@@ -15,7 +15,7 @@ bundles:
 | `openexr-rs-zstd` (`crates/openexr-zstd`) | zstd 1.5.7: the decompressor and the compressor at every level, 1 to 22, every strategy, the block splitter, long distance matching and index overflow correction | 13,500 |
 | `openexr-rs-openjph` (`crates/openexr-openjph`) | OpenJPH 0.32.0: the HTJ2K decoder and encoder, the wavelets, colour transforms and codestream | 22,600 |
 | `openexr-testkit` (`crates/openexr-testkit`) | Test-only: the platform C runtime and the CPU as references | 450 |
-| `openexr-rs` (`crates/openexr`, library `openexr`) | **In progress (M4):** a safe Rust API over the Core port, with the C++ library's names. Done: opening files (a path, a `Read + Seek`, bytes), every part's `Header` and `Attribute`s, and reading flat parts' pixels into the caller's buffers (`FrameBuffer`, `Slice`, `InputPart`: scanlines, tiles, levels, line ranges, interleaved and subsampled channels, fill values), as the wheel reads them | 1,900 |
+| `openexr-rs` (`crates/openexr`, library `openexr`) | **In progress (M4):** a safe Rust API over the Core port, with the C++ library's names. Done: opening files (a path, a `Read + Seek`, bytes), every part's `Header` and `Attribute`s, reading every part's pixels into the caller's buffers (`FrameBuffer`, `Slice`, `InputPart`: scanlines, tiles, levels, line ranges, interleaved and subsampled channels, conversions, fill values; deep parts' sample counts and samples through `DeepFrameBuffer`), and `Image::read` for a whole file, as the wheel and Core read them | 2,800 |
 
 Every SIMD path upstream has is ported (ZIP's SSE2/SSE4.1, DWA's SSE2/AVX/F16C, libdeflate's
 BMI2 decoder and vector Adler-32, zstd's BMI2 builds and SSE2 row search, OpenJPH's SSSE3, AVX2
@@ -24,7 +24,7 @@ official build computes on each platform and CPU.
 
 Core's API is its C API in Rust form (contexts, chunk infos, decode and encode pipelines). The
 milestone now under way, M4 (`PLAN.md` §16), is a safe Rust API on top of it, `openexr-rs`:
-headers and flat reads today, then deep data, writing and threads. The OpenEXR C++ library itself
+reading is done (flat and deep); writing and threads come next. The OpenEXR C++ library itself
 comes later, as far as its features are wanted (M5).
 
 ## How parity is checked

@@ -95,9 +95,10 @@ impl<'f> InputPart<'f> {
                 }
                 self.buffered_read_pixels(fb, dw, y1, y2)
             }
-            _ => Err(invalid(
+            Storage::DeepScanline | Storage::DeepTiled => Err(invalid(
                 "Deep parts are read with a DeepFrameBuffer, not a FrameBuffer",
             )),
+            Storage::Unknown => Err(invalid("The part's type is unknown")),
         }
     }
 
@@ -133,10 +134,15 @@ impl<'f> InputPart<'f> {
     }
 
     fn tiled(&self) -> Result<()> {
-        if self.header().storage() != Storage::Tiled {
+        if !self.header().storage().is_tiled() {
             return Err(invalid("The part is not tiled"));
         }
         Ok(())
+    }
+
+    /// Core's context, for the deep readers.
+    pub(crate) fn core_context(&self) -> &'f Context {
+        self.ctx()
     }
 
     /// The number of levels in x and y (1 and 1 for a part of one level).

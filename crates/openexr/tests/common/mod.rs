@@ -128,6 +128,8 @@ pub(crate) struct WheelChannel {
     pub(crate) x_sampling: i32,
     pub(crate) y_sampling: i32,
     pub(crate) data: Vec<u8>,
+    /// A deep channel's sample counts (`uint32`, row by row).
+    pub(crate) counts: Option<Vec<u8>>,
 }
 
 /// The channels the wheel read from an image, `dump_pixels.py`'s output in `dir`; or its
@@ -149,7 +151,52 @@ pub(crate) fn wheel_pixels(dir: &Path) -> Result<Vec<WheelChannel>, String> {
             x_sampling: cols[6].parse().expect("x sampling"),
             y_sampling: cols[7].parse().expect("y sampling"),
             data: std::fs::read(dir.join(cols[8])).expect("channel file"),
+            counts: cols[3].starts_with("deep-").then(|| {
+                let counts = cols[8].replace(".bin", ".counts");
+                std::fs::read(dir.join(counts)).expect("counts file")
+            }),
         });
     }
     Ok(chans)
+}
+
+/// The compressions a deep part may have, with the wheel's names for them.
+pub(crate) const DEEP: [&str; 4] = [
+    "NO_COMPRESSION",
+    "RLE_COMPRESSION",
+    "ZIPS_COMPRESSION",
+    "ZSTD_COMPRESSION",
+];
+
+/// Deep files: the wheel's (`oracle/write_deep.py`: scanlines and tiles, each compression a
+/// deep part may have, 1, 3 and 10 channels) and those of upstream's test tree.
+pub(crate) fn deep_images(scratch: &Path) -> Vec<PathBuf> {
+    let generated = scratch.join("generated");
+    std::fs::create_dir_all(&generated).unwrap();
+    let mut seed = 100;
+    let script = root().join("oracle/write_deep.py");
+    for comp in DEEP {
+        for kind in ["scan", "tile"] {
+            for nchan in [1, 3, 10] {
+                seed += 1;
+                let image = generated.join(format!("{kind}_{nchan}_{comp}.exr"));
+                let (n, s) = (nchan.to_string(), seed.to_string());
+                oracle(&[
+                    script.as_os_str(),
+                    image.as_os_str(),
+                    kind.as_ref(),
+                    n.as_ref(),
+                    comp.as_ref(),
+                    s.as_ref(),
+                ]);
+            }
+        }
+    }
+    let mut all = Vec::new();
+    exr_files(&generated, &mut all);
+    exr_files(
+        &root().join("upstream/openexr/src/test/bin/test_images"),
+        &mut all,
+    );
+    all
 }

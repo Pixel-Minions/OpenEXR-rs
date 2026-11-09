@@ -23,10 +23,12 @@
 #![forbid(unsafe_code)]
 
 pub mod attribute;
+mod deep;
 mod error;
 mod frame_buffer;
 pub mod half;
 mod header;
+mod image;
 mod input;
 mod read;
 
@@ -35,8 +37,10 @@ pub use attribute::{
     KeyCode, LevelMode, LineOrder, PixelType, Preview, Rational, RoundingMode, Storage,
     TileDescription, TimeCode, V2, V2d, V2f, V2i, V3, V3d, V3f, V3i,
 };
+pub use deep::{DeepFrameBuffer, DeepSlice};
 pub use error::{Error, ErrorCode, Result};
 pub use frame_buffer::{FrameBuffer, Sample, Slice};
 pub use header::Header;
+pub use image::{Image, ImageChannel, ImagePart, Pixels};
 pub use input::{InputFile, MultiPartInputFile, ReadOptions};
 pub use read::InputPart;
