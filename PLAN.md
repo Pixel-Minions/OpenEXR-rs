@@ -432,8 +432,8 @@ Each has a recommendation. Status on 2026-11-09:
 | O8 What Rust can't have | **Decided** (owner, 2026-11-07): n/a, each with its reason |
 | O9 `unsafe` in the test kit | **Decided** (owner, 2026-11-07): kept; and a CPU probe (`openexr-testkit/src/cpu.rs`), test-only, for the SIMD emulations |
 | O10 The milestone after M3 | **Decided** (owner, 2026-11-09): C, a safe Rust API first (M4, §16), the C++ library later and only as far as its features are wanted (M5; `docs/proposal-m4.md`) |
-| O11 M4's crate and names | **Proposed** (§16): a crate `openexr-rs` (`crates/openexr`, library `openexr`), unpublished; the C++ library's names (`Header`, `FrameBuffer`, `Slice`, `InputPart`, ...) in Rust's case |
-| O12 M4's threading | **Proposed** (§16): single-threaded by default; a thread count per call through `std::thread::scope`, no new dependency |
+| O11 M4's crate and names | **Decided** (owner, 2026-11-09): a crate `openexr-rs` (`crates/openexr`, library `openexr`), unpublished; the C++ library's names (`Header`, `FrameBuffer`, `Slice`, `InputPart`, ...) in Rust's case |
+| O12 M4's threading | **Decided** (owner, 2026-11-09): `rayon`, as the C++ library uses IlmThread: single-threaded by default, a thread count per call (`threads(n)`, `threads(Auto)`) on request, behind a default `rayon` feature (without it, requests run single-threaded) |
 | O13 Publishing | **Open**: whether and when any crate goes to crates.io (after M4's API is reviewed) |
 | Upstream bugs found in Phases 2-4 (I-5 to I-12) | **Decided** (owner, 2026-11-07): fixed as deviations D-1 to D-8 (`docs/deviations.md`), with waivers W-1 to W-7 (`docs/waivers.md`); I-13 as D-9 with W-8; I-14 to I-16 (the header writer) as D-10 to D-12 with W-9 to W-11; I-17, I-18 (the chunk writes) as D-13, D-14 with W-12, W-13; I-19, I-20 (the encode pipeline) as D-15, D-16 with W-14, W-15; I-21 (tile chunk info) as D-17 with W-16; I-29, I-30 (the deep sample table, the temporary file's rename) as D-19, D-20, and U-21 (Core's write locks, not copied): accepted on review (owner, 2026-11-07) |
 
@@ -587,7 +587,7 @@ pushing, no profiling until the owner asks.
 **Done (2026-11-08): M3**, OpenEXRCore 3.5.3 parity (`docs/m3.md`), with the SIMD paths and
 the speed work (`docs/baseline.md`, "Speed").
 
-**Now (2026-11-09):** M4 (§16), once the owner approves §16 and O11-O12.
+**Now (2026-11-09):** M4 (§16); O10-O12 decided.
 
 ---
 
@@ -596,6 +596,15 @@ the speed work (`docs/baseline.md`, "Speed").
 The milestone after M3 (O10, option C): a crate an ordinary Rust program can read and write
 OpenEXR files with, safely, on top of the Core port. Not a port: a design, whose every pixel
 and byte still comes from the verified Core port.
+
+**The principle (owner, 2026-11-09):** the API is a wrapper over Core, as the C++ library and the
+Python binding are, so it is not bound to copy their limits: "let's use the best we can". Below
+it everything stays exact; above it, the best Rust design: lossless typed headers (every Core
+attribute type kept distinct, where the Python binding folds float into double and drops type
+hints), threading done well (decoding into the caller's buffers in parallel, reads overlapped
+with decompression, deterministic errors, the application's own `rayon` pool), zero-copy borrows,
+iterators, `Read + Seek` streams, builders, `Result` everywhere; with the C++ library's names for
+its main types (O11).
 
 ### Definition of done
 
@@ -635,7 +644,10 @@ newtype comes later if wanted, without a dependency.
   channels compare with the matching parts of the wheel's arrays.
 - **Writing:** the wheel's pixels and headers written through the API give the wheel's files.
 - **Headers:** a new oracle script (its own commit, before the chunk that uses it) dumps the
-  wheel's view of every header as JSON; the API's `Header` must agree on every attribute.
+  wheel's view of every header as JSON; the API's `Header` must agree on every attribute's
+  value, in the binding's view of it. The types the binding folds (float and double, a bytes
+  attribute's hint) are checked against Core itself: `core_harness info --verbose` prints each
+  attribute's name and type.
 - **Threaded reads and writes** give the single-threaded bytes and pixels (both from the wheel).
 - **The API's own checks** (a stride that overruns its slice, a slice smaller than its window,
   an unknown channel, the wrong part type): unit tests, and refusals before Core is called.
