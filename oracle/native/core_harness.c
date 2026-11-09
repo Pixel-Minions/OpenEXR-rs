@@ -38,6 +38,10 @@
  *   core_harness zstd-big <dir> <width> <level>...
  *       A ZSTD chunk whose zstd frame passes ZSTD_CURRENT_MAX, so that zstd corrects its
  *       indices within it (cmd_zstd_big), at each level; digests on stdout.
+ *
+ *   core_harness levels <file> <out-dir>
+ *       Every level of every flat part, decoded into planar buffers of each pixel type, as
+ *       the C++ library's readers drive Core (cmd_levels); the planes and a manifest.
  */
 
 #include <openexr.h>
@@ -1205,9 +1209,269 @@ cmd_zstd_big (int argc, char** argv)
     return 0;
 }
 
+/* Port-independent output of `levels`: one plane of a part's level, decoded. */
+static void
+levels_write (
+    FILE*                          manifest,
+    const char*                    dir,
+    int                            p,
+    int                            lx,
+    int                            ly,
+    exr_pixel_type_t               t,
+    int                            c,
+    const exr_attr_chlist_entry_t* e,
+    const uint8_t*                 plane,
+    int64_t                        h,
+    int64_t                        w)
+{
+    char  path[4096];
+    FILE* fh;
+    snprintf (path, sizeof (path), "%s/%d.%d.%d.%s.%d.bin", dir, p, lx, ly, type_name (t), c);
+    fh = fopen (path, "wb");
+    if (fh)
+    {
+        fwrite (plane, 1, (size_t) (h * w * type_size (t)), fh);
+        fclose (fh);
+    }
+    fprintf (manifest, "%d\t%d\t%d\t%s\t%d\t", p, lx, ly, type_name (t), c);
+    for (int32_t k = 0; k < e->name.length; ++k)
+        fprintf (manifest, "%02x", (unsigned char) e->name.str[k]);
+    fprintf (
+        manifest,
+        "\t%lld\t%lld\t%d.%d.%d.%s.%d.bin\n",
+        (long long) h,
+        (long long) w,
+        p,
+        lx,
+        ly,
+        type_name (t),
+        c);
+}
+
+/* Points channel c of a decode at `ptr`, to be stored as type t, `line` bytes a row; a
+ * channel without lines in the chunk is skipped, as the C++ library's readers skip it. */
+static void
+levels_point (exr_coding_channel_info_t* ch, exr_pixel_type_t t, uint8_t* ptr, int64_t line)
+{
+    if (ch->height == 0)
+    {
+        ch->decode_to_ptr     = NULL;
+        ch->user_pixel_stride = 0;
+        ch->user_line_stride  = 0;
+        return;
+    }
+    ch->decode_to_ptr          = ptr;
+    ch->user_bytes_per_element = (int16_t) type_size (t);
+    ch->user_data_type         = (uint16_t) t;
+    ch->user_pixel_stride      = type_size (t);
+    ch->user_line_stride       = (int32_t) line;
+}
+
+static exr_result_t
+levels_run (exr_const_context_t f, int p, exr_decode_pipeline_t* dec)
+{
+    exr_result_t rv = exr_decoding_choose_default_routines (f, p, dec);
+    if (rv == EXR_ERR_SUCCESS) rv = exr_decoding_run (f, p, dec);
+    exr_decoding_destroy (f, dec);
+    return rv;
+}
+
+/* One level (a scanline part's only one) of part p, decoded as type t into `planes`, one per
+ * channel, `widths[c]` samples a row. */
+static exr_result_t
+levels_decode (
+    exr_const_context_t      f,
+    int                      p,
+    int                      tiled,
+    int                      lx,
+    int                      ly,
+    exr_pixel_type_t         t,
+    const exr_attr_chlist_t* chans,
+    exr_attr_box2i_t         dw,
+    uint8_t**                planes,
+    const int64_t*           widths)
+{
+    exr_result_t rv;
+    if (!tiled)
+    {
+        int32_t lpc;
+        rv = exr_get_scanlines_per_chunk (f, p, &lpc);
+        if (rv) return rv;
+        for (int64_t y = dw.min.y; y <= dw.max.y; y += lpc)
+        {
+            exr_chunk_info_t      cin;
+            exr_decode_pipeline_t dec = EXR_DECODE_PIPELINE_INITIALIZER;
+            rv = exr_read_scanline_chunk_info (f, p, (int) y, &cin);
+            if (rv) return rv;
+            rv = exr_decoding_initialize (f, p, &cin, &dec);
+            if (rv) return rv;
+            for (int16_t c = 0; c < dec.channel_count; ++c)
+            {
+                const exr_attr_chlist_entry_t* e = chans->entries + c;
+                int64_t row = sampled (dw.min.y, cin.start_y, e->y_sampling);
+                int64_t line = widths[c] * type_size (t);
+                levels_point (dec.channels + c, t, planes[c] + row * line, line);
+            }
+            rv = levels_run (f, p, &dec);
+            if (rv) return rv;
+        }
+        return EXR_ERR_SUCCESS;
+    }
+    {
+        int32_t cx, cy, tw, th;
+        rv = exr_get_tile_counts (f, p, lx, ly, &cx, &cy);
+        if (rv) return rv;
+        rv = exr_get_tile_sizes (f, p, lx, ly, &tw, &th);
+        if (rv) return rv;
+        for (int ty = 0; ty < cy; ++ty)
+        {
+            for (int tx = 0; tx < cx; ++tx)
+            {
+                exr_chunk_info_t      cin;
+                exr_decode_pipeline_t dec = EXR_DECODE_PIPELINE_INITIALIZER;
+                rv = exr_read_tile_chunk_info (f, p, tx, ty, lx, ly, &cin);
+                if (rv) return rv;
+                rv = exr_decoding_initialize (f, p, &cin, &dec);
+                if (rv) return rv;
+                for (int16_t c = 0; c < dec.channel_count; ++c)
+                {
+                    int64_t line = widths[c] * type_size (t);
+                    uint8_t* at  = planes[c] + (int64_t) ty * th * line +
+                                  (int64_t) tx * tw * type_size (t);
+                    levels_point (dec.channels + c, t, at, line);
+                }
+                rv = levels_run (f, p, &dec);
+                if (rv) return rv;
+            }
+        }
+    }
+    return EXR_ERR_SUCCESS;
+}
+
+/* core_harness levels <file> <out-dir>: what Core gives the C++ library's readers where the
+ * wheel cannot look: every level of a tiled part, and every pixel type the channels can be
+ * read as. For each flat part p, each output type t (half, float, uint) and each level (lx,
+ * ly) of a tiled part (a scanline part has the one, 0 0), the level is decoded chunk by
+ * chunk with Core's default routines into one planar buffer per channel of type t (its
+ * samples row by row), as `InputPart::readPixels` and `readTiles` drive Core, and written to
+ * <out-dir>/<p>.<lx>.<ly>.<t>.<c>.bin; <out-dir>/manifest.tsv gets one line a channel,
+ *   p  lx  ly  t  c  name (hex)  height  width  file
+ * or, where a chunk of the level fails, `p lx ly t error <code name>`. Deep parts are left
+ * out. */
+static int
+cmd_levels (int argc, char** argv)
+{
+    exr_context_t                f;
+    exr_context_initializer_t    init = EXR_DEFAULT_CONTEXT_INITIALIZER;
+    int                          np;
+    char                         path[4096];
+    FILE*                        manifest;
+    static const exr_pixel_type_t types[3] = {EXR_PIXEL_HALF, EXR_PIXEL_FLOAT, EXR_PIXEL_UINT};
+
+    if (argc != 2) return fail ("levels: <file> <out-dir>", EXR_ERR_INVALID_ARGUMENT);
+    snprintf (path, sizeof (path), "%s/manifest.tsv", argv[1]);
+    manifest = fopen (path, "w");
+    if (!manifest) return fail ("levels: cannot write the manifest", EXR_ERR_FILE_ACCESS);
+    {
+        exr_result_t rv = exr_start_read (&f, argv[0], &init);
+        if (rv)
+        {
+            fprintf (manifest, "error\t%s\n", exr_get_error_code_as_string (rv));
+            fclose (manifest);
+            return 0;
+        }
+    }
+    CHECK (exr_get_count (f, &np));
+    for (int p = 0; p < np; ++p)
+    {
+        exr_storage_t            st;
+        exr_attr_box2i_t         dw;
+        const exr_attr_chlist_t* chans = NULL;
+        int32_t                  nlx = 1, nly = 1;
+        uint32_t                 txs, tys;
+        exr_tile_level_mode_t    mode = EXR_TILE_ONE_LEVEL;
+        exr_tile_round_mode_t    round;
+        int                      tiled;
+
+        CHECK (exr_get_storage (f, p, &st));
+        if (st != EXR_STORAGE_SCANLINE && st != EXR_STORAGE_TILED) continue;
+        tiled = st == EXR_STORAGE_TILED;
+        CHECK (exr_get_data_window (f, p, &dw));
+        CHECK (exr_get_channels (f, p, &chans));
+        if (chans->num_channels > 256)
+            return fail ("too many channels", EXR_ERR_INVALID_ARGUMENT);
+        if (tiled)
+        {
+            CHECK (exr_get_tile_levels (f, p, &nlx, &nly));
+            CHECK (exr_get_tile_descriptor (f, p, &txs, &tys, &mode, &round));
+        }
+        for (int k = 0; k < 3; ++k)
+        {
+            exr_pixel_type_t t = types[k];
+            for (int ly = 0; ly < nly; ++ly)
+            {
+                for (int lx = 0; lx < nlx; ++lx)
+                {
+                    uint8_t*     planes[256];
+                    int64_t      widths[256], heights[256];
+                    exr_result_t rv = EXR_ERR_SUCCESS;
+                    int32_t      lw = 0, lh = 0;
+
+                    if (mode == EXR_TILE_MIPMAP_LEVELS && lx != ly) continue;
+                    if (tiled)
+                    {
+                        CHECK (exr_get_level_sizes (f, p, lx, ly, &lw, &lh));
+                    }
+                    for (int c = 0; c < chans->num_channels; ++c)
+                    {
+                        const exr_attr_chlist_entry_t* e = chans->entries + c;
+                        widths[c]  = tiled ? lw
+                                           : sampled (dw.min.x, (int64_t) dw.max.x + 1, e->x_sampling);
+                        heights[c] = tiled ? lh
+                                           : sampled (dw.min.y, (int64_t) dw.max.y + 1, e->y_sampling);
+                        planes[c]  = (uint8_t*) calloc (
+                            (size_t) (widths[c] * heights[c] * type_size (t)) + 1, 1);
+                        if (!planes[c]) return fail ("out of memory", EXR_ERR_OUT_OF_MEMORY);
+                    }
+                    rv = levels_decode (f, p, tiled, lx, ly, t, chans, dw, planes, widths);
+                    if (rv)
+                        fprintf (
+                            manifest,
+                            "%d\t%d\t%d\t%s\terror\t%s\n",
+                            p,
+                            lx,
+                            ly,
+                            type_name (t),
+                            exr_get_error_code_as_string (rv));
+                    else
+                        for (int c = 0; c < chans->num_channels; ++c)
+                            levels_write (
+                                manifest,
+                                argv[1],
+                                p,
+                                lx,
+                                ly,
+                                t,
+                                c,
+                                chans->entries + c,
+                                planes[c],
+                                heights[c],
+                                widths[c]);
+                    for (int c = 0; c < chans->num_channels; ++c)
+                        free (planes[c]);
+                }
+            }
+        }
+    }
+    fclose (manifest);
+    exr_finish (&f);
+    return 0;
+}
+
 int
 main (int argc, char** argv)
 {
+    if (argc >= 2 && !strcmp (argv[1], "levels")) return cmd_levels (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "compress-buffer"))
         return cmd_compress_buffer (argc - 2, argv + 2);
     if (argc >= 2 && !strcmp (argv[1], "info")) return cmd_info (argc - 2, argv + 2);
@@ -1223,6 +1487,7 @@ main (int argc, char** argv)
         "       core_harness compress-buffer <level> <in> <out>\n"
         "       core_harness convert <dir>\n"
         "       core_harness bench <in> <reps> [<compression> [--zip N] [--zstd N] [--dwa F]]\n"
-        "       core_harness zstd-big <dir> <width> <level>...\n");
+        "       core_harness zstd-big <dir> <width> <level>...\n"
+        "       core_harness levels <file> <out-dir>\n");
     return 2;
 }
