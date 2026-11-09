@@ -418,7 +418,7 @@ move with upstream's `external/` (`current_deflate_version`, `current_zstd_versi
 
 ## 14. Decisions for the owner
 
-Each has a recommendation. Status on 2026-11-08:
+Each has a recommendation. Status on 2026-11-09:
 
 | Item | Status |
 |---|---|
@@ -431,6 +431,10 @@ Each has a recommendation. Status on 2026-11-08:
 | O7 OS error text | **Decided** (owner, 2026-11-07): exact, through `FormatMessageA`/`strerror` |
 | O8 What Rust can't have | **Decided** (owner, 2026-11-07): n/a, each with its reason |
 | O9 `unsafe` in the test kit | **Decided** (owner, 2026-11-07): kept; and a CPU probe (`openexr-testkit/src/cpu.rs`), test-only, for the SIMD emulations |
+| O10 The milestone after M3 | **Decided** (owner, 2026-11-09): C, a safe Rust API first (M4, §16), the C++ library later and only as far as its features are wanted (M5; `docs/proposal-m4.md`) |
+| O11 M4's crate and names | **Proposed** (§16): a crate `openexr-rs` (`crates/openexr`, library `openexr`), unpublished; the C++ library's names (`Header`, `FrameBuffer`, `Slice`, `InputPart`, ...) in Rust's case |
+| O12 M4's threading | **Proposed** (§16): single-threaded by default; a thread count per call through `std::thread::scope`, no new dependency |
+| O13 Publishing | **Open**: whether and when any crate goes to crates.io (after M4's API is reviewed) |
 | Upstream bugs found in Phases 2-4 (I-5 to I-12) | **Decided** (owner, 2026-11-07): fixed as deviations D-1 to D-8 (`docs/deviations.md`), with waivers W-1 to W-7 (`docs/waivers.md`); I-13 as D-9 with W-8; I-14 to I-16 (the header writer) as D-10 to D-12 with W-9 to W-11; I-17, I-18 (the chunk writes) as D-13, D-14 with W-12, W-13; I-19, I-20 (the encode pipeline) as D-15, D-16 with W-14, W-15; I-21 (tile chunk info) as D-17 with W-16; I-29, I-30 (the deep sample table, the temporary file's rename) as D-19, D-20, and U-21 (Core's write locks, not copied): accepted on review (owner, 2026-11-07) |
 
 ### O1 — Oracle
@@ -579,3 +583,80 @@ width.
 
 **Now (2026-11-07):** the lean Phase 0, then Phase 1 (§10), fast tier only (§8). No CI, no
 pushing, no profiling until the owner asks.
+
+**Done (2026-11-08): M3**, OpenEXRCore 3.5.3 parity (`docs/m3.md`), with the SIMD paths and
+the speed work (`docs/baseline.md`, "Speed").
+
+**Now (2026-11-09):** M4 (§16), once the owner approves §16 and O11-O12.
+
+---
+
+## 16. M4: a safe Rust API (plan, 2026-11-09)
+
+The milestone after M3 (O10, option C): a crate an ordinary Rust program can read and write
+OpenEXR files with, safely, on top of the Core port. Not a port: a design, whose every pixel
+and byte still comes from the verified Core port.
+
+### Definition of done
+
+- Every file the M3 decode set holds (upstream's test images, `write_images.py`'s layouts, the
+  corpus, the damaged copies) reads through the API to the wheel's pixels, bit for bit, and
+  fails where the wheel fails, with Core's message.
+- Every layout the wheel writes, written through the API from the wheel's pixels and header,
+  gives the wheel's file, byte for byte.
+- No `unsafe` in the crate (`#![forbid(unsafe_code)]`); every buffer access the API makes is
+  checked once, up front, as Core's port checks its pipelines'.
+- Both reference platforms, the fast and heavy tiers, as for Core.
+
+### The API (sketch; O11)
+
+Names follow the C++ library's, in Rust's case; behaviour follows Core's.
+
+| Type | What it is |
+|---|---|
+| `Error` | Core's error code and message, as `Result<T, Error>` |
+| `Header` | A part's header: the standard attributes as accessors (`data_window`, `display_window`, `channels`, `compression` and its levels, `line_order`, `tiles`, `name`, `part_type`), the rest as `(name, Attribute)`; `Attribute` an enum of Core's attribute types |
+| `MultiPartInputFile`, `InputFile` | Open a path, a `Read + Seek` or bytes; the parts and their headers; `InputFile` is part 0 |
+| `InputPart` | `read_pixels(&mut FrameBuffer, y_range)`, `read_tile(s)(&mut FrameBuffer, tiles, level)`, the levels and tile counts |
+| `FrameBuffer<'a>`, `Slice<'a>` | The caller's buffers by channel name: a `Slice` is a pixel type, a `&'a mut` slice, the window it covers, strides, sampling and a fill value for channels the file lacks, checked once against the part |
+| `DeepFrameBuffer<'a>` | The sample counts' slice, then per channel the samples, in buffers the caller sizes from the counts (no pointer arrays) |
+| `MultiPartOutputFile`, `OutputFile`, `OutputPart` | Create a file from headers; `write_pixels(&FrameBuffer, lines)`, `write_tile`, deep writes; `finish()` reports the last write's error (drop cannot) |
+| `Image` | The convenience layer, as the wheel's `OpenEXR.File`: `Image::read` gives every part's header and channels as owned planes; `Image::write` writes them |
+| `ReadOptions`, `WriteOptions` | The thread count (O12), the strict-header and silent-header flags Core takes |
+
+Halves are `u16` bit patterns (or `f32` through Core's exact conversion); an optional `half`
+newtype comes later if wanted, without a dependency.
+
+### How it is checked
+
+- **The wheel's `OpenEXR.File`** (and `dump_pixels.py`'s output, which M3 already uses):
+  `Image::read` and `FrameBuffer` reads of the M3 decode set give the wheel's pixels; refusals as
+  the wheel's. Partial reads (line ranges, tiles, levels), other output types and sampled
+  channels compare with the matching parts of the wheel's arrays.
+- **Writing:** the wheel's pixels and headers written through the API give the wheel's files.
+- **Headers:** a new oracle script (its own commit, before the chunk that uses it) dumps the
+  wheel's view of every header as JSON; the API's `Header` must agree on every attribute.
+- **Threaded reads and writes** give the single-threaded bytes and pixels (both from the wheel).
+- **The API's own checks** (a stride that overruns its slice, a slice smaller than its window,
+  an unknown channel, the wrong part type): unit tests, and refusals before Core is called.
+- **Doc examples** compile and run (doctests).
+
+### Phases
+
+| Phase | Scope | Exit |
+|---|---|---|
+| **M4.0 Crate and headers** (~1 pw) | The crate, `Error`, `Header` and `Attribute`, `MultiPartInputFile` opening | Every header of the decode set as the wheel's |
+| **M4.1 Reading** (~2 pw) | `FrameBuffer`, `Slice`, scanline and tiled reads, levels, conversion, sampling, fill; `Image::read` | The decode set's pixels as the wheel's, whole and partial |
+| **M4.2 Deep reading** (~1 pw) | `DeepFrameBuffer`, sample counts then samples | The deep files as the wheel's |
+| **M4.3 Writing** (~2.5 pw) | `OutputFile`, `MultiPartOutputFile`, `OutputPart`, flat and deep, every compression and level; `Image::write` | The wheel's files, byte for byte |
+| **M4.4 Threads, docs, speed** (~1.5 pw) | `ReadOptions`/`WriteOptions` threading, the crate's docs and examples, a speed comparison with Core's harness and with the C++ library's own multithreaded reads | Threaded results as single-threaded; docs build; the speed recorded |
+
+About 8 person-weeks (range 6-10); at this project's pace, one to two weeks of calendar.
+
+### Risks
+
+- **The API's design** is the commitment: kept unpublished until the owner has reviewed it (O13).
+- **The wheel's high-level API** covers whole-part reads; partial and strided reads are checked
+  against slices of its arrays, which is exact but does not exercise the C++ library's own
+  `FrameBuffer` code (that is M5's harness).
+
