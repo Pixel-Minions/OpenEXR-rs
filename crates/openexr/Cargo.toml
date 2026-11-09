@@ -32,3 +32,7 @@ required-features = ["heavy"]
 [[test]]
 name = "heavy_read"
 required-features = ["heavy"]
+
+[[test]]
+name = "heavy_levels"
+required-features = ["heavy"]
