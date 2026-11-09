@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/openexr-core", "crates/openexr-deflate", "crates/openexr-openjph", "crates/openexr-testkit", "crates/openexr-zstd", "xtask"]
+members = ["crates/openexr", "crates/openexr-core", "crates/openexr-deflate", "crates/openexr-openjph", "crates/openexr-testkit", "crates/openexr-zstd", "xtask"]
 
 [workspace.package]
 # Our own semver, with the matched OpenEXR release as build metadata (PLAN.md §2).

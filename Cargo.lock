@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "openexr-rs"
+version = "0.0.0+openexr.3.5.3"
+dependencies = [
+ "openexr-rs-core",
+]
+
+[[package]]
 name = "openexr-rs-core"
 version = "0.0.0+openexr.3.5.3"
 dependencies = [

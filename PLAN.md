@@ -643,11 +643,12 @@ newtype comes later if wanted, without a dependency.
   the wheel's. Partial reads (line ranges, tiles, levels), other output types and sampled
   channels compare with the matching parts of the wheel's arrays.
 - **Writing:** the wheel's pixels and headers written through the API give the wheel's files.
-- **Headers:** a new oracle script (its own commit, before the chunk that uses it) dumps the
-  wheel's view of every header as JSON; the API's `Header` must agree on every attribute's
-  value, in the binding's view of it. The types the binding folds (float and double, a bytes
-  attribute's hint) are checked against Core itself: `core_harness info --verbose` prints each
-  attribute's name and type.
+- **Headers:** `oracle/dump_headers.py` dumps the wheel's view of every header (one line per
+  attribute, tab-separated); the API's `Header` must agree on every attribute's value, in the
+  binding's view of it (`crates/openexr/tests/heavy_headers.rs`). The types the binding folds
+  (float and double; a channel's pixel type, which only the binding's pixel reads carry) are
+  checked against Core itself, whose names and types `openexr-core`'s heavy_harness checks
+  against `core_harness info --verbose`.
 - **Threaded reads and writes** give the single-threaded bytes and pixels (both from the wheel).
 - **The API's own checks** (a stride that overruns its slice, a slice smaller than its window,
   an unknown channel, the wrong part type): unit tests, and refusals before Core is called.
@@ -657,7 +658,7 @@ newtype comes later if wanted, without a dependency.
 
 | Phase | Scope | Exit |
 |---|---|---|
-| **M4.0 Crate and headers** (~1 pw) | The crate, `Error`, `Header` and `Attribute`, `MultiPartInputFile` opening | Every header of the decode set as the wheel's |
+| **M4.0 Crate and headers** (~1 pw) | The crate, `Error`, `Header` and `Attribute`, `MultiPartInputFile` opening | Every header of the decode set as the wheel's. **Done 2026-11-09:** 1585 files, 20264 attributes; 11 refused by both, none by the wheel alone |
 | **M4.1 Reading** (~2 pw) | `FrameBuffer`, `Slice`, scanline and tiled reads, levels, conversion, sampling, fill; `Image::read` | The decode set's pixels as the wheel's, whole and partial |
 | **M4.2 Deep reading** (~1 pw) | `DeepFrameBuffer`, sample counts then samples | The deep files as the wheel's |
 | **M4.3 Writing** (~2.5 pw) | `OutputFile`, `MultiPartOutputFile`, `OutputPart`, flat and deep, every compression and level; `Image::write` | The wheel's files, byte for byte |

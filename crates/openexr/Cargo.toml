@@ -1,0 +1,29 @@
+[package]
+name = "openexr-rs"
+description = "Read and write OpenEXR files safely, over an exact Rust port of OpenEXRCore 3.5.3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[lib]
+name = "openexr"
+
+[dependencies]
+openexr-core = { workspace = true }
+
+[features]
+# The heavy test tier (PLAN.md §8): tests/heavy_*.rs, run by `cargo xtask gate --full`.
+heavy = []
+
+[lints]
+workspace = true
+
+[[test]]
+name = "heavy_headers"
+required-features = ["heavy"]
