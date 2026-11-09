@@ -278,7 +278,7 @@ with a pattern (`buffer_pool::reused`), and `gate --full` passes on Windows and 
 | LJ2K | 1.00 | 0.91 |
 | ZSTD | 0.64 | 1.03 |
 
-## The safe API's speed (2026-11-09, Windows)
+## The safe API's speed (2026-11-09, Windows; remeasured after the thread pools)
 
 `scripts/bench_api.py 5`: the files of `scripts/bench.py` (Blobbies, scanlines; Ocean, tiles;
 singlepart.0001, 20 channels; each rewritten by Core into all 14 compressions), each read whole
@@ -295,29 +295,33 @@ One thread on the left, 32 on the right:
 
 | Compression | Read C++ | Read API | Write C++ | Write API | Read C++ | Read API | Write C++ | Write API |
 |---|---|---|---|---|---|---|---|---|
-| NONE | 58.9 | 7.3 | 54.8 | 24.5 | 136.6 | 9.3 | 32.8 | 31.7 |
-| RLE | 111.8 | 40.2 | 122.3 | 81.0 | 25.8 | 11.9 | 33.4 | 51.7 |
-| ZIPS | 50.0 | 41.5 | 257.8 | 203.0 | 25.6 | 12.5 | 53.0 | 57.4 |
-| ZIP | 39.6 | 36.0 | 198.8 | 207.5 | 11.4 | 15.0 | 26.8 | 56.5 |
-| PIZ | 89.6 | 97.2 | 282.2 | 266.7 | 16.6 | 25.0 | 42.6 | 76.5 |
-| PXR24 | 44.3 | 43.2 | 205.2 | 195.4 | 11.8 | 21.9 | 26.0 | 58.5 |
-| B44 | 30.0 | 25.4 | 102.8 | 89.3 | 13.7 | 14.5 | 24.0 | 45.8 |
-| B44A | 24.3 | 21.1 | 95.9 | 82.7 | 13.3 | 14.2 | 22.3 | 43.8 |
-| DWAA | 70.2 | 60.8 | 703.6 | 711.7 | 15.3 | 29.6 | 130.9 | 158.1 |
-| DWAB | 70.3 | 62.7 | 460.0 | 464.2 | 22.9 | 25.8 | 181.2 | 199.0 |
-| HTJ2K256 | 76.3 | 103.4 | 164.8 | 169.6 | 37.1 | 59.0 | 55.9 | 98.3 |
-| HTJ2K32 | 77.0 | 141.3 | 208.1 | 245.9 | 41.1 | 265.0 | 40.8 | 487.4 |
-| LJ2K | 84.0 | 121.1 | 172.3 | 188.1 | 39.2 | 72.5 | 57.7 | 129.1 |
-| ZSTD | 68.6 | 43.2 | 246.4 | 204.2 | 24.9 | 14.0 | 30.4 | 61.2 |
+| NONE | 59.4 | 8.9 | 52.4 | 25.2 | 152.9 | 9.2 | 28.9 | 30.5 |
+| RLE | 117.2 | 40.8 | 118.4 | 74.0 | 26.4 | 11.2 | 32.8 | 48.9 |
+| ZIPS | 48.8 | 42.9 | 231.9 | 202.2 | 27.5 | 11.6 | 50.0 | 47.6 |
+| ZIP | 40.2 | 37.5 | 203.7 | 208.2 | 11.4 | 16.7 | 28.9 | 49.3 |
+| PIZ | 95.8 | 96.5 | 279.4 | 273.6 | 15.8 | 26.7 | 40.6 | 73.6 |
+| PXR24 | 44.6 | 44.4 | 181.1 | 196.9 | 11.4 | 23.8 | 25.2 | 48.9 |
+| B44 | 29.0 | 27.2 | 95.8 | 91.3 | 13.2 | 15.0 | 23.5 | 42.7 |
+| B44A | 25.6 | 23.3 | 100.5 | 83.8 | 12.3 | 15.0 | 21.7 | 42.1 |
+| DWAA | 74.2 | 63.4 | 707.2 | 722.4 | 16.0 | 26.4 | 129.9 | 143.6 |
+| DWAB | 70.9 | 64.7 | 451.4 | 470.7 | 22.6 | 26.3 | 180.9 | 185.9 |
+| HTJ2K256 | 82.9 | 83.6 | 176.6 | 150.2 | 37.4 | 33.4 | 60.9 | 62.7 |
+| HTJ2K32 | 75.7 | 91.0 | 205.7 | 162.9 | 42.3 | 33.1 | 40.5 | 53.2 |
+| LJ2K | 83.9 | 96.3 | 169.4 | 164.8 | 42.0 | 37.1 | 61.5 | 66.1 |
+| ZSTD | 67.7 | 44.5 | 246.7 | 205.2 | 25.1 | 11.6 | 26.6 | 51.5 |
 
-- **One thread:** the API reads as fast as the C++ library or faster, but for the HTJ2K
-  family (HTJ2K256 1.36, HTJ2K32 1.83, LJ2K 1.44 times the C++ library's time; Core's port
-  decodes them as fast as Core itself, `scripts/bench.py`), and writes as fast or faster, but
-  for HTJ2K32 (1.18), LJ2K (1.09) and ZIP (1.04). Its write costs 5 to 15% more than the Core
-  port's bare encode of the same chunks (the copies into its chunk staging and packing).
-- **32 threads:** reads decode their chunks in parallel straight into the caller's buffers and
-  writes compress theirs in parallel; both scale, but less than the C++ library's (its
-  writes overlap staging, compression and the writes themselves; the API stages and writes on
-  the calling thread). HTJ2K32 slows down past 2 to 4 threads: OpenJPH's per-chunk
-  allocations contend for the allocator (docs/deferred.md).
+- **One thread:** the API reads as fast as the C++ library or faster, but for HTJ2K32 (1.20
+  times the C++ library's time) and LJ2K (1.15), and writes as fast or faster, but for DWAA,
+  DWAB, PXR24 and ZIP (1.02 to 1.09). OpenJPH's line, codeblock and coded-byte buffers come
+  from a pool each thread keeps (`crates/openexr-openjph/src/mem.rs`), as upstream carves them
+  from allocators it keeps from one codestream to the next; that took HTJ2K32's read from 1.83
+  times the C++ library's time to 1.20, and its write from 1.18 to 0.79.
+- **32 threads:** reads decode their chunks in parallel straight into the caller's buffers, and
+  writes compress theirs in parallel. A `Threads::Count(n)` pool is the process's, kept from
+  file to file as the C++ library keeps its global pool (it was the file's own, its threads
+  and their buffers started anew for each file, which made HTJ2K32 slower on 32 threads than on
+  4: 265 ms to read, now 33). Reads are faster than the C++ library's for NONE, RLE, ZIPS,
+  ZSTD and the HTJ2K family, slower for the rest (up to 2.1 times its time, PXR24); writes
+  scale less (the C++ library overlaps staging, compression and writing;
+  the API stages and writes on the calling thread: `docs/deferred.md`).
 

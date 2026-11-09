@@ -17,7 +17,8 @@ pub enum Threads {
     /// The current `rayon` pool: the global one, or the application's own when called from
     /// inside its `install`.
     Auto,
-    /// A pool of this many threads of the file's own (0 and 1 are one: the calling thread).
+    /// A pool of this many threads, the process's: started by the first file that asks for that
+    /// many and kept for the next (0 and 1 are one: the calling thread).
     Count(usize),
 }
 
@@ -51,16 +52,7 @@ impl Pool {
             #[cfg(feature = "rayon")]
             Threads::Auto => Ok(Pool::Current),
             #[cfg(feature = "rayon")]
-            Threads::Count(n) => rayon::ThreadPoolBuilder::new()
-                .num_threads(n)
-                .build()
-                .map(|p| Pool::Own(std::sync::Arc::new(p)))
-                .map_err(|e| {
-                    crate::error::Error::new(
-                        crate::error::ErrorCode::OutOfMemory,
-                        format!("Unable to start {n} threads: {e}"),
-                    )
-                }),
+            Threads::Count(n) => shared(n).map(Pool::Own),
             #[cfg(not(feature = "rayon"))]
             _ => Ok(Pool::Serial),
         }
@@ -95,6 +87,35 @@ impl Pool {
             Pool::Own(p) => p.install(|| runs(items, p.current_num_threads(), &run_all)),
         }
     }
+}
+
+/// The process's pool of `n` threads, started on first use and kept, as the C++ library keeps
+/// its global `IlmThread` pool: files opened one after another run on the same threads, whose
+/// codec buffers (kept per thread) then serve them all.
+#[cfg(feature = "rayon")]
+fn shared(n: usize) -> Result<std::sync::Arc<rayon::ThreadPool>> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static POOLS: OnceLock<Mutex<HashMap<usize, Arc<rayon::ThreadPool>>>> = OnceLock::new();
+    let mut pools = POOLS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(p) = pools.get(&n) {
+        return Ok(p.clone());
+    }
+    let p = rayon::ThreadPoolBuilder::new()
+        .num_threads(n)
+        .build()
+        .map(Arc::new)
+        .map_err(|e| {
+            crate::error::Error::new(
+                crate::error::ErrorCode::OutOfMemory,
+                format!("Unable to start {n} threads: {e}"),
+            )
+        })?;
+    pools.insert(n, p.clone());
+    Ok(p)
 }
 
 /// `items` cut into about four runs for each of `threads` threads, each run done by `run`

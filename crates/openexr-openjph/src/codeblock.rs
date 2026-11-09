@@ -30,7 +30,7 @@ pub(crate) struct CodedCbHeader {
     pub(crate) num_passes: u32,
     pub(crate) kmax: u32,
     pub(crate) missing_msbs: u32,
-    pub(crate) next_coded: Option<Vec<u8>>,
+    pub(crate) next_coded: Option<crate::mem::Pooled<u8>>,
 }
 
 /// Port of `codeblock` (external/OpenJPH/src/core/codestream/ojph_codeblock.h:58-110
@@ -38,8 +38,8 @@ pub(crate) struct CodedCbHeader {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Codeblock {
     precision: u32,
-    buf32: Vec<u32>,
-    buf64: Vec<u64>,
+    buf32: crate::mem::Pooled<u32>,
+    buf64: crate::mem::Pooled<u64>,
     nominal_size: Size,
     cb_size: Size,
     stride: u32,
@@ -81,9 +81,9 @@ impl Codeblock {
         let buf_size = stride * nominal.h;
         let spare = (buf_size + stride) as usize;
         let (precision, buf32, buf64) = if precision <= 32 {
-            (BUF32, vec![0u32; spare], Vec::new())
+            (BUF32, crate::mem::Pooled::zeroed(spare), Default::default())
         } else {
-            (BUF64, Vec::new(), vec![0u64; spare])
+            (BUF64, Default::default(), crate::mem::Pooled::zeroed(spare))
         };
         Codeblock {
             precision,
@@ -216,7 +216,7 @@ impl Codeblock {
         height: u32,
         stride: u32,
         lengths: &mut [u32; 2],
-        coded: &mut Option<Vec<u8>>,
+        coded: &mut Option<crate::mem::Pooled<u8>>,
     ) -> OjphResult<()> {
         #[cfg(target_arch = "x86_64")]
         if crate::arch::get_cpu_ext_level() >= crate::arch::x86_level::AVX512

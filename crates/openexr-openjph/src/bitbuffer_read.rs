@@ -111,10 +111,10 @@ impl BitReadBuf {
         &mut self,
         file: &mut dyn Infile,
         num_bytes: u32,
-        cur_coded_list: &mut Option<Vec<u8>>,
+        cur_coded_list: &mut Option<crate::mem::Pooled<u8>>,
     ) -> bool {
         let n = num_bytes as usize;
-        let mut buf = vec![0u8; n + PREFIX_BUF_SIZE + SUFFIX_BUF_SIZE];
+        let mut buf = crate::mem::Pooled::zeroed(n + PREFIX_BUF_SIZE + SUFFIX_BUF_SIZE);
         let bytes = num_bytes.min(self.bytes_left) as usize;
         let bytes_read = file.read(&mut buf[PREFIX_BUF_SIZE..PREFIX_BUF_SIZE + bytes]) as u32;
         // the bytes past bytes_read are zero already

@@ -390,7 +390,7 @@ fn terminate_mel_vlc(mel: &mut Mel, vlc: &mut Vlc) -> OjphResult<()> {
 /// Port of `ms_struct` (external/OpenJPH/src/core/coding/ojph_block_encoder_avx2.cpp:513-522
 /// @ OpenJPH 0.32.0).
 struct Ms {
-    buf: Vec<u8>,
+    buf: crate::mem::Pooled<u8>,
     pos: u32,
     used_bits: i32,
     tmp: u64,
@@ -402,7 +402,7 @@ impl Ms {
     /// @ OpenJPH 0.32.0).
     fn new() -> Self {
         Ms {
-            buf: vec![0; MS_SIZE],
+            buf: crate::mem::Pooled::zeroed(MS_SIZE),
             pos: 0,
             used_bits: 0,
             tmp: 0,
@@ -1212,7 +1212,7 @@ unsafe fn ojph_encode_codeblock_avx2(
     height: u32,
     stride: u32,
     lengths: &mut [u32; 2],
-    coded: &mut Option<Vec<u8>>,
+    coded: &mut Option<crate::mem::Pooled<u8>>,
 ) -> OjphResult<()> {
     let width = (width_in + 15) & !15;
     let ignore = width - width_in;
@@ -1282,7 +1282,7 @@ unsafe fn ojph_encode_codeblock_avx2(
     let (mp, vp, sp) = (mel.pos as usize, vlc.pos as usize, ms.pos as usize);
     lengths[0] = (mp + vp + sp) as u32;
     let n = lengths[0] as usize;
-    let mut out = vec![0u8; PREFIX_BUF_SIZE + n + SUFFIX_BUF_SIZE];
+    let mut out = crate::mem::Pooled::zeroed(PREFIX_BUF_SIZE + n + SUFFIX_BUF_SIZE);
     let c = &mut out[PREFIX_BUF_SIZE..PREFIX_BUF_SIZE + n];
     c[..sp].copy_from_slice(&ms.buf[..sp]);
     c[sp..sp + mp].copy_from_slice(&mel.buf[..mp]);
@@ -1308,7 +1308,7 @@ pub(crate) fn encode_codeblock_avx2(
     height: u32,
     stride: u32,
     lengths: &mut [u32; 2],
-    coded: &mut Option<Vec<u8>>,
+    coded: &mut Option<crate::mem::Pooled<u8>>,
 ) -> Option<OjphResult<()>> {
     if !std::arch::is_x86_feature_detected!("avx2") {
         return None;

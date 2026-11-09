@@ -9,7 +9,124 @@
 //! zeroed one where upstream's memory is uninitialized (every sample is written before it is
 //! read).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
+
 use crate::arch::{BYTE_ALIGNMENT, calc_aligned_size};
+
+/// The bytes of buffers a thread keeps for reuse, at most.
+const POOL_BYTES: usize = 256 << 20;
+
+/// A thread's buffers of one element type, by capacity (a power of two), kept for reuse: upstream carves a
+/// codestream's buffers out of allocators it keeps from one codestream to the next
+/// (`mem_fixed_allocator`, `mem_elastic_allocator`); here each buffer, given back when it is
+/// dropped, serves the next chunk the thread decodes or encodes, instead of the allocator
+/// being asked again for each line of each chunk (which threads decoding at once contend for).
+#[derive(Default)]
+pub(crate) struct Pool<T> {
+    free: HashMap<usize, Vec<Vec<T>>>,
+    bytes: usize,
+}
+
+/// An element type a [`Pooled`] buffer holds, with its thread's pool.
+pub(crate) trait Poolable: Copy + Default + 'static {
+    fn with_pool<R>(f: impl FnOnce(&mut Pool<Self>) -> R) -> Option<R>;
+}
+
+macro_rules! poolable {
+    ($t:ty, $pool:ident) => {
+        thread_local! {
+            static $pool: RefCell<Pool<$t>> = RefCell::new(Pool { free: HashMap::new(), bytes: 0 });
+        }
+        impl Poolable for $t {
+            fn with_pool<R>(f: impl FnOnce(&mut Pool<Self>) -> R) -> Option<R> {
+                $pool
+                    .try_with(|p| p.try_borrow_mut().ok().map(|mut p| f(&mut p)))
+                    .ok()
+                    .flatten()
+            }
+        }
+    };
+}
+
+poolable!(i32, POOL_I32);
+poolable!(i64, POOL_I64);
+poolable!(u8, POOL_U8);
+poolable!(f32, POOL_F32);
+poolable!(u32, POOL_U32);
+poolable!(u64, POOL_U64);
+
+/// A buffer of `T`s taken zeroed from the thread's [`Pool`] and given back to it when dropped.
+#[derive(Default)]
+pub(crate) struct Pooled<T: Poolable>(Vec<T>);
+
+impl<T: Poolable> Pooled<T> {
+    /// `n` zeros: a buffer of that size class the thread kept, cleared, or a new one.
+    pub(crate) fn zeroed(n: usize) -> Self {
+        if n == 0 {
+            return Pooled(Vec::new());
+        }
+        let class = n.next_power_of_two();
+        let kept = T::with_pool(|p| {
+            let v = p.free.get_mut(&class).and_then(Vec::pop);
+            if v.is_some() {
+                p.bytes -= class * size_of::<T>();
+            }
+            v
+        })
+        .flatten();
+        let mut v = kept.unwrap_or_else(|| Vec::with_capacity(class));
+        v.clear();
+        v.resize(n, T::default());
+        Pooled(v)
+    }
+}
+
+impl<T: Poolable> Drop for Pooled<T> {
+    fn drop(&mut self) {
+        let v = std::mem::take(&mut self.0);
+        let class = v.capacity();
+        // only buffers this pool made (a power of two of capacity) go back
+        if class == 0 || !class.is_power_of_two() {
+            return;
+        }
+        let bytes = class * size_of::<T>();
+        T::with_pool(move |p| {
+            if p.bytes + bytes <= POOL_BYTES {
+                p.bytes += bytes;
+                p.free.entry(class).or_default().push(v);
+            }
+        });
+    }
+}
+
+impl<T: Poolable> Clone for Pooled<T> {
+    fn clone(&self) -> Self {
+        let mut c = Pooled::zeroed(self.0.len());
+        c.0.copy_from_slice(&self.0);
+        c
+    }
+}
+
+impl<T: Poolable> Deref for Pooled<T> {
+    type Target = Vec<T>;
+    fn deref(&self) -> &Vec<T> {
+        &self.0
+    }
+}
+
+impl<T: Poolable> DerefMut for Pooled<T> {
+    fn deref_mut(&mut self) -> &mut Vec<T> {
+        &mut self.0
+    }
+}
+
+impl<T: Poolable + std::fmt::Debug> std::fmt::Debug for Pooled<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// `line_buf`'s flags (external/OpenJPH/src/core/openjph/ojph_mem.h:163-171 @ OpenJPH 0.32.0).
 pub(crate) const LFT_UNDEFINED: u32 = 0x00;
@@ -23,9 +140,9 @@ pub(crate) const LFT_SIZE_MASK: u32 = 0x0F;
 pub(crate) enum LineData {
     #[default]
     None,
-    I32(Vec<i32>),
-    I64(Vec<i64>),
-    F32(Vec<f32>),
+    I32(Pooled<i32>),
+    I64(Pooled<i64>),
+    F32(Pooled<f32>),
 }
 
 /// Port of `line_buf` (external/OpenJPH/src/core/openjph/ojph_mem.h:160-190 @ OpenJPH 0.32.0):
@@ -54,7 +171,7 @@ impl LineBuf {
             size: num_ele,
             pre_size,
             flags: LFT_32BIT | LFT_INTEGER,
-            data: LineData::I32(vec![0; pre_size as usize + reserved(num_ele, 4)]),
+            data: LineData::I32(Pooled::zeroed(pre_size as usize + reserved(num_ele, 4))),
         }
     }
 
@@ -64,7 +181,7 @@ impl LineBuf {
             size: num_ele,
             pre_size,
             flags: LFT_64BIT | LFT_INTEGER,
-            data: LineData::I64(vec![0; pre_size as usize + reserved(num_ele, 8)]),
+            data: LineData::I64(Pooled::zeroed(pre_size as usize + reserved(num_ele, 8))),
         }
     }
 
@@ -74,7 +191,7 @@ impl LineBuf {
             size: num_ele,
             pre_size,
             flags: LFT_32BIT,
-            data: LineData::F32(vec![0.0; pre_size as usize + reserved(num_ele, 4)]),
+            data: LineData::F32(Pooled::zeroed(pre_size as usize + reserved(num_ele, 4))),
         }
     }
 

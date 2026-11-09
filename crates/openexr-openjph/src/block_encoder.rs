@@ -334,7 +334,7 @@ fn terminate_mel_vlc(mel: &mut Mel, vlc: &mut Vlc) -> OjphResult<()> {
 /// Port of `ms_struct` (external/OpenJPH/src/core/coding/ojph_block_encoder.cpp:446-455
 /// @ OpenJPH 0.32.0), with `ms_init` (lines 458-467).
 struct Ms {
-    buf: Vec<u8>,
+    buf: crate::mem::Pooled<u8>,
     pos: u32,
     max_bits: i32,
     used_bits: i32,
@@ -344,7 +344,7 @@ struct Ms {
 impl Ms {
     fn new(size: usize) -> Self {
         Ms {
-            buf: vec![0; size],
+            buf: crate::mem::Pooled::zeroed(size),
             pos: 0,
             max_bits: 8,
             used_bits: 0,
@@ -411,11 +411,11 @@ impl Ms {
 /// The coded bytes of a codeblock, as `coded_lists` holds them: `PREFIX_BUF_SIZE` bytes, the
 /// MagSgn, MEL and VLC segments with the interface locator word, then `SUFFIX_BUF_SIZE` bytes
 /// (the layout the decoder's buffers have, so either side reads `PREFIX_BUF_SIZE` on).
-fn assemble(mel: &Mel, vlc: &Vlc, ms: &Ms, lengths: &mut [u32; 2]) -> Vec<u8> {
+fn assemble(mel: &Mel, vlc: &Vlc, ms: &Ms, lengths: &mut [u32; 2]) -> crate::mem::Pooled<u8> {
     let (mp, vp, sp) = (mel.pos as usize, vlc.pos as usize, ms.pos as usize);
     lengths[0] = (mp + vp + sp) as u32;
     let n = lengths[0] as usize;
-    let mut out = vec![0u8; PREFIX_BUF_SIZE + n + SUFFIX_BUF_SIZE];
+    let mut out = crate::mem::Pooled::zeroed(PREFIX_BUF_SIZE + n + SUFFIX_BUF_SIZE);
     let c = &mut out[PREFIX_BUF_SIZE..PREFIX_BUF_SIZE + n];
     c[..sp].copy_from_slice(&ms.buf[..sp]);
     c[sp..sp + mp].copy_from_slice(&mel.buf[..mp]);
@@ -462,7 +462,7 @@ macro_rules! encode_codeblock {
             height: u32,
             stride: u32,
             lengths: &mut [u32; 2],
-            coded: &mut Option<Vec<u8>>,
+            coded: &mut Option<crate::mem::Pooled<u8>>,
         ) -> OjphResult<()> {
             quad_sample!($t, $bits, $clz);
             debug_assert!(num_passes == 1);
