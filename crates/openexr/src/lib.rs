@@ -30,6 +30,7 @@ pub mod half;
 mod header;
 mod image;
 mod input;
+mod output;
 mod read;
 
 pub use attribute::{
@@ -39,8 +40,9 @@ pub use attribute::{
 };
 pub use deep::{DeepFrameBuffer, DeepSlice};
 pub use error::{Error, ErrorCode, Result};
-pub use frame_buffer::{FrameBuffer, Sample, Slice};
+pub use frame_buffer::{FrameBuffer, Sample, SampleData, Slice};
 pub use header::Header;
 pub use image::{Image, ImageChannel, ImagePart, Pixels};
 pub use input::{InputFile, MultiPartInputFile, ReadOptions};
+pub use output::{MultiPartOutputFile, OutputFile, OutputPart, WriteOptions};
 pub use read::InputPart;

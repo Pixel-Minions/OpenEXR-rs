@@ -40,3 +40,7 @@ required-features = ["heavy"]
 [[test]]
 name = "heavy_deep"
 required-features = ["heavy"]
+
+[[test]]
+name = "heavy_write"
+required-features = ["heavy"]

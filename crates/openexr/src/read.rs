@@ -310,7 +310,7 @@ impl<'f> InputPart<'f> {
             let (a, b) = (y1.max(tile.min.y), y2.min(tile.max.y));
             for ((_, s), buf) in cached.iter().zip(&bufs) {
                 let size = s.sample_size();
-                let out = &mut fb.buffers_mut()[s.buffer];
+                let out = fb.buffer_mut(s.buffer)?;
                 for y in a..=b {
                     let row = (y - tile.min.y) as usize * w * size;
                     for x in dw.min.x..=dw.max.x {
@@ -386,6 +386,9 @@ impl<'f> InputPart<'f> {
                 }
                 Some(_) => {}
             }
+            if !fb.writable(s.buffer) {
+                return Err(crate::frame_buffer::read_only(s.buffer));
+            }
             check_slice(fb, name, s, x1, x2, y1, y2)?;
         }
         Ok(fills)
@@ -445,7 +448,7 @@ impl<'f> InputPart<'f> {
         if first {
             ctx.decoding_choose_default_routines(p, d).map_err(core)?;
         }
-        ctx.decoding_run(p, d, fb.buffers_mut()).map_err(core)?;
+        ctx.decoding_run(p, d, &mut fb.outputs()?).map_err(core)?;
         let rows = (at.1, at.1 + cinfo.height - skip - ignore - 1);
         let cols = (at.0, at.0 + cinfo.width - 1);
         for name in fills {
@@ -476,7 +479,7 @@ fn stride(v: i64) -> Result<i32> {
 /// Checks that slice `s`'s samples of columns `x1..=x2` and lines `y1..=y2` lie in its
 /// buffer: the offsets are linear in the sample's column and row, so their extremes are at
 /// the corners.
-fn check_slice(
+pub(crate) fn check_slice(
     fb: &FrameBuffer<'_>,
     name: &[u8],
     s: &Slice,
@@ -531,7 +534,10 @@ fn fill(fb: &mut FrameBuffer<'_>, s: &Slice, cols: (i32, i32), rows: (i32, i32))
             4
         }
     };
-    let buf = &mut fb.buffers_mut()[s.buffer];
+    // checked writable by check_frame_buffer
+    let Ok(buf) = fb.buffer_mut(s.buffer) else {
+        return;
+    };
     for y in rows.0..=rows.1 {
         if y % s.y_sampling != 0 {
             continue;

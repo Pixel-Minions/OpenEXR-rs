@@ -480,6 +480,24 @@ impl Context {
         )
         .map(|(id, _)| id)
     }
+
+    /// The value of attribute `id` of part `part_index`, to set: what the `exr_attribute_t**`
+    /// `exr_attr_declare` and `exr_attr_declare_by_type` hand back lets a C caller write
+    /// (src/lib/OpenEXRCore/openexr_part.h, `exr_attr_declare` @ v3.5.3), for a value no
+    /// `exr_attr_set_*` function takes (`deepImageState`).
+    pub fn declared_value_mut(
+        &mut self,
+        part_index: i32,
+        id: AttrId,
+    ) -> Result<&mut AttrValue, Error> {
+        self.part_ref(part_index)?;
+        self.require_write()?;
+        self.parts[part_index as usize]
+            .attributes
+            .get_mut(id)
+            .map(|a| a.value_mut())
+            .ok_or_else(|| Error::bare(ErrorCode::NoAttrByName))
+    }
 }
 
 /// The enum setters' range check, `value >= LAST_TYPE`. Upstream compares in the enum's

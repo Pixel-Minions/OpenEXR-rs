@@ -200,6 +200,19 @@ pub struct Channel {
 }
 
 impl Channel {
+    /// Channel `name` of `pixel_type`, not sampled, not perceptually linear (the C++
+    /// library's `Channel (type)` defaults).
+    pub fn new(name: impl AsRef<[u8]>, pixel_type: PixelType) -> Channel {
+        Channel {
+            name: name.as_ref().to_vec(),
+            pixel_type,
+            p_linear: 0,
+            reserved: [0; 3],
+            x_sampling: 1,
+            y_sampling: 1,
+        }
+    }
+
     /// The name, if it is UTF-8.
     pub fn name_str(&self) -> Option<&str> {
         std::str::from_utf8(&self.name).ok()

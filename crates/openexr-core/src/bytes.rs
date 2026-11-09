@@ -23,6 +23,18 @@ pub struct AttrBytes {
 }
 
 impl AttrBytes {
+    /// The value a caller fills in to pass to `exr_attr_set_bytes`: `hint_length` and
+    /// `type_hint` from `type_hint`, `size` and `data` from `data` (Rust has no struct
+    /// literal of the private fields, so this stands in for C's).
+    pub fn borrowed(type_hint: &[u8], data: &[u8]) -> AttrBytes {
+        AttrBytes {
+            size: data.len(),
+            data: Some(data.to_vec()),
+            hint_length: type_hint.len() as u32,
+            type_hint: Some(type_hint.to_vec()),
+        }
+    }
+
     /// The `size` field.
     pub fn size(&self) -> usize {
         self.size

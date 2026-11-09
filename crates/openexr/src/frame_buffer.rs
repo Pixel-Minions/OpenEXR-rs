@@ -42,6 +42,101 @@ impl Sample for u32 {
     const PIXEL_TYPE: PixelType = PixelType::Uint;
 }
 
+/// A caller's buffer of samples of type `T`: writable (to read into, or to write from) or
+/// read-only (to write from).
+#[derive(Debug)]
+pub enum SampleData<'a, T> {
+    Mut(&'a mut [T]),
+    Ref(&'a [T]),
+}
+
+impl<'a, T> From<&'a mut [T]> for SampleData<'a, T> {
+    fn from(d: &'a mut [T]) -> Self {
+        SampleData::Mut(d)
+    }
+}
+
+impl<'a, T> From<&'a [T]> for SampleData<'a, T> {
+    fn from(d: &'a [T]) -> Self {
+        SampleData::Ref(d)
+    }
+}
+
+impl<'a, T> From<&'a mut Vec<T>> for SampleData<'a, T> {
+    fn from(d: &'a mut Vec<T>) -> Self {
+        SampleData::Mut(d)
+    }
+}
+
+impl<'a, T> From<&'a Vec<T>> for SampleData<'a, T> {
+    fn from(d: &'a Vec<T>) -> Self {
+        SampleData::Ref(d)
+    }
+}
+
+impl<'a, T, const N: usize> From<&'a mut [T; N]> for SampleData<'a, T> {
+    fn from(d: &'a mut [T; N]) -> Self {
+        SampleData::Mut(d)
+    }
+}
+
+impl<'a, T, const N: usize> From<&'a [T; N]> for SampleData<'a, T> {
+    fn from(d: &'a [T; N]) -> Self {
+        SampleData::Ref(d)
+    }
+}
+
+impl<'a, T: bytemuck::Pod> SampleData<'a, T> {
+    fn len(&self) -> usize {
+        match self {
+            SampleData::Mut(d) => d.len(),
+            SampleData::Ref(d) => d.len(),
+        }
+    }
+
+    pub(crate) fn into_bytes(self) -> Buffer<'a> {
+        match self {
+            SampleData::Mut(d) => Buffer::Mut(bytemuck::cast_slice_mut(d)),
+            SampleData::Ref(d) => Buffer::Ref(bytemuck::cast_slice(d)),
+        }
+    }
+}
+
+/// A buffer as bytes.
+#[derive(Debug)]
+pub(crate) enum Buffer<'a> {
+    Mut(&'a mut [u8]),
+    Ref(&'a [u8]),
+}
+
+impl Buffer<'_> {
+    pub(crate) fn len(&self) -> usize {
+        self.bytes().len()
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        match self {
+            Buffer::Mut(d) => d,
+            Buffer::Ref(d) => d,
+        }
+    }
+
+    pub(crate) fn bytes_mut(&mut self) -> Option<&mut [u8]> {
+        match self {
+            Buffer::Mut(d) => Some(d),
+            Buffer::Ref(_) => None,
+        }
+    }
+}
+
+/// A read into a read-only buffer.
+pub(crate) fn read_only(buffer: usize) -> Error {
+    Error::new(
+        ErrorCode::InvalidArgument,
+        format!("Buffer {buffer} is read-only: a read needs writable buffers"),
+    )
+}
+
 /// Where a channel's pixels go: a buffer of the [`FrameBuffer`], the pixel type to store,
 /// the strides and the sampling.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -131,7 +226,7 @@ pub(crate) fn first_multiple(lo: i32, s: i32) -> i64 {
 /// The caller's buffers and, by channel name, the slices into them.
 #[derive(Debug, Default)]
 pub struct FrameBuffer<'a> {
-    buffers: Vec<&'a mut [u8]>,
+    buffers: Vec<Buffer<'a>>,
     slices: BTreeMap<Vec<u8>, Slice>,
 }
 
@@ -141,14 +236,16 @@ impl<'a> FrameBuffer<'a> {
         FrameBuffer::default()
     }
 
-    /// Adds a buffer of samples; returns its number, for [`Slice::buffer`].
-    pub fn add_buffer<T: Sample>(&mut self, data: &'a mut [T]) -> usize {
-        self.add_bytes(bytemuck::cast_slice_mut(data))
+    /// Adds a buffer of samples (`&mut` to read into, `&` or `&mut` to write from); returns
+    /// its number, for [`Slice::buffer`].
+    pub fn add_buffer<T: Sample>(&mut self, data: impl Into<SampleData<'a, T>>) -> usize {
+        self.buffers.push(data.into().into_bytes());
+        self.buffers.len() - 1
     }
 
     /// Adds a buffer of bytes; returns its number, for [`Slice::buffer`].
-    pub fn add_bytes(&mut self, data: &'a mut [u8]) -> usize {
-        self.buffers.push(data);
+    pub fn add_bytes(&mut self, data: impl Into<SampleData<'a, u8>>) -> usize {
+        self.buffers.push(data.into().into_bytes());
         self.buffers.len() - 1
     }
 
@@ -186,7 +283,7 @@ impl<'a> FrameBuffer<'a> {
     pub fn insert_plane<T: Sample>(
         &mut self,
         name: impl AsRef<[u8]>,
-        data: &'a mut [T],
+        data: impl Into<SampleData<'a, T>>,
         window: Box2i,
     ) -> Result<&mut Slice> {
         self.insert_sampled_plane(name, data, window, 1, 1)
@@ -198,7 +295,7 @@ impl<'a> FrameBuffer<'a> {
     pub fn insert_sampled_plane<T: Sample>(
         &mut self,
         name: impl AsRef<[u8]>,
-        data: &'a mut [T],
+        data: impl Into<SampleData<'a, T>>,
         window: Box2i,
         x_sampling: i32,
         y_sampling: i32,
@@ -209,6 +306,7 @@ impl<'a> FrameBuffer<'a> {
                 "Slice sampling factors must be at least 1",
             ));
         }
+        let data = data.into();
         let w = sample_count(window.min.x, window.max.x, x_sampling);
         let h = sample_count(window.min.y, window.max.y, y_sampling);
         check_len(data.len(), w * h)?;
@@ -226,9 +324,10 @@ impl<'a> FrameBuffer<'a> {
     pub fn insert_interleaved<T: Sample, N: AsRef<[u8]>>(
         &mut self,
         names: &[N],
-        data: &'a mut [T],
+        data: impl Into<SampleData<'a, T>>,
         window: Box2i,
     ) -> Result<()> {
+        let data = data.into();
         let w = sample_count(window.min.x, window.max.x, 1);
         let h = sample_count(window.min.y, window.max.y, 1);
         check_len(data.len(), w * h * names.len())?;
@@ -268,8 +367,30 @@ impl<'a> FrameBuffer<'a> {
         self.buffers[buffer].len()
     }
 
-    pub(crate) fn buffers_mut(&mut self) -> &mut [&'a mut [u8]] {
-        &mut self.buffers
+    /// Whether buffer `buffer` can be read into.
+    pub(crate) fn writable(&self, buffer: usize) -> bool {
+        matches!(self.buffers[buffer], Buffer::Mut(_))
+    }
+
+    /// Buffer `buffer`, to read into.
+    pub(crate) fn buffer_mut(&mut self, buffer: usize) -> Result<&mut [u8]> {
+        self.buffers[buffer]
+            .bytes_mut()
+            .ok_or_else(|| read_only(buffer))
+    }
+
+    /// Every buffer, to read into (Core's outputs).
+    pub(crate) fn outputs(&mut self) -> Result<Vec<&mut [u8]>> {
+        self.buffers
+            .iter_mut()
+            .enumerate()
+            .map(|(i, b)| b.bytes_mut().ok_or_else(|| read_only(i)))
+            .collect()
+    }
+
+    /// Buffer `buffer`, to write from.
+    pub(crate) fn buffer(&self, buffer: usize) -> &[u8] {
+        self.buffers[buffer].bytes()
     }
 }
 

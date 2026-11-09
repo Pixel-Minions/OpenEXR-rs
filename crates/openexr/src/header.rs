@@ -31,6 +31,98 @@ impl Header {
         }
     }
 
+    /// A header for a scanline part whose pixels are `data_window`, with the C++ library's
+    /// defaults (`initialize`, src/lib/OpenEXR/ImfHeader.cpp:206-226 @ v3.5.3): the display
+    /// window the data window, pixel aspect ratio 1, screen window centre (0, 0) and width 1,
+    /// increasing Y, ZIP compression, no channels.
+    pub fn new(data_window: Box2i) -> Header {
+        let mut h = Header {
+            storage: Storage::Scanline,
+            attributes: Vec::new(),
+        };
+        h.insert("displayWindow", Attribute::Box2i(data_window));
+        h.insert("dataWindow", Attribute::Box2i(data_window));
+        h.insert("pixelAspectRatio", Attribute::Float(1.0));
+        h.insert("screenWindowCenter", Attribute::V2f(V2 { x: 0.0, y: 0.0 }));
+        h.insert("screenWindowWidth", Attribute::Float(1.0));
+        h.insert("lineOrder", Attribute::LineOrder(LineOrder::IncreasingY));
+        h.insert("compression", Attribute::Compression(Compression::Zip));
+        h.insert("channels", Attribute::Channels(Vec::new()));
+        h
+    }
+
+    /// Sets attribute `name`, replacing its value where the header has it (in its place),
+    /// else adding it last; returns the value it replaced.
+    pub fn insert(&mut self, name: impl AsRef<[u8]>, value: Attribute) -> Option<Attribute> {
+        let name = name.as_ref();
+        match self.attributes.iter_mut().find(|(n, _)| n == name) {
+            Some((_, v)) => Some(std::mem::replace(v, value)),
+            None => {
+                self.attributes.push((name.to_vec(), value));
+                None
+            }
+        }
+    }
+
+    /// Removes attribute `name`; returns its value.
+    pub fn remove(&mut self, name: impl AsRef<[u8]>) -> Option<Attribute> {
+        let name = name.as_ref();
+        let i = self.attributes.iter().position(|(n, _)| n == name)?;
+        Some(self.attributes.remove(i).1)
+    }
+
+    /// Sets the part's storage. A tiled part needs `tiles` ([`set_tiles`](Self::set_tiles)).
+    pub fn set_storage(&mut self, storage: Storage) {
+        self.storage = storage;
+    }
+
+    /// Adds channel `channel`, or replaces the one of its name, keeping the list sorted by
+    /// name as Core keeps it.
+    pub fn insert_channel(&mut self, channel: Channel) {
+        let mut chans = self.channels().to_vec();
+        match chans.iter_mut().find(|c| c.name == channel.name) {
+            Some(c) => *c = channel,
+            None => chans.push(channel),
+        }
+        chans.sort_by(|a, b| a.name.cmp(&b.name));
+        self.insert("channels", Attribute::Channels(chans));
+    }
+
+    /// Sets `compression`.
+    pub fn set_compression(&mut self, compression: Compression) {
+        self.insert("compression", Attribute::Compression(compression));
+    }
+
+    /// Sets `lineOrder`.
+    pub fn set_line_order(&mut self, line_order: LineOrder) {
+        self.insert("lineOrder", Attribute::LineOrder(line_order));
+    }
+
+    /// Sets `tiles`; a scanline part becomes tiled (a deep scanline part, deep tiled).
+    pub fn set_tiles(&mut self, tiles: TileDescription) {
+        self.insert("tiles", Attribute::Tiles(tiles));
+        self.storage = match self.storage {
+            Storage::Scanline => Storage::Tiled,
+            Storage::DeepScanline => Storage::DeepTiled,
+            s => s,
+        };
+    }
+
+    /// Sets `name`, the part's name.
+    pub fn set_name(&mut self, name: impl AsRef<[u8]>) {
+        self.insert("name", Attribute::String(name.as_ref().to_vec()));
+    }
+
+    /// Sets `dataWindow`.
+    pub fn set_data_window(&mut self, window: Box2i) {
+        self.insert("dataWindow", Attribute::Box2i(window));
+    }
+
+    /// Sets `displayWindow`.
+    pub fn set_display_window(&mut self, window: Box2i) {
+        self.insert("displayWindow", Attribute::Box2i(window));
+    }
+
     /// The part's storage: scanlines or tiles, flat or deep.
     pub fn storage(&self) -> Storage {
         self.storage
