@@ -217,3 +217,38 @@ chunk; ZIP's predictor waits on one byte add per word; Adler-32 keeps per-lane r
 vectorizes. What remains is mostly where Core
 uses SIMD the port does not (OpenJPH's block coders, libdeflate's decoder, DWA) and zeroed
 buffers' zeroing where upstream leaves them uninitialized.
+
+### After the SIMD kernels (2026-11-08, Windows)
+
+With every SIMD path ported (OpenJPH's block coders, wavelets and conversions; ZIP's, DWA's,
+the ZSTD codec's and libdeflate's kernels; zstd's BMI2 builds on GCC) and the compressed buffer
+taken unzeroed, `scripts/bench.py 7 3` on a quiet machine, the port's time over Core's:
+
+| Compression | Decode | Encode |
+|---|---|---|
+| NONE | 1.02 | 0.41 |
+| RLE | 0.40 | 0.67 |
+| ZIPS | 0.94 | 1.00 |
+| ZIP | 0.82 | 0.97 |
+| PIZ | 0.91 | 0.85 |
+| PXR24 | 0.86 | 1.01 |
+| B44 | 0.46 | 0.70 |
+| B44A | 0.44 | 0.67 |
+| DWAA | 0.79 | 0.87 |
+| DWAB | 0.81 | 0.89 |
+| HTJ2K256 | 1.06 | 0.88 |
+| HTJ2K32 | 0.90 | 0.97 |
+| LJ2K | 1.03 | 0.94 |
+| ZSTD | 0.82 | 1.05 |
+
+(ZSTD encoding on Linux stays about 1.2 to 1.35 times Core's: `docs/deferred.md`.)
+
+## Emulated CPUs (2026-11-08)
+
+`scripts/sde.sh <cpu>` with SDE 10.13.1, `tests/heavy_decode.rs` (the wheel's decode, header
+and encode checks, with the crafted ATK kernels; under SDE the `write_images` layouts), the
+port and the wheel on the same emulated CPU, at `28ff921`: all four checks pass at nhm, snb,
+ivb, hsw and skx, on Windows and on Rocky Linux 9 (ten runs, 33 to 55 minutes each). One
+Windows ivb run first failed in the oracle itself (the wheel's process, under memory pressure
+from a concurrent big-frame check); alone, and on rerun, it passes.
+
