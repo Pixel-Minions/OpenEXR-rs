@@ -225,14 +225,16 @@ impl<'f> InputPart<'f> {
         })
     }
 
-    /// Port of `ScanLineInputFile::Data::readPixels`' single-threaded loop
-    /// (src/lib/OpenEXR/ImfScanLineInputFile.cpp:416-520 @ v3.5.3).
+    /// Port of `ScanLineInputFile::Data::readPixels`
+    /// (src/lib/OpenEXR/ImfScanLineInputFile.cpp:416-520 @ v3.5.3): each chunk of the lines
+    /// a unit, decoded on the file's threads (`LineBufferTask`, lines 522-545) or one after
+    /// another.
     fn read_scanlines(&self, fb: &mut FrameBuffer<'_>, dw: Box2i, y1: i32, y2: i32) -> Result<()> {
         let ctx = self.ctx();
         let p = self.p();
         let fills = self.check_frame_buffer(fb, dw.min.x, dw.max.x, y1, y2)?;
         let spc = ctx.get_scanlines_per_chunk(p).map_err(core)?;
-        let mut dec = None;
+        let mut units = Vec::new();
         let mut y = y1;
         while y <= y2 {
             let cinfo = ctx.read_scanline_chunk_info(p, y).map_err(core)?;
@@ -242,18 +244,20 @@ impl<'f> InputPart<'f> {
             } else {
                 0
             };
-            self.decode_chunk(
-                fb,
-                &fills,
-                &cinfo,
-                (cinfo.start_x, y),
-                y - cinfo.start_y,
-                ignore,
-                &mut dec,
-            )?;
+            let last = cinfo.start_y + cinfo.height - 1 - ignore;
+            units.push(Unit {
+                jobs: vec![Job {
+                    cinfo,
+                    at: (cinfo.start_x, y),
+                    skip: y - cinfo.start_y,
+                    ignore,
+                }],
+                cols: (dw.min.x, dw.max.x),
+                rows: (y, last),
+            });
             y += spc - (y - cinfo.start_y);
         }
-        Ok(())
+        self.decode_units(fb, &fills, units)
     }
 
     /// Lines `y1..=y2` of a tiled part's level 0: port of `InputFile::Data::
@@ -323,14 +327,21 @@ impl<'f> InputPart<'f> {
             }
             for name in &fills {
                 let s = *fb.slice(name).expect("a slice of fb");
-                fill(fb, &s, (dw.min.x, dw.max.x), (a, b));
+                fill(
+                    fb.buffer_mut(s.buffer)?,
+                    0,
+                    &s,
+                    (dw.min.x, dw.max.x),
+                    (a, b),
+                )?;
             }
         }
         Ok(())
     }
 
-    /// Reads tiles `dx` by `dy` of `level`: port of `TiledInputFile::Data::readTiles`'
-    /// single-threaded loop (src/lib/OpenEXR/ImfTiledInputFile.cpp:763-838 @ v3.5.3).
+    /// Reads tiles `dx` by `dy` of `level`: port of `TiledInputFile::Data::readTiles`
+    /// (src/lib/OpenEXR/ImfTiledInputFile.cpp:763-838 @ v3.5.3), each row of tiles a unit,
+    /// decoded on the file's threads (`TileBufferTask`, lines 840-861) or one after another.
     fn read_tile_range(
         &self,
         fb: &mut FrameBuffer<'_>,
@@ -347,18 +358,30 @@ impl<'f> InputPart<'f> {
         no_subsampling(fb)?;
         let (tw, th) = self.tile_size(level)?;
         let dw = self.header().data_window();
-        let mut dec = None;
+        let mut units = Vec::new();
         for ty in dy.0..=dy.1 {
+            let row = self.data_window_for_tile(dx.0, ty, level)?;
+            let mut jobs = Vec::new();
             for tx in dx.0..=dx.1 {
                 let cinfo = ctx
                     .read_tile_chunk_info(p, tx, ty, level.0, level.1)
                     .map_err(core)?;
                 let x0 = dw.min.x + tw * cinfo.start_x;
                 let y0 = dw.min.y + th * cinfo.start_y;
-                self.decode_chunk(fb, &fills, &cinfo, (x0, y0), 0, 0, &mut dec)?;
+                jobs.push(Job {
+                    cinfo,
+                    at: (x0, y0),
+                    skip: 0,
+                    ignore: 0,
+                });
             }
+            units.push(Unit {
+                jobs,
+                cols: (first.min.x, last.max.x),
+                rows: (row.min.y, row.max.y),
+            });
         }
-        Ok(())
+        self.decode_units(fb, &fills, units)
     }
 
     /// The slices of `fb` the part lacks (to fill), after checking that every slice's samples
@@ -394,21 +417,92 @@ impl<'f> InputPart<'f> {
         Ok(fills)
     }
 
-    /// Decodes the chunk `cinfo` into `fb`, its first kept line `skip` lines down and its
-    /// last `ignore` lines up from the chunk's edges, the first kept pixel at `at`; then fills
-    /// the slices the part lacks. Port of `ScanLineProcess::run_decode` and
-    /// `update_pointers` (src/lib/OpenEXR/ImfScanLineInputFile.cpp:547-661 @ v3.5.3) and of
-    /// `TileProcess::run_decode` and `update_pointers` (src/lib/OpenEXR/
-    /// ImfTiledInputFile.cpp:863-963 @ v3.5.3), which differ only in where a chunk starts.
-    #[allow(clippy::too_many_arguments)]
-    fn decode_chunk<'c>(
+    /// Decodes `units` into `fb`: on the file's threads where it has several and each unit
+    /// writes its own bytes of every buffer ([`bands`]), each unit into its share of the
+    /// buffers; else one chunk after another. The bytes are the same either way, and so is
+    /// the error: the first unit's that fails.
+    fn decode_units(
         &self,
         fb: &mut FrameBuffer<'_>,
         fills: &[Vec<u8>],
-        cinfo: &ChunkInfo,
-        at: (i32, i32),
-        skip: i32,
-        ignore: i32,
+        units: Vec<Unit>,
+    ) -> Result<()> {
+        let slices: Vec<(Vec<u8>, Slice)> = fb.slices().map(|(n, s)| (n.to_vec(), *s)).collect();
+        let fill_slices: Vec<Slice> = fills
+            .iter()
+            .map(|n| *fb.slice(n).expect("a slice of fb"))
+            .collect();
+        let nbuf = fb.buffer_count();
+        let pool = self.file.pool();
+        if pool.is_parallel()
+            && units.len() > 1
+            && let Some(bands) = bands(&slices, &units, nbuf)
+        {
+            let mut outs = fb.outputs()?;
+            let mut shares: Vec<Vec<&mut [u8]>> = (0..units.len())
+                .map(|_| (0..nbuf).map(|_| &mut [][..]).collect())
+                .collect();
+            let mut bases = vec![vec![0usize; nbuf]; units.len()];
+            for (b, out) in outs.iter_mut().enumerate() {
+                let mut order: Vec<(usize, (usize, usize))> = bands
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(u, bs)| bs[b].map(|r| (u, r)))
+                    .collect();
+                order.sort_by_key(|&(_, (lo, _))| lo);
+                let mut rest: &mut [u8] = std::mem::take(out);
+                let mut consumed = 0;
+                for (u, (lo, hi)) in order {
+                    let (_, tail) = rest.split_at_mut(lo - consumed);
+                    let (share, tail) = tail.split_at_mut(hi - lo);
+                    shares[u][b] = share;
+                    bases[u][b] = lo;
+                    rest = tail;
+                    consumed = hi;
+                }
+            }
+            let work: Vec<_> = units.into_iter().zip(shares).zip(bases).collect();
+            let results = pool.map(work, |((unit, mut outs), bases)| {
+                self.decode_jobs(&slices, &fill_slices, &unit.jobs, &mut outs, &bases)
+            });
+            return results.into_iter().collect::<Result<Vec<()>>>().map(drop);
+        }
+        let jobs: Vec<Job> = units.into_iter().flat_map(|u| u.jobs).collect();
+        let mut outs = fb.outputs()?;
+        self.decode_jobs(&slices, &fill_slices, &jobs, &mut outs, &vec![0; nbuf])
+    }
+
+    /// Decodes `jobs` one after another with one decoder, as one C++ process does, into
+    /// `outs`, buffer `b` holding the frame buffer's buffer from byte `bases[b]`.
+    fn decode_jobs(
+        &self,
+        slices: &[(Vec<u8>, Slice)],
+        fills: &[Slice],
+        jobs: &[Job],
+        outs: &mut [&mut [u8]],
+        bases: &[usize],
+    ) -> Result<()> {
+        let mut dec = None;
+        for job in jobs {
+            self.decode_chunk(slices, fills, job, outs, bases, &mut dec)?;
+        }
+        Ok(())
+    }
+
+    /// Decodes one chunk into `outs`, its first kept line `skip` lines down and its last
+    /// `ignore` lines up from the chunk's edges, the first kept pixel at `at`; then fills the
+    /// slices the part lacks. Port of `ScanLineProcess::run_decode` and `update_pointers`
+    /// (src/lib/OpenEXR/ImfScanLineInputFile.cpp:547-661 @ v3.5.3) and of
+    /// `TileProcess::run_decode` and `update_pointers`
+    /// (src/lib/OpenEXR/ImfTiledInputFile.cpp:863-963 @ v3.5.3), which differ only in where a
+    /// chunk starts.
+    fn decode_chunk<'c>(
+        &self,
+        slices: &[(Vec<u8>, Slice)],
+        fills: &[Slice],
+        job: &Job,
+        outs: &mut [&mut [u8]],
+        bases: &[usize],
         dec: &mut Option<DecodePipeline<'c>>,
     ) -> Result<()>
     where
@@ -416,16 +510,25 @@ impl<'f> InputPart<'f> {
     {
         let ctx: &'c Context = self.ctx();
         let p = self.p();
+        let Job {
+            cinfo,
+            at,
+            skip,
+            ignore,
+        } = job;
         let first = dec.is_none();
         match dec {
             None => *dec = Some(ctx.decoding_initialize(p, cinfo).map_err(core)?),
             Some(d) => ctx.decoding_update(p, cinfo, d).map_err(core)?,
         }
         let d = dec.as_mut().expect("initialized");
-        d.user_line_begin_skip = skip;
-        d.user_line_end_ignore = ignore;
+        d.user_line_begin_skip = *skip;
+        d.user_line_end_ignore = *ignore;
         for c in d.channels.iter_mut() {
-            let slice = fb.slice(&c.channel_name).copied();
+            let slice = slices
+                .iter()
+                .find(|(n, _)| *n == c.channel_name)
+                .map(|(_, s)| *s);
             let Some(s) = slice.filter(|_| c.height != 0) else {
                 c.data = None;
                 c.user_pixel_stride = 0;
@@ -439,6 +542,7 @@ impl<'f> InputPart<'f> {
             let offset = s
                 .offset_of(at.0, at.1)
                 .and_then(|o| usize::try_from(o).ok())
+                .and_then(|o| o.checked_sub(bases[s.buffer]))
                 .ok_or_else(|| invalid("Slice's first sample is outside its buffer"))?;
             c.data = Some(BufferRef {
                 buffer: s.buffer,
@@ -448,15 +552,80 @@ impl<'f> InputPart<'f> {
         if first {
             ctx.decoding_choose_default_routines(p, d).map_err(core)?;
         }
-        ctx.decoding_run(p, d, &mut fb.outputs()?).map_err(core)?;
+        ctx.decoding_run(p, d, outs).map_err(core)?;
         let rows = (at.1, at.1 + cinfo.height - skip - ignore - 1);
         let cols = (at.0, at.0 + cinfo.width - 1);
-        for name in fills {
-            let s = *fb.slice(name).expect("a slice of fb");
-            fill(fb, &s, cols, rows);
+        for s in fills {
+            fill(outs[s.buffer], bases[s.buffer], s, cols, rows)?;
         }
         Ok(())
     }
+}
+
+/// A chunk to decode: its information, its first kept pixel, and its line skips.
+struct Job {
+    cinfo: ChunkInfo,
+    at: (i32, i32),
+    skip: i32,
+    ignore: i32,
+}
+
+/// Chunks one task decodes, one after another, and the pixels they cover (columns and lines,
+/// inclusive): a scanline chunk, or a row of tiles (tiles side by side share their lines'
+/// bytes).
+struct Unit {
+    jobs: Vec<Job>,
+    cols: (i32, i32),
+    rows: (i32, i32),
+}
+
+/// A unit's bytes `[lo, hi)` of a buffer, or none.
+type Band = Option<(usize, usize)>;
+
+/// The bytes `[lo, hi)` of each buffer each unit writes (every slice's samples of its pixels,
+/// and the samples its chunks' pointers name), or `None` where two units' bytes of a buffer
+/// meet: then the units run one after another. (A y-sampled channel whose chunk starts
+/// between samples has its pointer on the sample row before, which the unit above writes:
+/// `update_pointers`' `fbY / ySampling`.)
+fn bands(slices: &[(Vec<u8>, Slice)], units: &[Unit], nbuf: usize) -> Option<Vec<Vec<Band>>> {
+    let mut bands: Vec<Vec<Band>> = vec![vec![None; nbuf]; units.len()];
+    for (u, unit) in units.iter().enumerate() {
+        for (_, s) in slices {
+            let nx = sample_count(unit.cols.0, unit.cols.1, s.x_sampling);
+            let ny = sample_count(unit.rows.0, unit.rows.1, s.y_sampling);
+            if nx == 0 || ny == 0 {
+                continue;
+            }
+            let fx = first_multiple(unit.cols.0, s.x_sampling) as i32;
+            let fy = first_multiple(unit.rows.0, s.y_sampling) as i32;
+            let lx = fx + (nx as i32 - 1) * s.x_sampling;
+            let ly = fy + (ny as i32 - 1) * s.y_sampling;
+            let size = s.sample_size() as i64;
+            let mut lo = i64::MAX;
+            let mut hi = i64::MIN;
+            let corners = [(fx, fy), (lx, fy), (fx, ly), (lx, ly)];
+            let pointers = unit.jobs.iter().map(|j| j.at);
+            for (x, y) in corners.into_iter().chain(pointers) {
+                let o = s.offset_of(x, y)?;
+                lo = lo.min(o);
+                hi = hi.max(o + size);
+            }
+            let (lo, hi) = (usize::try_from(lo).ok()?, usize::try_from(hi).ok()?);
+            let band = &mut bands[u][s.buffer];
+            *band = Some(match *band {
+                None => (lo, hi),
+                Some((a, b)) => (a.min(lo), b.max(hi)),
+            });
+        }
+    }
+    for b in 0..nbuf {
+        let mut spans: Vec<(usize, usize)> = bands.iter().filter_map(|bs| bs[b]).collect();
+        spans.sort_unstable();
+        if spans.windows(2).any(|w| w[0].1 > w[1].0) {
+            return None;
+        }
+    }
+    Some(bands)
 }
 
 /// `TileProcess::update_pointers` and `run_fill` (src/lib/OpenEXR/ImfTiledInputFile.cpp:
@@ -514,10 +683,11 @@ pub(crate) fn check_slice(
 }
 
 /// Writes `s`'s fill value to its samples of columns `cols` and lines `rows` (inclusive),
-/// converted as the C++ library converts it (`float (v)`, `half (v)`: through `float`, then
-/// Imath's `imath_float_to_half`; `(unsigned int) (v)` truncates toward zero, and here
-/// saturates where C's conversion is undefined).
-fn fill(fb: &mut FrameBuffer<'_>, s: &Slice, cols: (i32, i32), rows: (i32, i32)) {
+/// in `buf`, which holds the slice's buffer from byte `base`; converted as the C++ library
+/// converts it (`float (v)`, `half (v)`: through `float`, then Imath's
+/// `imath_float_to_half`; `(unsigned int) (v)` truncates toward zero, and here saturates
+/// where C's conversion is undefined).
+fn fill(buf: &mut [u8], base: usize, s: &Slice, cols: (i32, i32), rows: (i32, i32)) -> Result<()> {
     let mut bytes = [0u8; 4];
     let n = match s.pixel_type {
         PixelType::Half => {
@@ -534,10 +704,6 @@ fn fill(fb: &mut FrameBuffer<'_>, s: &Slice, cols: (i32, i32), rows: (i32, i32))
             4
         }
     };
-    // checked writable by check_frame_buffer
-    let Ok(buf) = fb.buffer_mut(s.buffer) else {
-        return;
-    };
     for y in rows.0..=rows.1 {
         if y % s.y_sampling != 0 {
             continue;
@@ -546,9 +712,15 @@ fn fill(fb: &mut FrameBuffer<'_>, s: &Slice, cols: (i32, i32), rows: (i32, i32))
             if x % s.x_sampling != 0 {
                 continue;
             }
-            // checked by check_slice
-            let o = s.offset_of(x, y).expect("checked") as usize;
+            // checked by check_slice, and within the unit's share by `bands`
+            let o = s
+                .offset_of(x, y)
+                .and_then(|o| usize::try_from(o).ok())
+                .and_then(|o| o.checked_sub(base))
+                .filter(|&o| o + n <= buf.len())
+                .ok_or_else(|| invalid("A fill sample is outside its buffer"))?;
             buf[o..o + n].copy_from_slice(&bytes[..n]);
         }
     }
+    Ok(())
 }

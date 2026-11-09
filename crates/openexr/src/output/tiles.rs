@@ -7,7 +7,7 @@ use std::io::{Seek, Write};
 
 use openexr_core::Context;
 
-use super::{OutputPart, PartState, core, encode_chunk, invalid};
+use super::{ChunkAt, OutputPart, PartState, compress_all, core, invalid, write_flat};
 use crate::attribute::LineOrder;
 use crate::error::{Error, ErrorCode, Result};
 use crate::frame_buffer::FrameBuffer;
@@ -17,12 +17,12 @@ use crate::read::check_slice;
 /// A tile's coordinates: `(dx, dy, lx, ly)`.
 pub(super) type TileCoord = (i32, i32, i32, i32);
 
-/// A tile on its way to the file: a flat tile's planes, encoded when written (Core's encoder
-/// keeps no state from tile to tile), or a deep tile's chunk, composed and compressed when
-/// given, as the C++ library's deep writer compresses it (its reused sample count table
-/// buffer makes the order count).
+/// A tile on its way to the file, compressed when given as the C++ library compresses it
+/// (`TileBufferTask`), then kept until its turn: a flat tile's chunk, or a deep tile's (whose
+/// reused sample count table buffer makes the order of compression count).
 pub(super) enum TileData {
-    Flat(Vec<Vec<u8>>),
+    /// A flat tile's chunk, compressed.
+    Flat(Vec<u8>),
     Deep(super::deep::DeepChunk),
 }
 
@@ -254,10 +254,11 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
         } else {
             (dy.0..=dy.1).collect()
         };
+        let mut given = Vec::new();
+        let h = &self.file.headers[self.index];
         for ty in rows {
             for tx in dx.0..=dx.1 {
                 let (x0, x1, y0, y1) = tile_window(tx, ty);
-                let h = &self.file.headers[self.index];
                 let planes: Vec<Vec<u8>> = h
                     .channels()
                     .iter()
@@ -279,8 +280,19 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
                         plane
                     })
                     .collect();
-                self.put_tile((tx, ty, lx, ly), TileData::Flat(planes))?;
+                given.push((ChunkAt::Tile((tx, ty, lx, ly)), planes));
             }
+        }
+        // the tiles compress on the file's threads, then go to the file, or wait their
+        // turn, in the order given
+        let file = &*self.file;
+        let ctx = file.ctx.as_ref().expect("not finished");
+        let done = compress_all(&file.pool, ctx, p, h, given);
+        for (at, bytes) in done {
+            let ChunkAt::Tile(at) = at else {
+                unreachable!("tiles")
+            };
+            self.put_tile(at, TileData::Flat(bytes?))?;
         }
         Ok(())
     }
@@ -291,7 +303,6 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
     pub(super) fn put_tile(&mut self, at: TileCoord, tile: TileData) -> Result<()> {
         let p = self.index as i32;
         let file = &mut *self.file;
-        let h = &file.headers[self.index];
         let ctx = file.ctx.as_mut().expect("not finished");
         let tiles = file.parts[self.index].tiles.as_mut().expect("tiled");
         if tiles.written.contains(&at) || tiles.pending.contains_key(&at) {
@@ -302,12 +313,7 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
         }
         let write = |ctx: &mut Context, at: TileCoord, tile: &TileData| -> Result<()> {
             match tile {
-                TileData::Flat(planes) => {
-                    let winfo = ctx
-                        .write_tile_chunk_info(p, at.0, at.1, at.2, at.3)
-                        .map_err(core)?;
-                    encode_chunk(ctx, p, &winfo, h, planes)
-                }
+                TileData::Flat(bytes) => write_flat(ctx, p, ChunkAt::Tile(at), bytes),
                 TileData::Deep(c) => ctx
                     .write_deep_tile_chunk(
                         p,

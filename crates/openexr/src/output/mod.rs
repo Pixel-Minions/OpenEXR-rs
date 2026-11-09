@@ -20,7 +20,6 @@ use std::sync::{Arc, Mutex};
 
 use openexr_core::Context;
 use openexr_core::cfmt::Arg;
-use openexr_core::coding::BufferRef;
 use openexr_core::context::{
     DefaultWriteMode, EXR_CONTEXT_FLAG_WRITE_LEGACY_HEADER, Initializer, StreamErrors,
 };
@@ -29,6 +28,7 @@ use crate::attribute::{Attribute, LineOrder, Storage};
 use crate::error::{Error, ErrorCode, Result};
 use crate::frame_buffer::{FrameBuffer, first_multiple, sample_count};
 use crate::header::Header;
+use crate::parallel::{Pool, Threads};
 use crate::read::check_slice;
 
 mod attributes;
@@ -36,7 +36,7 @@ mod deep;
 mod tiles;
 
 use attributes::{core_storage, set_attribute, type_string, utf8};
-use tiles::{Tiles, part_tiles};
+use tiles::{TileCoord, Tiles, part_tiles};
 
 fn core(e: openexr_core::Error) -> Error {
     Error::from_core(&e)
@@ -47,17 +47,26 @@ fn invalid(msg: impl Into<String>) -> Error {
 }
 
 /// How a file is written: Core's compression settings.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct WriteOptions {
     zip_level: Option<i32>,
     zstd_level: Option<i32>,
-    dwa_quality: Option<f32>,
+    /// The DWA quality's bits (an `f32`), so that the options compare and hash.
+    dwa_quality: Option<u32>,
+    threads: Threads,
 }
 
 impl WriteOptions {
     /// The defaults: Core's levels, which the C++ library's are.
     pub fn new() -> WriteOptions {
         WriteOptions::default()
+    }
+
+    /// The threads a write compresses its chunks on ([`Threads`]; single-threaded by
+    /// default). Deep parts compress one chunk after another.
+    pub fn threads(mut self, threads: Threads) -> WriteOptions {
+        self.threads = threads;
+        self
     }
 
     /// The deflate level of ZIP and ZIPS parts (`zip_level`).
@@ -74,7 +83,7 @@ impl WriteOptions {
 
     /// The quality of DWAA and DWAB parts without a `dwaCompressionLevel` (`dwa_quality`).
     pub fn dwa_quality(mut self, quality: f32) -> WriteOptions {
-        self.dwa_quality = Some(quality);
+        self.dwa_quality = Some(quality.to_bits());
         self
     }
 
@@ -216,17 +225,28 @@ struct Staged {
     planes: Vec<Vec<u8>>,
 }
 
-/// Encodes one chunk, `winfo`, of part `p` from `planes`, one per channel of `h` in the
-/// file's type, through Core's encode pipeline with its default stages, which writes it.
-fn encode_chunk(
-    ctx: &mut Context,
+/// The bytes Core's encode pipeline writes for chunk `winfo` of part `p`, whose channels'
+/// samples `planes` holds (one per channel of `h`, in the file's type, row by row): the
+/// chunk packed as Core's pack stage packs planar samples of the file's types (each line,
+/// each channel's samples of it, little-endian: `internal_exr_match_encode`,
+/// src/lib/OpenEXRCore/pack.c @ v3.5.3, checked against the wheel's files by
+/// tests/heavy_write.rs), then compressed by `exr_compress_chunk` (the compress stage,
+/// src/lib/OpenEXRCore/encoding.c:291-297 @ v3.5.3), or left packed without a compression.
+/// It takes Core's context shared, so chunks compress on several threads at once; the
+/// write stage, which takes it alone, comes after ([`write_flat`]).
+fn compress_flat(
+    ctx: &Context,
     p: i32,
     winfo: &openexr_core::chunk_info::ChunkInfo,
     h: &Header,
     planes: &[Vec<u8>],
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     let mut enc = ctx.encoding_initialize(p, winfo).map_err(core)?;
-    for ch in enc.channels.iter_mut() {
+    let mut packed = Vec::with_capacity(winfo.unpacked_size as usize);
+    let mut rows_done = vec![0usize; planes.len()];
+    let scanline = h.storage() == Storage::Scanline;
+    let mut keys = Vec::with_capacity(enc.channels.len());
+    for ch in &enc.channels {
         let k = h
             .channels()
             .iter()
@@ -238,19 +258,88 @@ fn encode_chunk(
                 "A chunk's channel is not the size the header gives",
             ));
         }
-        ch.user_pixel_stride = bpe;
-        ch.user_line_stride = ch.width * bpe;
-        ch.data = Some(BufferRef {
-            buffer: k,
-            offset: 0,
-        });
+        keys.push(k);
     }
-    ctx.encoding_choose_default_routines(p, &mut enc)
-        .map_err(core)?;
-    let ins: Vec<&[u8]> = planes.iter().map(|b| &b[..]).collect();
-    let r = ctx.encoding_run(p, &mut enc, &ins).map_err(core);
+    for r in 0..winfo.height {
+        for (ch, &k) in enc.channels.iter().zip(&keys) {
+            if ch.height <= 0 {
+                continue;
+            }
+            if scanline && ch.y_samples > 1 && (winfo.start_y + r) % ch.y_samples != 0 {
+                continue;
+            }
+            let bpe = ch.bytes_per_element as usize;
+            let line = ch.width.max(0) as usize * bpe;
+            let row = &planes[k][rows_done[k] * line..(rows_done[k] + 1) * line];
+            rows_done[k] += 1;
+            if cfg!(target_endian = "little") {
+                packed.extend_from_slice(row);
+            } else {
+                for v in row.chunks_exact(bpe) {
+                    packed.extend(v.iter().rev());
+                }
+            }
+        }
+    }
+    if packed.len() as u64 != winfo.unpacked_size {
+        return Err(invalid("A chunk packs to another size than Core gives it"));
+    }
+    if h.compression() == crate::attribute::Compression::None {
+        ctx.encoding_destroy(&mut enc).map_err(core)?;
+        return Ok(packed);
+    }
+    enc.packed_bytes = packed.len() as u64;
+    enc.packed_buffer = Some(packed);
+    let r = openexr_core::compression::compress_chunk(&mut enc, ctx).map_err(core);
+    let out = enc
+        .compressed()
+        .get(..enc.compressed_bytes)
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| invalid("A compressed chunk is shorter than its size"));
     ctx.encoding_destroy(&mut enc).map_err(core)?;
-    r
+    r?;
+    out
+}
+
+/// Where a flat chunk goes: its first line, or its tile.
+#[derive(Debug, Clone, Copy)]
+enum ChunkAt {
+    Scan(i32),
+    Tile(TileCoord),
+}
+
+/// The chunk info of chunk `at` of part `p`, as the write side gives it.
+fn write_info(ctx: &Context, p: i32, at: ChunkAt) -> Result<openexr_core::chunk_info::ChunkInfo> {
+    match at {
+        ChunkAt::Scan(y) => ctx.write_scanline_chunk_info(p, y),
+        ChunkAt::Tile((tx, ty, lx, ly)) => ctx.write_tile_chunk_info(p, tx, ty, lx, ly),
+    }
+    .map_err(core)
+}
+
+/// Compresses `chunks` of part `p` on `pool`'s threads ([`compress_flat`]): each chunk's
+/// bytes, in order.
+fn compress_all(
+    pool: &Pool,
+    ctx: &Context,
+    p: i32,
+    h: &Header,
+    chunks: Vec<(ChunkAt, Vec<Vec<u8>>)>,
+) -> Vec<(ChunkAt, Result<Vec<u8>>)> {
+    pool.map(chunks, |(at, planes)| {
+        let r = write_info(ctx, p, at).and_then(|winfo| compress_flat(ctx, p, &winfo, h, &planes));
+        (at, r)
+    })
+}
+
+/// Writes a compressed flat chunk: Core's write stage (`default_write_chunk`,
+/// src/lib/OpenEXRCore/encoding.c:31-94 @ v3.5.3).
+fn write_flat(ctx: &mut Context, p: i32, at: ChunkAt, bytes: &[u8]) -> Result<()> {
+    match at {
+        ChunkAt::Scan(y) => ctx.write_scanline_chunk(p, y, Some(bytes)),
+        ChunkAt::Tile((tx, ty, lx, ly)) => ctx.write_tile_chunk(p, tx, ty, lx, ly, Some(bytes)),
+    }
+    .map_err(core)
 }
 
 /// What is left to write of a part.
@@ -287,6 +376,7 @@ pub struct MultiPartOutputFile<W: Write + Seek + Send + 'static = std::fs::File>
     sink: Arc<Mutex<Sink<W>>>,
     headers: Vec<Header>,
     parts: Vec<PartState>,
+    pool: Pool,
 }
 
 impl<W: Write + Seek + Send + 'static> std::fmt::Debug for MultiPartOutputFile<W> {
@@ -331,7 +421,7 @@ impl<W: Write + Seek + Send + 'static> MultiPartOutputFile<W> {
             init.zstd_level = l;
         }
         if let Some(q) = opts.dwa_quality {
-            init.dwa_quality = q;
+            init.dwa_quality = f32::from_bits(q);
         }
         let mut ctx =
             Context::start_write(Some(name), DefaultWriteMode::WriteFileDirectly, Some(init))
@@ -443,6 +533,7 @@ impl<W: Write + Seek + Send + 'static> MultiPartOutputFile<W> {
             sink,
             headers: headers.to_vec(),
             parts,
+            pool: Pool::new(opts.threads)?,
         })
     }
 
@@ -557,14 +648,27 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
             let b = a + state.step * (lines - 1);
             check_slice(fb, &c.name, s, dw.min.x, dw.max.x, a.min(b), a.max(b))?;
         }
+        let mut whole = Vec::new();
         for _ in 0..lines {
-            self.stage_line(fb)?;
+            if let Some(chunk) = self.stage_line(fb)? {
+                whole.push((ChunkAt::Scan(chunk.first), chunk.planes));
+            }
+        }
+        // the chunks completed compress on the file's threads, then go to the file in order
+        let p = self.index as i32;
+        let file = &mut *self.file;
+        let h = &file.headers[self.index];
+        let ctx = file.ctx.as_ref().expect("not finished");
+        let done = compress_all(&file.pool, ctx, p, h, whole);
+        let ctx = file.ctx.as_mut().expect("not finished");
+        for (at, bytes) in done {
+            write_flat(ctx, p, at, &bytes?)?;
         }
         Ok(())
     }
 
-    /// Copies the next line into its chunk's staging, and writes the chunk once whole.
-    fn stage_line(&mut self, fb: &FrameBuffer<'_>) -> Result<()> {
+    /// Copies the next line into its chunk's staging; gives the chunk once whole.
+    fn stage_line(&mut self, fb: &FrameBuffer<'_>) -> Result<Option<Staged>> {
         let p = self.index as i32;
         let file = &mut *self.file;
         let ctx = file.ctx.as_mut().expect("not finished");
@@ -619,13 +723,9 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
         state.next_y += state.step;
         state.lines_left -= 1;
         if staged.lines == staged.last - staged.first + 1 {
-            let staged = state.staged.take().expect("staged");
-            let winfo = ctx
-                .write_scanline_chunk_info(p, staged.first)
-                .map_err(core)?;
-            encode_chunk(ctx, p, &winfo, h, &staged.planes)?;
+            return Ok(state.staged.take());
         }
-        Ok(())
+        Ok(None)
     }
 }
 

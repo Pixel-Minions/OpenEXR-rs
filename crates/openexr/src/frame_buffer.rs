@@ -368,6 +368,10 @@ impl<'a> FrameBuffer<'a> {
         self.slices.iter().map(|(n, s)| (n.as_slice(), s))
     }
 
+    pub(crate) fn buffer_count(&self) -> usize {
+        self.buffers.len()
+    }
+
     pub(crate) fn buffer_len(&self, buffer: usize) -> usize {
         self.buffers[buffer].len()
     }

@@ -21,15 +21,18 @@ use common::{COMPRESSIONS, oracle, root};
 use openexr::{FrameBuffer, MultiPartInputFile, Storage, WriteOptions};
 
 /// The file the API writes for `image` from the pixels in `raw/`, or why it cannot.
-fn write_from_raw(image: &Path, file: &MultiPartInputFile) -> openexr::Result<Option<Vec<u8>>> {
+fn write_from_raw(
+    image: &Path,
+    file: &MultiPartInputFile,
+    options: WriteOptions,
+) -> openexr::Result<Option<Vec<u8>>> {
     let headers = file.headers();
     if headers.iter().any(|h| h.storage().is_deep()) {
         return Ok(None);
     }
     let stem = image.file_stem().unwrap().to_string_lossy().into_owned();
     let raw_dir = image.parent().unwrap().join("raw");
-    let mut out =
-        WriteOptions::new().create_writer("<memory>", Cursor::new(Vec::new()), headers)?;
+    let mut out = options.create_writer("<memory>", Cursor::new(Vec::new()), headers)?;
     for (p, h) in headers.iter().enumerate() {
         let dw = h.data_window();
         let raws: Vec<Vec<u8>> = h
@@ -84,10 +87,17 @@ fn files_write_as_the_wheel_wrote_them() {
     for image in &images {
         let file = MultiPartInputFile::open(image).unwrap();
         let name = image.file_name().unwrap().to_string_lossy().into_owned();
-        let Some(ours) = write_from_raw(image, &file).unwrap_or_else(|e| panic!("{name}: {e}"))
+        let Some(ours) = write_from_raw(image, &file, WriteOptions::new())
+            .unwrap_or_else(|e| panic!("{name}: {e}"))
         else {
             continue;
         };
+        // compressed on four threads: the same file
+        let four = WriteOptions::new().threads(openexr::Threads::Count(4));
+        let ours4 = write_from_raw(image, &file, four)
+            .unwrap_or_else(|e| panic!("{name}: 4 threads: {e}"))
+            .expect("flat");
+        assert!(ours4 == ours, "{name}: 4 threads write another file");
         let wheel = std::fs::read(image).unwrap();
         if ours != wheel {
             let at = ours

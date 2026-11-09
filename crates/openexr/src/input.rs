@@ -18,6 +18,7 @@ use openexr_core::{Context, ErrorCode, Initializer};
 use crate::attribute::{Attribute, Storage};
 use crate::error::{Error, Result};
 use crate::header::Header;
+use crate::parallel::{Pool, Threads};
 
 /// How a file is opened to read: Core's context flags, and where the bytes come from.
 ///
@@ -30,6 +31,7 @@ pub struct ReadOptions {
     strict_header: bool,
     silent_header: bool,
     reconstruct_chunk_table: bool,
+    threads: Threads,
 }
 
 impl Default for ReadOptions {
@@ -38,6 +40,7 @@ impl Default for ReadOptions {
             strict_header: false,
             silent_header: false,
             reconstruct_chunk_table: true,
+            threads: Threads::Serial,
         }
     }
 }
@@ -68,6 +71,13 @@ impl ReadOptions {
         self
     }
 
+    /// The threads the file's reads decode their chunks on ([`Threads`]; single-threaded by
+    /// default).
+    pub fn threads(mut self, threads: Threads) -> ReadOptions {
+        self.threads = threads;
+        self
+    }
+
     fn initializer(&self) -> Initializer {
         let mut flags = 0;
         if self.strict_header {
@@ -92,7 +102,7 @@ impl ReadOptions {
     pub fn open(&self, path: impl AsRef<Path>) -> Result<MultiPartInputFile> {
         let path = path.as_ref();
         match path.to_str() {
-            Some(name) => MultiPartInputFile::start(name, self.initializer()),
+            Some(name) => MultiPartInputFile::start(name, self.initializer(), self.threads),
             None => {
                 let name = path.to_string_lossy().into_owned();
                 let file = std::fs::File::open(path).map_err(|e| {
@@ -123,7 +133,7 @@ impl ReadOptions {
             let mut r = size_reader.lock().unwrap_or_else(|p| p.into_inner());
             r.seek(SeekFrom::End(0)).map_or(-1, |n| n as i64)
         }));
-        MultiPartInputFile::start(name, init)
+        MultiPartInputFile::start(name, init, self.threads)
     }
 
     /// Opens the file `bytes` holds, without copying it; `name` is the file name Core's
@@ -144,7 +154,7 @@ impl ReadOptions {
             n as i64
         }));
         init.size_fn = Some(Box::new(move || size));
-        MultiPartInputFile::start(name, init)
+        MultiPartInputFile::start(name, init, self.threads)
     }
 }
 
@@ -181,6 +191,7 @@ fn read_at<R: Read + Seek>(r: &mut R, errs: &StreamErrors<'_>, buf: &mut [u8], o
 pub struct MultiPartInputFile {
     ctx: Context,
     headers: Vec<Header>,
+    pool: Pool,
 }
 
 impl std::fmt::Debug for MultiPartInputFile {
@@ -197,13 +208,14 @@ impl MultiPartInputFile {
         ReadOptions::default().open(path)
     }
 
-    fn start(name: &str, init: Initializer) -> Result<MultiPartInputFile> {
+    fn start(name: &str, init: Initializer, threads: Threads) -> Result<MultiPartInputFile> {
+        let pool = Pool::new(threads)?;
         let ctx = Context::start_read(Some(name), Some(init)).map_err(|e| Error::from_core(&e))?;
         let headers = (0..ctx.get_count())
             .map(|p| read_header(&ctx, p))
             .collect::<std::result::Result<_, _>>()
             .map_err(|e| Error::from_core(&e))?;
-        Ok(MultiPartInputFile { ctx, headers })
+        Ok(MultiPartInputFile { ctx, headers, pool })
     }
 
     /// The parts' headers, in the file's order.
@@ -225,6 +237,11 @@ impl MultiPartInputFile {
     /// file holds it (`exr_get_file_version_and_flags`).
     pub fn version(&self) -> u32 {
         self.ctx.get_file_version_and_flags()
+    }
+
+    /// The threads reads decode on.
+    pub(crate) fn pool(&self) -> &Pool {
+        &self.pool
     }
 
     /// Core's context, for the readers.

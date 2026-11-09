@@ -31,6 +31,7 @@ mod header;
 mod image;
 mod input;
 mod output;
+mod parallel;
 mod read;
 
 pub use attribute::{
@@ -45,4 +46,5 @@ pub use header::Header;
 pub use image::{Image, ImageChannel, ImagePart, Pixels};
 pub use input::{InputFile, MultiPartInputFile, ReadOptions};
 pub use output::{MultiPartOutputFile, OutputFile, OutputPart, WriteOptions};
+pub use parallel::Threads;
 pub use read::InputPart;

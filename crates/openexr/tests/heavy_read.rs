@@ -197,6 +197,10 @@ fn pixels_read_as_the_wheel_reads_them() {
                 image.display()
             )
         });
+        let threaded = openexr::ReadOptions::new()
+            .threads(openexr::Threads::Count(4))
+            .open(image)
+            .unwrap();
         for (p, h) in file.headers().iter().enumerate() {
             if !matches!(h.storage(), Storage::Scanline | Storage::Tiled) {
                 continue;
@@ -274,6 +278,27 @@ fn pixels_read_as_the_wheel_reads_them() {
                         ))
                     );
                 }
+                reads += 1;
+            }
+
+            // the same reads on four threads: the same bytes
+            let part4 = threaded.part(p).unwrap();
+            let planar4 =
+                read_planar(&part4).unwrap_or_else(|e| panic!("{}: {e}", what("4 threads")));
+            assert!(planar4 == planar, "{}", what("planar, 4 threads"));
+            for (y1, y2) in [(lo + third, hi - third), (hi - 1, lo + 1)] {
+                let (a, b) = (y1.min(y2), y1.max(y2));
+                if a < lo || b > hi {
+                    continue;
+                }
+                let one = read_lines(&part, &chans, y1, y2).unwrap();
+                let four = read_lines(&part4, &chans, y1, y2)
+                    .unwrap_or_else(|e| panic!("{}: {e}", what("lines, 4 threads")));
+                assert!(
+                    four == one,
+                    "{}",
+                    what(&format!("lines {y1} - {y2}, 4 threads"))
+                );
                 reads += 1;
             }
             parts += 1;

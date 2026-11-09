@@ -198,6 +198,10 @@ fn levels_and_types_read_as_core_reads_them() {
                 image.display()
             )
         });
+        let threaded = openexr::ReadOptions::new()
+            .threads(openexr::Threads::Count(4))
+            .open(&image)
+            .unwrap();
         for ((p, lx, ly, t), want) in &levels {
             let part = file.part(*p).unwrap();
             let what = format!("{}: part {p}, level ({lx}, {ly}), {t}", image.display());
@@ -213,6 +217,17 @@ fn levels_and_types_read_as_core_reads_them() {
                         assert!(
                             w == g,
                             "{what}, {}: the API's bytes are not Core's",
+                            String::from_utf8_lossy(name)
+                        );
+                    }
+                    // on four threads: the same bytes
+                    let four = api_level(&threaded.part(*p).unwrap(), *lx, *ly, pixel_type(t))
+                        .unwrap_or_else(|e| panic!("{what}: 4 threads: {e}"));
+                    assert!(four.0 == got_counts, "{what}: sample counts, 4 threads");
+                    for ((name, w), (_, g)) in want.iter().zip(&four.1) {
+                        assert!(
+                            w == g,
+                            "{what}, {}: 4 threads",
                             String::from_utf8_lossy(name)
                         );
                     }

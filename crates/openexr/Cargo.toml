@@ -17,8 +17,12 @@ name = "openexr"
 [dependencies]
 openexr-core = { workspace = true }
 bytemuck = { workspace = true }
+rayon = { workspace = true, optional = true }
 
 [features]
+default = ["rayon"]
+# Threads on request (PLAN.md O12); without it, every request runs single-threaded.
+rayon = ["dep:rayon"]
 # The heavy test tier (PLAN.md §8): tests/heavy_*.rs, run by `cargo xtask gate --full`.
 heavy = []
 
