@@ -2,3 +2,5 @@
 __pycache__/
 .venv/
 /corpus/
+pin-log.txt
+pin-tool-log.txt

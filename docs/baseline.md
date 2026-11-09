@@ -249,6 +249,7 @@ taken unzeroed, `scripts/bench.py 7 3` on a quiet machine, the port's time over 
 and encode checks, with the crafted ATK kernels; under SDE the `write_images` layouts), the
 port and the wheel on the same emulated CPU, at `28ff921`: all four checks pass at nhm, snb,
 ivb, hsw and skx, on Windows and on Rocky Linux 9 (ten runs, 33 to 55 minutes each). One
-Windows ivb run first failed in the oracle itself (the wheel's process, under memory pressure
-from a concurrent big-frame check); alone, and on rerun, it passes.
+Windows ivb run first failed before the oracle ran: SDE could not attach to the wheel's Python
+process (its log: `WIN_FOLLOW_CHILD: Failed to inject`), with a concurrent big-frame check using
+most of the memory; alone, and on rerun, it passes.
 
