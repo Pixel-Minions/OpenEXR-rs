@@ -22,7 +22,11 @@ openexr-openjph = { path = "crates/openexr-openjph", package = "openexr-rs-openj
 openexr-zstd = { path = "crates/openexr-zstd", package = "openexr-rs-zstd" }
 openexr-testkit = { path = "crates/openexr-testkit" }
 # Third-party dependencies are pinned to exact versions (`=x.y.z`), each with a reason and the
-# owner's OK (CLAUDE.md). None yet.
+# owner's OK (CLAUDE.md).
+# bytemuck: the safe API's typed buffers (`&mut [f32]`, `&mut [u16]`, `&mut [u32]`) as the bytes
+# Core's decoder and encoder take, without a copy and without `unsafe` in our crates (owner,
+# 2026-11-09, PLAN.md O14).
+bytemuck = { version = "=1.25.2", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

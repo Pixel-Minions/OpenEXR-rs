@@ -24,8 +24,11 @@
 
 pub mod attribute;
 mod error;
+mod frame_buffer;
+pub mod half;
 mod header;
 mod input;
+mod read;
 
 pub use attribute::{
     Attribute, Box2, Box2f, Box2i, Channel, Chromaticities, Compression, DeepImageState, Envmap,
@@ -33,5 +36,7 @@ pub use attribute::{
     TileDescription, TimeCode, V2, V2d, V2f, V2i, V3, V3d, V3f, V3i,
 };
 pub use error::{Error, ErrorCode, Result};
+pub use frame_buffer::{FrameBuffer, Sample, Slice};
 pub use header::Header;
 pub use input::{InputFile, MultiPartInputFile, ReadOptions};
+pub use read::InputPart;

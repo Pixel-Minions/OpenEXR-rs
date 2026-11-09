@@ -384,3 +384,9 @@ is filed.
    See the License for the specific language governing permissions and
    limitations under the License.
 ```
+
+## Dependencies
+
+Outside the translated code, `openexr-rs` (`crates/openexr`) depends on bytemuck 1.25.2
+(https://crates.io/crates/bytemuck), which Cargo fetches and which is not part of this
+repository; it is licensed under Zlib, Apache-2.0 or MIT, at the user's choice.

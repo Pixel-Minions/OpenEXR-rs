@@ -482,6 +482,25 @@ section. An entry says:
   wheels with crafted kernels (`oracle/craft_atk.py`, `tests/heavy_decode.rs`), natively and
   under SDE (nhm).
 
+### I-34. An uncompressed chunk read straight to the caller ignores the line skips
+
+- **Upstream:** when a chunk is uncompressed and every channel goes to the caller in the
+  file's type, `exr_decoding_choose_default_routines` reads it straight into the caller's
+  buffers (`read_uncompressed_direct`, src/lib/OpenEXRCore/decoding.c:92-150, chosen at
+  485-495 @ v3.5.3), every line of the chunk: `user_line_begin_skip` and
+  `user_line_end_ignore`, which every unpacker honours, are not looked at.
+- **Who notices:** a Core caller who sets the skips on a chunk of more than one line with no
+  compression: an uncompressed tile (scanline chunks of `NO_COMPRESSION` hold one line). The
+  C++ library never does: it sets the skips only on scanline chunks and reads part of a tiled
+  part through a buffered row of tiles (`InputFile::Data::bufferedReadPixels`,
+  src/lib/OpenEXR/ImfInputFile.cpp:537-618 @ v3.5.3). The lines outside the skips are written
+  too.
+- **A fix:** start at `user_line_begin_skip` and stop `user_line_end_ignore` lines early, as
+  the unpackers do.
+- **Status:** matched (`crates/openexr-core/src/decoding.rs`, `read_uncompressed_direct`);
+  the safe API (`crates/openexr`) reads tiles as the C++ library does and never sets the
+  skips on them.
+
 ## Undefined behaviour the port does not copy
 
 ### U-1. A string created from no data has an unset terminator

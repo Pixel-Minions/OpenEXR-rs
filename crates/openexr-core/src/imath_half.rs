@@ -13,7 +13,7 @@
 /// F16C or a lookup table. MSVC counts leading zeros with `_BitScanReverse` and GCC with
 /// `__builtin_clz`; for the non-zero value they are applied to, both equal `leading_zeros`.
 #[inline]
-pub(crate) fn imath_half_to_float(h: u16) -> f32 {
+pub fn imath_half_to_float(h: u16) -> f32 {
     let hexpmant: u32 = ((h as u32) << 17) >> 4;
     let mut v: u32 = ((h >> 15) as u32) << 31;
 
@@ -37,7 +37,7 @@ pub(crate) fn imath_half_to_float(h: u16) -> f32 {
 /// Port of `imath_float_to_half` (src/Imath/half.h:373-443 @ Imath v3.2.3), the branch without
 /// F16C, and without `IMATH_HALF_ENABLE_FP_EXCEPTIONS` (not defined in either wheel's build).
 #[inline]
-pub(crate) fn imath_float_to_half(f: f32) -> u16 {
+pub fn imath_float_to_half(f: f32) -> u16 {
     let v: u32 = f.to_bits();
     let mut ui: u32 = v & !0x8000_0000;
     let mut ret: u16 = ((v >> 16) & 0x8000) as u16;

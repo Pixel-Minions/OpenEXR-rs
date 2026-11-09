@@ -27,7 +27,7 @@ pub mod errors;
 mod f16c_simd;
 mod file_impl;
 pub mod float_vector;
-mod imath_half;
+pub mod imath_half;
 mod internal_b44;
 mod internal_b44_table;
 mod internal_coding;

@@ -20,110 +20,13 @@
 //! carry no attribute type); each attribute's type name is checked against Core's own (which
 //! `openexr-core`'s heavy_harness checks against Core 3.5.3).
 
+mod common;
+
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
+use common::{hex, images, oracle, root, write_list};
 use openexr::{Attribute, MultiPartInputFile, ReadOptions, Storage};
-
-const COMPRESSIONS: [&str; 14] = [
-    "NO_COMPRESSION",
-    "RLE_COMPRESSION",
-    "ZIPS_COMPRESSION",
-    "ZIP_COMPRESSION",
-    "PIZ_COMPRESSION",
-    "PXR24_COMPRESSION",
-    "B44_COMPRESSION",
-    "B44A_COMPRESSION",
-    "DWAA_COMPRESSION",
-    "DWAB_COMPRESSION",
-    "HTJ2K256_COMPRESSION",
-    "HTJ2K32_COMPRESSION",
-    "LJ2K_COMPRESSION",
-    "ZSTD_COMPRESSION",
-];
-
-fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn oracle(args: &[&std::ffi::OsStr]) {
-    let root = root();
-    let status = Command::new("uv")
-        .args(["run", "--project"])
-        .arg(root.join("oracle"))
-        .args(["python", "-I"])
-        .args(args)
-        .status()
-        .expect("uv runs the oracle");
-    assert!(status.success(), "the oracle failed: {args:?}");
-}
-
-/// Every `.exr` under `dir`, recursively, sorted.
-fn exr_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
-        .expect("a directory")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .collect();
-    entries.sort();
-    for p in entries {
-        if p.is_dir() {
-            exr_files(&p, out);
-        } else if p.extension().is_some_and(|e| e == "exr") {
-            out.push(p);
-        }
-    }
-}
-
-fn write_list(path: &Path, images: &[PathBuf]) {
-    let names: Vec<String> = images
-        .iter()
-        .map(|f| f.to_string_lossy().into_owned())
-        .collect();
-    std::fs::write(path, names.join("\n")).unwrap();
-}
-
-fn images(scratch: &Path) -> Vec<PathBuf> {
-    let mut images = Vec::new();
-    let dir = root().join("upstream/openexr/src/test/OpenEXRTest");
-    images.extend(
-        std::fs::read_dir(&dir)
-            .expect("test images")
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|e| e == "exr")),
-    );
-    let written = scratch.join("written");
-    let script = root().join("oracle/write_images.py");
-    let mut args = vec![script.as_os_str(), written.as_os_str()];
-    args.extend(COMPRESSIONS.iter().map(std::ffi::OsStr::new));
-    oracle(&args);
-    exr_files(&written, &mut images);
-    images.sort();
-    let corpus = root().join("corpus/openexr-images");
-    assert!(
-        corpus.is_dir(),
-        "{} is missing: fetch it with scripts/fetch-corpus.sh",
-        corpus.display()
-    );
-    exr_files(&corpus, &mut images);
-
-    let damaged = scratch.join("damaged");
-    std::fs::create_dir_all(&damaged).unwrap();
-    // (the list in a file: a command line of every path is too long for Windows)
-    let list = scratch.join("damage.txt");
-    write_list(&list, &images);
-    let script = "import sys\nsys.path.insert(0, sys.argv[1])\nimport native_accept_messages as m\nfor p in open(sys.argv[3], encoding='utf-8').read().split(chr(10)):\n    m.damaged(p, sys.argv[2])\n";
-    let oracle_dir = root().join("oracle");
-    oracle(&[
-        "-c".as_ref(),
-        script.as_ref(),
-        oracle_dir.as_os_str(),
-        damaged.as_os_str(),
-        list.as_os_str(),
-    ]);
-    exr_files(&damaged, &mut images);
-    images
-}
 
 /// The wheel's headers of an image: per part, each attribute's name (hex) and its
 /// `(kind, value)`; or its refusal.
@@ -146,10 +49,6 @@ fn wheel_headers(tsv: &Path) -> Result<Parts, String> {
         assert!(old.is_none(), "{}: a repeated attribute", tsv.display());
     }
     Ok(parts)
-}
-
-fn hex(b: &[u8]) -> String {
-    b.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// A Python `str` the binding makes from the bytes (pybind11 refuses bytes that are not

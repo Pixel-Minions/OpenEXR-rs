@@ -228,7 +228,6 @@ impl MultiPartInputFile {
     }
 
     /// Core's context, for the readers.
-    #[allow(dead_code)] // the readers come with M4.1
     pub(crate) fn context(&self) -> &Context {
         &self.ctx
     }

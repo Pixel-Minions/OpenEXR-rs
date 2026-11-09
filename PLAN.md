@@ -435,6 +435,7 @@ Each has a recommendation. Status on 2026-11-09:
 | O11 M4's crate and names | **Decided** (owner, 2026-11-09): a crate `openexr-rs` (`crates/openexr`, library `openexr`), unpublished; the C++ library's names (`Header`, `FrameBuffer`, `Slice`, `InputPart`, ...) in Rust's case |
 | O12 M4's threading | **Decided** (owner, 2026-11-09): `rayon`, as the C++ library uses IlmThread: single-threaded by default, a thread count per call (`threads(n)`, `threads(Auto)`) on request, behind a default `rayon` feature (without it, requests run single-threaded) |
 | O13 Publishing | **Open**: whether and when any crate goes to crates.io (after M4's API is reviewed) |
+| O14 M4's typed buffers | **Decided** (owner, 2026-11-09): `bytemuck` (`=1.25.2`, no default features) casts the caller's `&mut [f32]`, `&mut [u16]` and `&mut [u32]` to the bytes Core takes, without a copy and without `unsafe` in our crates |
 | Upstream bugs found in Phases 2-4 (I-5 to I-12) | **Decided** (owner, 2026-11-07): fixed as deviations D-1 to D-8 (`docs/deviations.md`), with waivers W-1 to W-7 (`docs/waivers.md`); I-13 as D-9 with W-8; I-14 to I-16 (the header writer) as D-10 to D-12 with W-9 to W-11; I-17, I-18 (the chunk writes) as D-13, D-14 with W-12, W-13; I-19, I-20 (the encode pipeline) as D-15, D-16 with W-14, W-15; I-21 (tile chunk info) as D-17 with W-16; I-29, I-30 (the deep sample table, the temporary file's rename) as D-19, D-20, and U-21 (Core's write locks, not copied): accepted on review (owner, 2026-11-07) |
 
 ### O1 — Oracle
@@ -659,7 +660,7 @@ newtype comes later if wanted, without a dependency.
 | Phase | Scope | Exit |
 |---|---|---|
 | **M4.0 Crate and headers** (~1 pw) | The crate, `Error`, `Header` and `Attribute`, `MultiPartInputFile` opening | Every header of the decode set as the wheel's. **Done 2026-11-09:** 1585 files, 20264 attributes; 11 refused by both, none by the wheel alone |
-| **M4.1 Reading** (~2 pw) | `FrameBuffer`, `Slice`, scanline and tiled reads, levels, conversion, sampling, fill; `Image::read` | The decode set's pixels as the wheel's, whole and partial |
+| **M4.1 Reading** (~2 pw) | `FrameBuffer`, `Slice`, scanline and tiled reads, levels, conversion, sampling, fill; `Image::read` | The decode set's pixels as the wheel's, whole and partial. **2026-11-09:** `FrameBuffer`, `Slice`, `InputPart` (`read_pixels`, `read_tiles`, levels): every flat part of the decode set as the wheel reads it (878 parts, 5682 reads: whole, interleaved, line ranges, sampled); refusals as the wheel's. Left: levels and conversions against Core's harness, `Image::read` |
 | **M4.2 Deep reading** (~1 pw) | `DeepFrameBuffer`, sample counts then samples | The deep files as the wheel's |
 | **M4.3 Writing** (~2.5 pw) | `OutputFile`, `MultiPartOutputFile`, `OutputPart`, flat and deep, every compression and level; `Image::write` | The wheel's files, byte for byte |
 | **M4.4 Threads, docs, speed** (~1.5 pw) | `ReadOptions`/`WriteOptions` threading, the crate's docs and examples, a speed comparison with Core's harness and with the C++ library's own multithreaded reads | Threaded results as single-threaded; docs build; the speed recorded |
