@@ -297,7 +297,7 @@ fn compress_flat(
     }
     // no compression, or nothing to compress (every channel sampled out of the chunk's
     // lines): the chunk goes as packed (`exr_encoding_run`, src/lib/OpenEXRCore/
-    // encoding.c:330-336 @ v3.5.3)
+    // encoding.c:330-361 @ v3.5.3)
     if h.compression() == crate::attribute::Compression::None || packed.is_empty() {
         return Ok(packed);
     }
