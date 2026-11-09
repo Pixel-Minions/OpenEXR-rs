@@ -295,33 +295,36 @@ One thread on the left, 32 on the right:
 
 | Compression | Read C++ | Read API | Write C++ | Write API | Read C++ | Read API | Write C++ | Write API |
 |---|---|---|---|---|---|---|---|---|
-| NONE | 59.4 | 8.9 | 52.4 | 25.2 | 152.9 | 9.2 | 28.9 | 30.5 |
-| RLE | 117.2 | 40.8 | 118.4 | 74.0 | 26.4 | 11.2 | 32.8 | 48.9 |
-| ZIPS | 48.8 | 42.9 | 231.9 | 202.2 | 27.5 | 11.6 | 50.0 | 47.6 |
-| ZIP | 40.2 | 37.5 | 203.7 | 208.2 | 11.4 | 16.7 | 28.9 | 49.3 |
-| PIZ | 95.8 | 96.5 | 279.4 | 273.6 | 15.8 | 26.7 | 40.6 | 73.6 |
-| PXR24 | 44.6 | 44.4 | 181.1 | 196.9 | 11.4 | 23.8 | 25.2 | 48.9 |
-| B44 | 29.0 | 27.2 | 95.8 | 91.3 | 13.2 | 15.0 | 23.5 | 42.7 |
-| B44A | 25.6 | 23.3 | 100.5 | 83.8 | 12.3 | 15.0 | 21.7 | 42.1 |
-| DWAA | 74.2 | 63.4 | 707.2 | 722.4 | 16.0 | 26.4 | 129.9 | 143.6 |
-| DWAB | 70.9 | 64.7 | 451.4 | 470.7 | 22.6 | 26.3 | 180.9 | 185.9 |
-| HTJ2K256 | 82.9 | 83.6 | 176.6 | 150.2 | 37.4 | 33.4 | 60.9 | 62.7 |
-| HTJ2K32 | 75.7 | 91.0 | 205.7 | 162.9 | 42.3 | 33.1 | 40.5 | 53.2 |
-| LJ2K | 83.9 | 96.3 | 169.4 | 164.8 | 42.0 | 37.1 | 61.5 | 66.1 |
-| ZSTD | 67.7 | 44.5 | 246.7 | 205.2 | 25.1 | 11.6 | 26.6 | 51.5 |
+| NONE | 60.7 | 9.1 | 53.5 | 20.7 | 161.2 | 8.9 | 31.3 | 19.5 |
+| RLE | 110.8 | 40.6 | 117.9 | 61.4 | 26.9 | 11.2 | 31.9 | 32.4 |
+| ZIPS | 50.0 | 43.6 | 251.3 | 190.4 | 29.2 | 12.2 | 50.8 | 36.6 |
+| ZIP | 42.0 | 37.9 | 227.1 | 194.8 | 11.5 | 16.5 | 29.1 | 33.2 |
+| PIZ | 93.4 | 98.7 | 286.8 | 264.1 | 17.0 | 25.9 | 41.4 | 59.2 |
+| PXR24 | 50.9 | 44.4 | 195.2 | 179.8 | 11.6 | 23.3 | 24.6 | 32.3 |
+| B44 | 30.7 | 27.7 | 103.3 | 77.8 | 13.9 | 15.5 | 26.1 | 27.7 |
+| B44A | 26.0 | 23.9 | 110.7 | 71.1 | 13.2 | 14.6 | 23.6 | 26.7 |
+| DWAA | 75.5 | 63.7 | 733.5 | 712.1 | 15.0 | 27.3 | 133.2 | 132.6 |
+| DWAB | 72.9 | 63.5 | 470.8 | 459.9 | 23.3 | 25.6 | 183.8 | 175.9 |
+| HTJ2K256 | 76.2 | 84.1 | 171.4 | 140.5 | 37.3 | 33.5 | 60.0 | 52.8 |
+| HTJ2K32 | 77.1 | 91.5 | 225.2 | 149.0 | 41.3 | 34.8 | 42.2 | 46.0 |
+| LJ2K | 87.0 | 97.8 | 180.0 | 153.3 | 43.4 | 37.8 | 63.5 | 56.5 |
+| ZSTD | 69.2 | 44.7 | 267.5 | 190.5 | 25.7 | 12.3 | 29.5 | 35.8 |
 
-- **One thread:** the API reads as fast as the C++ library or faster, but for HTJ2K32 (1.20
-  times the C++ library's time) and LJ2K (1.15), and writes as fast or faster, but for DWAA,
-  DWAB, PXR24 and ZIP (1.02 to 1.09). OpenJPH's line, codeblock and coded-byte buffers come
+- **One thread:** the API reads as fast as the C++ library or faster, but for the HTJ2K family
+  (HTJ2K32 1.19 times the C++ library's time, LJ2K 1.12, HTJ2K256 1.10) and PIZ (1.06), and
+  writes faster for every compression. OpenJPH's line, codeblock and coded-byte buffers come
   from a pool each thread keeps (`crates/openexr-openjph/src/mem.rs`), as upstream carves them
   from allocators it keeps from one codestream to the next; that took HTJ2K32's read from 1.83
-  times the C++ library's time to 1.20, and its write from 1.18 to 0.79.
+  times the C++ library's time to 1.19, and its write from 1.18 to 0.66. The C++ library's
+  times vary by about 10% from run to run.
 - **32 threads:** reads decode their chunks in parallel straight into the caller's buffers, and
-  writes compress theirs in parallel. A `Threads::Count(n)` pool is the process's, kept from
-  file to file as the C++ library keeps its global pool (it was the file's own, its threads
-  and their buffers started anew for each file, which made HTJ2K32 slower on 32 threads than on
-  4: 265 ms to read, now 33). Reads are faster than the C++ library's for NONE, RLE, ZIPS,
-  ZSTD and the HTJ2K family, slower for the rest (up to 2.1 times its time, PXR24); writes
-  scale less (the C++ library overlaps staging, compression and writing;
-  the API stages and writes on the calling thread: `docs/deferred.md`).
+  writes pack and compress theirs in parallel, a chunk one `write_pixels` gives whole packed
+  straight from the caller's frame buffer (lines given over several calls, and tiles, are
+  staged first). A `Threads::Count(n)` pool is the process's, kept from file to file as the
+  C++ library keeps its global pool (it was the file's own, its threads and their buffers
+  started anew for each file, which made HTJ2K32 slower on 32 threads than on 4: 265 ms to
+  read, now 35). Reads are faster than the C++ library's for NONE, RLE, ZIPS, ZSTD and the
+  HTJ2K family, slower for the rest (up to 2 times its time, PXR24); writes are faster for
+  NONE, ZIPS, DWAA, DWAB, HTJ2K256 and LJ2K, slower for the rest (up to 1.43 times, PIZ,
+  whose tiled image is staged: `docs/deferred.md`).
 

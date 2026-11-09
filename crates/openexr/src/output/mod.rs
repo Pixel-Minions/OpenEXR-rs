@@ -225,8 +225,18 @@ struct Staged {
     planes: Vec<Vec<u8>>,
 }
 
+/// Where a chunk's samples come from.
+enum Source<'f, 'a> {
+    /// Each channel's samples, in the file's type, row by row (lines staged over several
+    /// writes, or a tile).
+    Planes(Vec<Vec<u8>>),
+    /// The caller's frame buffer, whose slices were checked to hold the chunk's lines: a
+    /// chunk one write gives whole, packed straight from it on the thread that compresses it.
+    Frame(&'f FrameBuffer<'a>),
+}
+
 /// The bytes Core's encode pipeline writes for chunk `winfo` of part `p`, whose channels'
-/// samples `planes` holds (one per channel of `h`, in the file's type, row by row): the
+/// samples `src` holds (or, for a channel without a slice in a frame buffer, zeros): the
 /// chunk packed as Core's pack stage packs planar samples of the file's types (each line,
 /// each channel's samples of it, little-endian: `internal_exr_match_encode`,
 /// src/lib/OpenEXRCore/pack.c @ v3.5.3, checked against the wheel's files by
@@ -239,7 +249,7 @@ fn compress_flat(
     p: i32,
     winfo: &openexr_core::chunk_info::ChunkInfo,
     h: &Header,
-    planes: &[Vec<u8>],
+    src: &Source<'_, '_>,
     state: &mut EncodeState,
 ) -> Result<Vec<u8>> {
     // one pipeline from chunk to chunk (`exr_encoding_update`), as Core's callers keep one,
@@ -254,9 +264,12 @@ fn compress_flat(
     let mut packed = std::mem::take(&mut state.packed);
     packed.clear();
     packed.reserve(winfo.unpacked_size as usize);
-    let mut rows_done = vec![0usize; planes.len()];
+    let mut rows_done = vec![0usize; h.channels().len()];
     let scanline = h.storage() == Storage::Scanline;
+    let dw = h.data_window();
     let mut keys = Vec::with_capacity(enc.channels.len());
+    // for a frame buffer: each channel's slice, if any, and the column of its first sample
+    let mut slices = Vec::with_capacity(enc.channels.len());
     for ch in &enc.channels {
         let k = h
             .channels()
@@ -264,7 +277,21 @@ fn compress_flat(
             .position(|c| c.name == ch.channel_name)
             .ok_or_else(|| invalid("A chunk's channel is not the header's"))?;
         let bpe = i32::from(ch.bytes_per_element);
-        if (ch.width.max(0) * ch.height.max(0) * bpe) as usize != planes[k].len() {
+        let fits = match src {
+            Source::Planes(planes) => {
+                (ch.width.max(0) * ch.height.max(0) * bpe) as usize == planes[k].len()
+            }
+            Source::Frame(fb) => {
+                let c = &h.channels()[k];
+                slices.push(
+                    fb.slice(&c.name)
+                        .map(|s| (s, first_multiple(dw.min.x, c.x_sampling) as i32)),
+                );
+                scanline
+                    && ch.width.max(0) as usize == sample_count(dw.min.x, dw.max.x, c.x_sampling)
+            }
+        };
+        if !fits {
             return Err(invalid(
                 "A chunk's channel is not the size the header gives",
             ));
@@ -272,7 +299,7 @@ fn compress_flat(
         keys.push(k);
     }
     for r in 0..winfo.height {
-        for (ch, &k) in enc.channels.iter().zip(&keys) {
+        for (i, (ch, &k)) in enc.channels.iter().zip(&keys).enumerate() {
             if ch.height <= 0 {
                 continue;
             }
@@ -281,13 +308,32 @@ fn compress_flat(
             }
             let bpe = ch.bytes_per_element as usize;
             let line = ch.width.max(0) as usize * bpe;
-            let row = &planes[k][rows_done[k] * line..(rows_done[k] + 1) * line];
-            rows_done[k] += 1;
-            if cfg!(target_endian = "little") {
-                packed.extend_from_slice(row);
-            } else {
-                for v in row.chunks_exact(bpe) {
-                    packed.extend(v.iter().rev());
+            let at = packed.len();
+            match src {
+                Source::Planes(planes) => {
+                    packed.extend_from_slice(
+                        &planes[k][rows_done[k] * line..(rows_done[k] + 1) * line],
+                    );
+                    rows_done[k] += 1;
+                }
+                Source::Frame(fb) => {
+                    packed.resize(at + line, 0);
+                    if let Some((s, x0)) = slices[i] {
+                        // checked by check_slice; the next sample is `x_stride` on
+                        let from = s.offset_of(x0, winfo.start_y + r).expect("checked") as usize;
+                        gather(
+                            &mut packed[at..],
+                            fb.buffer(s.buffer),
+                            from,
+                            s.x_stride,
+                            bpe,
+                        );
+                    }
+                }
+            }
+            if cfg!(target_endian = "big") {
+                for v in packed[at..].chunks_exact_mut(bpe) {
+                    v.reverse();
                 }
             }
         }
@@ -362,11 +408,11 @@ fn compress_all(
     ctx: &Context,
     p: i32,
     h: &Header,
-    chunks: Vec<(ChunkAt, Vec<Vec<u8>>)>,
+    chunks: Vec<(ChunkAt, Source<'_, '_>)>,
 ) -> Vec<(ChunkAt, Result<Vec<u8>>)> {
-    pool.map_init(chunks, EncodeState::default, |state, (at, planes)| {
-        let r = write_info(ctx, p, at)
-            .and_then(|winfo| compress_flat(ctx, p, &winfo, h, &planes, state));
+    pool.map_init(chunks, EncodeState::default, |state, (at, src)| {
+        let r =
+            write_info(ctx, p, at).and_then(|winfo| compress_flat(ctx, p, &winfo, h, &src, state));
         (at, r)
     })
 }
@@ -699,13 +745,24 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
         self.poison(r)
     }
 
-    /// The lines staged, the chunks they complete compressed and written.
+    /// The lines staged, the chunks they complete compressed and written: a chunk the lines
+    /// give whole is packed from `fb` as it compresses, the others' lines staged until whole.
     fn write_lines(&mut self, fb: &FrameBuffer<'_>, lines: i32) -> Result<()> {
         let mut whole = Vec::new();
-        for _ in 0..lines {
-            if let Some(chunk) = self.stage_line(fb)? {
-                whole.push((ChunkAt::Scan(chunk.first), chunk.planes));
+        let mut left = lines;
+        while left > 0 {
+            if let Some((first, n)) = self.whole_chunk(left)? {
+                whole.push((ChunkAt::Scan(first), Source::Frame(fb)));
+                let state = &mut self.file.parts[self.index];
+                state.next_y += state.step * n;
+                state.lines_left -= i64::from(n);
+                left -= n;
+                continue;
             }
+            if let Some(chunk) = self.stage_line(fb)? {
+                whole.push((ChunkAt::Scan(chunk.first), Source::Planes(chunk.planes)));
+            }
+            left -= 1;
         }
         // the chunks completed compress on the file's threads, then go to the file in order
         let p = self.index as i32;
@@ -734,6 +791,30 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
             Some(e) => Err(e.clone()),
             None => Ok(()),
         }
+    }
+
+    /// The chunk the next line begins, its first line and its number of lines, when nothing of
+    /// it is staged and the next `left` lines hold it whole.
+    fn whole_chunk(&mut self, left: i32) -> Result<Option<(i32, i32)>> {
+        let p = self.index as i32;
+        let file = &*self.file;
+        let state = &file.parts[self.index];
+        if state.staged.is_some() {
+            return Ok(None);
+        }
+        let ctx = file.ctx.as_ref().expect("not finished");
+        let dw = file.headers[self.index].data_window();
+        let lpc = ctx.get_scanlines_per_chunk(p).map_err(core)?;
+        let y = state.next_y;
+        let first = dw.min.y + (y - dw.min.y) / lpc * lpc;
+        let last = (first + lpc - 1).min(dw.max.y);
+        let n = last - first + 1;
+        let begins = if state.step > 0 {
+            y == first
+        } else {
+            y == last
+        };
+        Ok((begins && n <= left).then_some((first, n)))
     }
 
     /// Copies the next line into its chunk's staging; gives the chunk once whole.

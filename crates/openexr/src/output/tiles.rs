@@ -7,7 +7,9 @@ use std::io::{Seek, Write};
 
 use openexr_core::Context;
 
-use super::{ChunkAt, OutputPart, PartState, compress_all, core, gather, invalid, write_flat};
+use super::{
+    ChunkAt, OutputPart, PartState, Source, compress_all, core, gather, invalid, write_flat,
+};
 use crate::attribute::LineOrder;
 use crate::error::{Error, ErrorCode, Result};
 use crate::frame_buffer::FrameBuffer;
@@ -291,7 +293,7 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
                         plane
                     })
                     .collect();
-                given.push((ChunkAt::Tile((tx, ty, lx, ly)), planes));
+                given.push((ChunkAt::Tile((tx, ty, lx, ly)), Source::Planes(planes)));
             }
         }
         // the tiles compress on the file's threads, then go to the file, or wait their
