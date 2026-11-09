@@ -240,9 +240,20 @@ fn compress_flat(
     winfo: &openexr_core::chunk_info::ChunkInfo,
     h: &Header,
     planes: &[Vec<u8>],
+    state: &mut EncodeState,
 ) -> Result<Vec<u8>> {
-    let mut enc = ctx.encoding_initialize(p, winfo).map_err(core)?;
-    let mut packed = Vec::with_capacity(winfo.unpacked_size as usize);
+    // one pipeline from chunk to chunk (`exr_encoding_update`), as Core's callers keep one,
+    // so that its buffers, the compressed one sized for the worst case, are made once
+    let enc = match &mut state.enc {
+        Some(enc) => {
+            ctx.encoding_update(p, winfo, enc).map_err(core)?;
+            enc
+        }
+        slot @ None => slot.insert(ctx.encoding_initialize(p, winfo).map_err(core)?),
+    };
+    let mut packed = std::mem::take(&mut state.packed);
+    packed.clear();
+    packed.reserve(winfo.unpacked_size as usize);
     let mut rows_done = vec![0usize; planes.len()];
     let scanline = h.storage() == Storage::Scanline;
     let mut keys = Vec::with_capacity(enc.channels.len());
@@ -285,20 +296,44 @@ fn compress_flat(
         return Err(invalid("A chunk packs to another size than Core gives it"));
     }
     if h.compression() == crate::attribute::Compression::None {
-        ctx.encoding_destroy(&mut enc).map_err(core)?;
         return Ok(packed);
     }
     enc.packed_bytes = packed.len() as u64;
     enc.packed_buffer = Some(packed);
-    let r = openexr_core::compression::compress_chunk(&mut enc, ctx).map_err(core);
+    let r = openexr_core::compression::compress_chunk(enc, ctx).map_err(core);
     let out = enc
         .compressed()
         .get(..enc.compressed_bytes)
         .map(<[u8]>::to_vec)
         .ok_or_else(|| invalid("A compressed chunk is shorter than its size"));
-    ctx.encoding_destroy(&mut enc).map_err(core)?;
+    // the packed bytes come back for the next chunk, not into Core's buffer pool
+    state.packed = enc.packed_buffer.take().unwrap_or_default();
     r?;
     out
+}
+
+/// Copies `dst.len() / size` samples of `size` bytes from `src`, the first at byte `from`
+/// and each `step` bytes after the one before, to `dst` one after another: one copy where
+/// they are side by side. The samples were checked to lie in `src`.
+pub(super) fn gather(dst: &mut [u8], src: &[u8], from: usize, step: i64, size: usize) {
+    if step == size as i64 {
+        dst.copy_from_slice(&src[from..from + dst.len()]);
+        return;
+    }
+    let mut o = from as i64;
+    for d in dst.chunks_exact_mut(size) {
+        let u = o as usize;
+        d.copy_from_slice(&src[u..u + size]);
+        o += step;
+    }
+}
+
+/// What a thread keeps from chunk to chunk it compresses: Core's encode pipeline and the
+/// buffer chunks are packed into.
+#[derive(Default)]
+struct EncodeState {
+    enc: Option<openexr_core::encoding::EncodePipeline>,
+    packed: Vec<u8>,
 }
 
 /// Where a flat chunk goes: its first line, or its tile.
@@ -326,8 +361,9 @@ fn compress_all(
     h: &Header,
     chunks: Vec<(ChunkAt, Vec<Vec<u8>>)>,
 ) -> Vec<(ChunkAt, Result<Vec<u8>>)> {
-    pool.map(chunks, |(at, planes)| {
-        let r = write_info(ctx, p, at).and_then(|winfo| compress_flat(ctx, p, &winfo, h, &planes));
+    pool.map_init(chunks, EncodeState::default, |state, (at, planes)| {
+        let r = write_info(ctx, p, at)
+            .and_then(|winfo| compress_flat(ctx, p, &winfo, h, &planes, state));
         (at, r)
     })
 }
@@ -708,16 +744,16 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
             let size = c.pixel_type.size();
             let w = sample_count(dw.min.x, dw.max.x, c.x_sampling);
             let row = sample_count(staged.first, y - 1, c.y_sampling);
-            let src = fb.buffer(s.buffer);
             let x0 = first_multiple(dw.min.x, c.x_sampling) as i32;
-            for i in 0..w {
-                // checked by check_slice
-                let o = s
-                    .offset_of(x0 + i as i32 * c.x_sampling, y)
-                    .expect("checked") as usize;
-                let d = (row * w + i) * size;
-                plane[d..d + size].copy_from_slice(&src[o..o + size]);
-            }
+            // checked by check_slice; the next sample is `x_stride` on
+            let from = s.offset_of(x0, y).expect("checked") as usize;
+            gather(
+                &mut plane[row * w * size..(row + 1) * w * size],
+                fb.buffer(s.buffer),
+                from,
+                s.x_stride,
+                size,
+            );
         }
         staged.lines += 1;
         state.next_y += state.step;

@@ -7,7 +7,7 @@ use std::io::{Seek, Write};
 
 use openexr_core::Context;
 
-use super::{ChunkAt, OutputPart, PartState, compress_all, core, invalid, write_flat};
+use super::{ChunkAt, OutputPart, PartState, compress_all, core, gather, invalid, write_flat};
 use crate::attribute::LineOrder;
 use crate::error::{Error, ErrorCode, Result};
 use crate::frame_buffer::FrameBuffer;
@@ -269,12 +269,10 @@ impl<W: Write + Seek + Send + 'static> OutputPart<'_, W> {
                         if let Some(s) = fb.slice(&c.name) {
                             let src = fb.buffer(s.buffer);
                             for y in y0..=y1 {
-                                for x in x0..=x1 {
-                                    // checked by check_slice
-                                    let o = s.offset_of(x, y).expect("checked") as usize;
-                                    let d = ((y - y0) as usize * w + (x - x0) as usize) * size;
-                                    plane[d..d + size].copy_from_slice(&src[o..o + size]);
-                                }
+                                // checked by check_slice
+                                let from = s.offset_of(x0, y).expect("checked") as usize;
+                                let d = (y - y0) as usize * w * size;
+                                gather(&mut plane[d..d + w * size], src, from, s.x_stride, size);
                             }
                         }
                         plane

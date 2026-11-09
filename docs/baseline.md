@@ -278,3 +278,46 @@ with a pattern (`buffer_pool::reused`), and `gate --full` passes on Windows and 
 | LJ2K | 1.00 | 0.91 |
 | ZSTD | 0.64 | 1.03 |
 
+## The safe API's speed (2026-11-09, Windows)
+
+`scripts/bench_api.py 5`: the files of `scripts/bench.py` (Blobbies, scanlines; Ocean, tiles;
+singlepart.0001, 20 channels; each rewritten by Core into all 14 compressions), each read whole
+and written whole, by the wheel (the C++ library: `OpenEXR.File(..., num_threads=n)` and
+`File.write`) and by the API (`Image::read` from memory, `Image::write_to` into memory), the
+best of 5, milliseconds summed over the three images. One thread is the calling thread alone
+on both sides (the C++ library's `num_threads=1` is a worker beside it, which overlaps
+compression with the rest: its writes then take about half as long); the right half is 32
+threads (the C++ library's pool set to 32 with `set_global_thread_count`). The wheel's times
+include building its numpy arrays and writing to a file; the API's, its owned planes and
+writing into memory. This machine: AMD Ryzen 9 9950X3D, 16 cores, 32 threads.
+
+One thread on the left, 32 on the right:
+
+| Compression | Read C++ | Read API | Write C++ | Write API | Read C++ | Read API | Write C++ | Write API |
+|---|---|---|---|---|---|---|---|---|
+| NONE | 58.9 | 7.3 | 54.8 | 24.5 | 136.6 | 9.3 | 32.8 | 31.7 |
+| RLE | 111.8 | 40.2 | 122.3 | 81.0 | 25.8 | 11.9 | 33.4 | 51.7 |
+| ZIPS | 50.0 | 41.5 | 257.8 | 203.0 | 25.6 | 12.5 | 53.0 | 57.4 |
+| ZIP | 39.6 | 36.0 | 198.8 | 207.5 | 11.4 | 15.0 | 26.8 | 56.5 |
+| PIZ | 89.6 | 97.2 | 282.2 | 266.7 | 16.6 | 25.0 | 42.6 | 76.5 |
+| PXR24 | 44.3 | 43.2 | 205.2 | 195.4 | 11.8 | 21.9 | 26.0 | 58.5 |
+| B44 | 30.0 | 25.4 | 102.8 | 89.3 | 13.7 | 14.5 | 24.0 | 45.8 |
+| B44A | 24.3 | 21.1 | 95.9 | 82.7 | 13.3 | 14.2 | 22.3 | 43.8 |
+| DWAA | 70.2 | 60.8 | 703.6 | 711.7 | 15.3 | 29.6 | 130.9 | 158.1 |
+| DWAB | 70.3 | 62.7 | 460.0 | 464.2 | 22.9 | 25.8 | 181.2 | 199.0 |
+| HTJ2K256 | 76.3 | 103.4 | 164.8 | 169.6 | 37.1 | 59.0 | 55.9 | 98.3 |
+| HTJ2K32 | 77.0 | 141.3 | 208.1 | 245.9 | 41.1 | 265.0 | 40.8 | 487.4 |
+| LJ2K | 84.0 | 121.1 | 172.3 | 188.1 | 39.2 | 72.5 | 57.7 | 129.1 |
+| ZSTD | 68.6 | 43.2 | 246.4 | 204.2 | 24.9 | 14.0 | 30.4 | 61.2 |
+
+- **One thread:** the API reads as fast as the C++ library or faster, but for the HTJ2K
+  family (HTJ2K256 1.36, HTJ2K32 1.83, LJ2K 1.44 times the C++ library's time; Core's port
+  decodes them as fast as Core itself, `scripts/bench.py`), and writes as fast or faster, but
+  for HTJ2K32 (1.18), LJ2K (1.09) and ZIP (1.04). Its write costs 5 to 15% more than the Core
+  port's bare encode of the same chunks (the copies into its chunk staging and packing).
+- **32 threads:** reads decode their chunks in parallel straight into the caller's buffers and
+  writes compress theirs in parallel; both scale, but less than the C++ library's (its
+  writes overlap staging, compression and the writes themselves; the API stages and writes on
+  the calling thread). HTJ2K32 slows down past 2 to 4 threads: OpenJPH's per-chunk
+  allocations contend for the allocator (docs/deferred.md).
+

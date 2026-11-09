@@ -71,24 +71,51 @@ impl Pool {
         !matches!(self, Pool::Serial)
     }
 
-    /// `f` of each item, in the items' order, on the pool's threads.
-    pub(crate) fn map<I: Send, O: Send>(
+    /// `f` of each item, in the items' order, on the pool's threads: the items in about four
+    /// runs a thread, each run one after another with one state `init` makes (a decoder or
+    /// encoder whose buffers then serve the run's chunks).
+    pub(crate) fn map_init<I: Send, O: Send, S>(
         &self,
         items: Vec<I>,
-        f: impl Fn(I) -> O + Sync + Send,
+        init: impl Fn() -> S + Sync + Send,
+        f: impl Fn(&mut S, I) -> O + Sync + Send,
     ) -> Vec<O> {
+        let run_all = |items: Vec<I>| {
+            let mut state = init();
+            items
+                .into_iter()
+                .map(|i| f(&mut state, i))
+                .collect::<Vec<O>>()
+        };
         match self {
-            Pool::Serial => items.into_iter().map(f).collect(),
+            Pool::Serial => run_all(items),
             #[cfg(feature = "rayon")]
-            Pool::Current => {
-                use rayon::prelude::*;
-                items.into_par_iter().map(f).collect()
-            }
+            Pool::Current => runs(items, rayon::current_num_threads(), &run_all),
             #[cfg(feature = "rayon")]
-            Pool::Own(p) => p.install(|| {
-                use rayon::prelude::*;
-                items.into_par_iter().map(f).collect()
-            }),
+            Pool::Own(p) => p.install(|| runs(items, p.current_num_threads(), &run_all)),
         }
     }
+}
+
+/// `items` cut into about four runs for each of `threads` threads, each run done by `run`
+/// on the current pool, the results in the items' order.
+#[cfg(feature = "rayon")]
+fn runs<I: Send, O: Send>(
+    items: Vec<I>,
+    threads: usize,
+    run: &(impl Fn(Vec<I>) -> Vec<O> + Sync),
+) -> Vec<O> {
+    use rayon::prelude::*;
+    let n = items.len();
+    let size = n.div_ceil((threads * 4).max(1)).max(1);
+    let mut groups: Vec<Vec<I>> = Vec::with_capacity(n.div_ceil(size));
+    let mut items = items.into_iter();
+    loop {
+        let g: Vec<I> = items.by_ref().take(size).collect();
+        if g.is_empty() {
+            break;
+        }
+        groups.push(g);
+    }
+    groups.into_par_iter().map(run).flatten().collect()
 }

@@ -462,29 +462,45 @@ impl<'f> InputPart<'f> {
                 }
             }
             let work: Vec<_> = units.into_iter().zip(shares).zip(bases).collect();
-            let results = pool.map(work, |((unit, mut outs), bases)| {
-                self.decode_jobs(&slices, &fill_slices, &unit.jobs, &mut outs, &bases)
-            });
+            // a decoder per thread, kept from unit to unit (`exr_decoding_update`)
+            let results = pool.map_init(
+                work,
+                || None,
+                |dec, ((unit, mut outs), bases)| {
+                    self.decode_jobs(&slices, &fill_slices, &unit.jobs, &mut outs, &bases, dec)
+                },
+            );
             return results.into_iter().collect::<Result<Vec<()>>>().map(drop);
         }
         let jobs: Vec<Job> = units.into_iter().flat_map(|u| u.jobs).collect();
         let mut outs = fb.outputs()?;
-        self.decode_jobs(&slices, &fill_slices, &jobs, &mut outs, &vec![0; nbuf])
+        self.decode_jobs(
+            &slices,
+            &fill_slices,
+            &jobs,
+            &mut outs,
+            &vec![0; nbuf],
+            &mut None,
+        )
     }
 
-    /// Decodes `jobs` one after another with one decoder, as one C++ process does, into
-    /// `outs`, buffer `b` holding the frame buffer's buffer from byte `bases[b]`.
-    fn decode_jobs(
+    /// Decodes `jobs` one after another with `dec`, one decoder kept from chunk to chunk as
+    /// one C++ process keeps it, into `outs`, buffer `b` holding the frame buffer's buffer
+    /// from byte `bases[b]`.
+    fn decode_jobs<'c>(
         &self,
         slices: &[(Vec<u8>, Slice)],
         fills: &[Slice],
         jobs: &[Job],
         outs: &mut [&mut [u8]],
         bases: &[usize],
-    ) -> Result<()> {
-        let mut dec = None;
+        dec: &mut Option<DecodePipeline<'c>>,
+    ) -> Result<()>
+    where
+        'f: 'c,
+    {
         for job in jobs {
-            self.decode_chunk(slices, fills, job, outs, bases, &mut dec)?;
+            self.decode_chunk(slices, fills, job, outs, bases, dec)?;
         }
         Ok(())
     }

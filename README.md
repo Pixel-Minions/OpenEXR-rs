@@ -15,17 +15,17 @@ bundles:
 | `openexr-rs-zstd` (`crates/openexr-zstd`) | zstd 1.5.7: the decompressor and the compressor at every level, 1 to 22, every strategy, the block splitter, long distance matching and index overflow correction | 13,500 |
 | `openexr-rs-openjph` (`crates/openexr-openjph`) | OpenJPH 0.32.0: the HTJ2K decoder and encoder, the wavelets, colour transforms and codestream | 22,600 |
 | `openexr-testkit` (`crates/openexr-testkit`) | Test-only: the platform C runtime and the CPU as references | 450 |
-| `openexr-rs` (`crates/openexr`, library `openexr`) | **In progress (M4):** a safe Rust API over the Core port, with the C++ library's names. Done: opening files (a path, a `Read + Seek`, bytes), every part's `Header` and `Attribute`s, reading every part's pixels into the caller's buffers (`FrameBuffer`, `Slice`, `InputPart`: scanlines, tiles, levels, line ranges, interleaved and subsampled channels, conversions, fill values; deep parts' sample counts and samples through `DeepFrameBuffer`), and `Image::read` for a whole file, as the wheel and Core read them; writing files (`MultiPartOutputFile`, `OutputFile`, `OutputPart`: scanlines, tiles and every level, deep parts, every compression; `Image::write`), the wheel's files byte for byte | 4,500 |
+| `openexr-rs` (`crates/openexr`, library `openexr`) | **M4, done:** a safe Rust API over the Core port, with the C++ library's names, no `unsafe`: opening files (a path, a `Read + Seek`, bytes), every part's `Header` and `Attribute`s, reading every part's pixels into the caller's buffers (`FrameBuffer`, `Slice`, `InputPart`: scanlines, tiles, levels, line ranges, interleaved and subsampled channels, conversions, fill values; deep parts' sample counts and samples through `DeepFrameBuffer`), and `Image::read` for a whole file, as the wheel and Core read them; writing files (`MultiPartOutputFile`, `OutputFile`, `OutputPart`: scanlines, tiles and every level, deep parts, every compression; `Image::write`), the wheel's files byte for byte; threads through `rayon` on request | 5,200 |
 
 Every SIMD path upstream has is ported (ZIP's SSE2/SSE4.1, DWA's SSE2/AVX/F16C, libdeflate's
 BMI2 decoder and vector Adler-32, zstd's BMI2 builds and SSE2 row search, OpenJPH's SSSE3, AVX2
 and AVX-512 kernels), each chosen as the wheel's build chooses it, so the port computes what the
 official build computes on each platform and CPU.
 
-Core's API is its C API in Rust form (contexts, chunk infos, decode and encode pipelines). The
-milestone now under way, M4 (`PLAN.md` §16), is a safe Rust API on top of it, `openexr-rs`:
-reading and writing are done (flat and deep); threads, docs and speed come next (M4.4). The OpenEXR C++ library itself
-comes later, as far as its features are wanted (M5).
+Core's API is its C API in Rust form (contexts, chunk infos, decode and encode pipelines). On top
+of it, `openexr-rs` is a safe Rust API (milestone M4, `docs/m4.md`): reading and writing, flat
+and deep, every level and compression, threads on request, writing the C++ library's files byte
+for byte. The OpenEXR C++ library itself comes later, as far as its features are wanted (M5).
 
 ## How parity is checked
 
@@ -57,6 +57,10 @@ mostly corrected error text and writer bugs, with 17 waivers for the outputs the
 (`docs/waivers.md`); pixels and file bytes stay bit-exact.
 
 ## Speed
+
+The safe API against the C++ library (the wheel), whole files read and written, on Windows
+(`docs/baseline.md`, "The safe API's speed"): on one thread as fast or faster for every
+compression but the HTJ2K family; on 32 threads both scale.
 
 Against Core itself (the harness, the wheel's build settings), single-threaded, on Windows: the
 port's time over Core's, decoding and encoding three corpus images rewritten into each
