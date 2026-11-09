@@ -104,6 +104,8 @@ harness (`scripts/oracle-native-build.cmd` on Windows, in the MSVC rez environme
   deviations and their waivers.
 - `docs/deferred.md`: what is left for later.
 - `docs/m3.md`: the Core parity milestone, what it covers and how it was checked.
+- `docs/m4.md`: the safe API milestone.
+- `CHANGELOG.md`: releases (0.1.0 prepared, not yet published: `PLAN.md` O13).
 - `upstream/`: OpenEXR v3.5.3 and Imath v3.2.3 as submodules.
 
 ## License

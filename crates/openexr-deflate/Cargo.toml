@@ -1,13 +1,16 @@
 [package]
 name = "openexr-rs-deflate"
 description = "An exact Rust port of libdeflate 1.26, as OpenEXR 3.5.3 bundles it"
-version.workspace = true
+version = "0.1.0+libdeflate.1.26"
 edition.workspace = true
 rust-version.workspace = true
 license = "MIT"
 authors.workspace = true
 repository.workspace = true
-publish.workspace = true
+keywords = ["deflate", "zlib", "compression", "openexr"]
+categories = ["compression"]
+readme = "README.md"
+exclude = ["tests/", "examples/"]
 
 [lib]
 name = "openexr_deflate"

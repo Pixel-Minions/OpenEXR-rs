@@ -41,7 +41,7 @@ checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "openexr-rs"
-version = "0.0.0+openexr.3.5.3"
+version = "0.1.0+openexr.3.5.3"
 dependencies = [
  "bytemuck",
  "openexr-rs-core",
@@ -50,7 +50,7 @@ dependencies = [
 
 [[package]]
 name = "openexr-rs-core"
-version = "0.0.0+openexr.3.5.3"
+version = "0.1.0+openexr.3.5.3"
 dependencies = [
  "openexr-rs-deflate",
  "openexr-rs-openjph",
@@ -60,18 +60,18 @@ dependencies = [
 
 [[package]]
 name = "openexr-rs-deflate"
-version = "0.0.0+openexr.3.5.3"
+version = "0.1.0+libdeflate.1.26"
 
 [[package]]
 name = "openexr-rs-openjph"
-version = "0.0.0+openexr.3.5.3"
+version = "0.1.0+openjph.0.32.0"
 dependencies = [
  "openexr-testkit",
 ]
 
 [[package]]
 name = "openexr-rs-zstd"
-version = "0.0.0+openexr.3.5.3"
+version = "0.1.0+zstd.1.5.7"
 
 [[package]]
 name = "openexr-testkit"

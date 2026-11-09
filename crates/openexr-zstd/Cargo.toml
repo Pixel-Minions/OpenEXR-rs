@@ -1,13 +1,16 @@
 [package]
 name = "openexr-rs-zstd"
 description = "An exact Rust port of zstd 1.5.7, as OpenEXR 3.5.3 bundles it"
-version.workspace = true
+version = "0.1.0+zstd.1.5.7"
 edition.workspace = true
 rust-version.workspace = true
 license = "BSD-3-Clause"
 authors.workspace = true
 repository.workspace = true
-publish.workspace = true
+keywords = ["zstd", "zstandard", "compression", "openexr"]
+categories = ["compression"]
+readme = "README.md"
+exclude = ["tests/", "examples/"]
 
 [lib]
 name = "openexr_zstd"

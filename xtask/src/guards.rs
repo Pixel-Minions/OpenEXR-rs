@@ -10,6 +10,7 @@
 //! - every ported-test marker names a test of upstream's list and sits above a `#[test]`, and
 //!   the n/a tests ([`NA_TESTS`]) are upstream's and not also ported;
 //! - heavy tests (`tests/heavy_*.rs`) are declared with `required-features = ["heavy"]`;
+//! - the licence files each published crate ships are copies of their sources ([`PACKAGED`]);
 //! - `upstream-map.toml` is for the pinned commit and each entry is well formed.
 
 use std::collections::BTreeSet;
@@ -101,6 +102,35 @@ const VENDORED_HEADERS: &[(&str, &str, &[&str])] = &[
     ),
 ];
 
+/// The licence files each published crate carries (a package holds only its own directory),
+/// with the file each copies: they must stay identical (PLAN.md O13).
+const PACKAGED: &[(&str, &str)] = &[
+    ("crates/openexr/LICENSE", "LICENSE"),
+    ("crates/openexr/NOTICE", "NOTICE"),
+    (
+        "crates/openexr/THIRD-PARTY-NOTICES.md",
+        "THIRD-PARTY-NOTICES.md",
+    ),
+    ("crates/openexr-core/LICENSE", "LICENSE"),
+    ("crates/openexr-core/NOTICE", "NOTICE"),
+    (
+        "crates/openexr-core/THIRD-PARTY-NOTICES.md",
+        "THIRD-PARTY-NOTICES.md",
+    ),
+    (
+        "crates/openexr-deflate/LICENSE",
+        "upstream/openexr/external/deflate/COPYING",
+    ),
+    (
+        "crates/openexr-zstd/LICENSE",
+        "upstream/openexr/external/zstd/LICENSE",
+    ),
+    (
+        "crates/openexr-openjph/LICENSE",
+        "upstream/openexr/external/OpenJPH/LICENSE",
+    ),
+];
+
 /// Where a citation's path is resolved, by the version after `@`.
 fn citation_root(root: &Path, tag: &str) -> PathBuf {
     if tag.starts_with("Imath") {
@@ -131,6 +161,7 @@ pub(crate) fn run(root: &Path) -> Result<(), String> {
         }
     }
     check_heavy_tests(root, &mut errors);
+    check_packaged(root, &mut errors);
     check_upstream_map(root, &mut errors)?;
     if !errors.is_empty() {
         for e in &errors {
@@ -376,6 +407,24 @@ fn check_heavy_tests(root: &Path, errors: &mut Vec<String>) {
                     rel(root, &krate.path())
                 ));
             }
+        }
+    }
+}
+
+/// Each of [`PACKAGED`] the same bytes as its source.
+fn check_packaged(root: &Path, errors: &mut Vec<String>) {
+    for (copy, source) in PACKAGED {
+        let (a, b) = (fs::read(root.join(copy)), fs::read(root.join(source)));
+        match (a, b) {
+            (Ok(a), Ok(b)) if a == b => {}
+            (Ok(_), Ok(_)) => errors.push(format!("{copy}: differs from {source}; copy it again")),
+            (a, b) => errors.push(format!(
+                "{copy} (from {source}): {}",
+                a.err()
+                    .or(b.err())
+                    .map(|e| e.to_string())
+                    .unwrap_or_default()
+            )),
         }
     }
 }

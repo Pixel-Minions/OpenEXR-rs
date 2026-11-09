@@ -2,3 +2,7 @@
 *.sh text eol=lf
 *.cmd text eol=crlf
 *.exr binary
+# The licence files the published crates carry: byte copies of their sources (xtask guards)
+crates/*/LICENSE -text
+crates/*/NOTICE -text
+crates/*/THIRD-PARTY-NOTICES.md -text

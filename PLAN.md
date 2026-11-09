@@ -434,7 +434,7 @@ Each has a recommendation. Status on 2026-11-09:
 | O10 The milestone after M3 | **Decided** (owner, 2026-11-09): C, a safe Rust API first (M4, §16), the C++ library later and only as far as its features are wanted (M5; `docs/proposal-m4.md`) |
 | O11 M4's crate and names | **Decided** (owner, 2026-11-09): a crate `openexr-rs` (`crates/openexr`, library `openexr`), unpublished; the C++ library's names (`Header`, `FrameBuffer`, `Slice`, `InputPart`, ...) in Rust's case |
 | O12 M4's threading | **Decided** (owner, 2026-11-09): `rayon`, as the C++ library uses IlmThread: single-threaded by default, a thread count per call (`threads(n)`, `threads(Auto)`) on request, behind a default `rayon` feature (without it, requests run single-threaded) |
-| O13 Publishing | **Open**: whether and when any crate goes to crates.io (after M4's API is reviewed) |
+| O13 Publishing | **Decided in part** (owner, 2026-11-09): prepared, not published, until the owner has reviewed M4's API. Versions are our own semver from 0.1.0, the upstream release as build metadata (`0.1.0+openexr.3.5.3`; the codec crates `+libdeflate.1.26`, `+zstd.1.5.7`, `+openjph.0.32.0`), the five crates requiring each other exactly; MSRV 1.99.1. The five (`openexr-rs-deflate`, `-zstd`, `-openjph`, `-core`, `openexr-rs`) pass `cargo publish --dry-run`, each with its licence files (copies `xtask guards` keeps identical) and README, without the tests that read the repository; `CHANGELOG.md`. **Open**: when to publish (`cargo publish -p openexr-rs-deflate -p openexr-rs-zstd -p openexr-rs-openjph -p openexr-rs-core -p openexr-rs`) |
 | O14 M4's typed buffers | **Decided** (owner, 2026-11-09): `bytemuck` (`=1.25.2`, no default features) casts the caller's `&mut [f32]`, `&mut [u16]` and `&mut [u32]` to the bytes Core takes, without a copy and without `unsafe` in our crates |
 | Upstream bugs found in Phases 2-4 (I-5 to I-12) | **Decided** (owner, 2026-11-07): fixed as deviations D-1 to D-8 (`docs/deviations.md`), with waivers W-1 to W-7 (`docs/waivers.md`); I-13 as D-9 with W-8; I-14 to I-16 (the header writer) as D-10 to D-12 with W-9 to W-11; I-17, I-18 (the chunk writes) as D-13, D-14 with W-12, W-13; I-19, I-20 (the encode pipeline) as D-15, D-16 with W-14, W-15; I-21 (tile chunk info) as D-17 with W-16; I-29, I-30 (the deep sample table, the temporary file's rename) as D-19, D-20, and U-21 (Core's write locks, not copied): accepted on review (owner, 2026-11-07) |
 
@@ -590,7 +590,11 @@ the speed work (`docs/baseline.md`, "Speed").
 
 **Done (2026-11-09): M4**, the safe Rust API (`docs/m4.md`).
 
-**Now:** the owner's next decision: O13 (publishing), M5 (the C++ library, as far as wanted).
+**Done (2026-11-09), after M4:** hardening (a fuzzer of every read and write path), speed on
+many threads, and the crates prepared for publishing (O13).
+
+**Now:** the owner's next decisions: the API review and the publish (O13), M5 (the C++
+library, as far as wanted).
 
 ---
 

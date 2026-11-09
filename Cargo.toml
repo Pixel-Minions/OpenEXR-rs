@@ -3,8 +3,9 @@ resolver = "3"
 members = ["crates/openexr", "crates/openexr-core", "crates/openexr-deflate", "crates/openexr-openjph", "crates/openexr-testkit", "crates/openexr-zstd", "xtask"]
 
 [workspace.package]
-# Our own semver, with the matched OpenEXR release as build metadata (PLAN.md §2).
-version = "0.0.0+openexr.3.5.3"
+# Our own semver, with the matched OpenEXR release as build metadata (PLAN.md §2; owner,
+# 2026-11-09, O13: 0.1.0 first). The codec crates carry their own upstream's version instead.
+version = "0.1.0+openexr.3.5.3"
 edition = "2024"
 # PLAN.md O5: recon's toolchain.
 rust-version = "1.99.1"
@@ -13,13 +14,13 @@ authors = ["Contributors to the OpenEXR Project", "Pixel Minions"]
 repository = "https://github.com/Pixel-Minions/OpenEXR-rs"
 keywords = ["openexr", "exr", "image", "hdr", "vfx"]
 categories = ["graphics", "multimedia::images"]
-publish = false
 
 [workspace.dependencies]
-openexr-core = { path = "crates/openexr-core", package = "openexr-rs-core" }
-openexr-deflate = { path = "crates/openexr-deflate", package = "openexr-rs-deflate" }
-openexr-openjph = { path = "crates/openexr-openjph", package = "openexr-rs-openjph" }
-openexr-zstd = { path = "crates/openexr-zstd", package = "openexr-rs-zstd" }
+# Our crates require each other exactly: they are one port, released together (O13).
+openexr-core = { path = "crates/openexr-core", package = "openexr-rs-core", version = "=0.1.0" }
+openexr-deflate = { path = "crates/openexr-deflate", package = "openexr-rs-deflate", version = "=0.1.0" }
+openexr-openjph = { path = "crates/openexr-openjph", package = "openexr-rs-openjph", version = "=0.1.0" }
+openexr-zstd = { path = "crates/openexr-zstd", package = "openexr-rs-zstd", version = "=0.1.0" }
 openexr-testkit = { path = "crates/openexr-testkit" }
 # Third-party dependencies are pinned to exact versions (`=x.y.z`), each with a reason and the
 # owner's OK (CLAUDE.md).

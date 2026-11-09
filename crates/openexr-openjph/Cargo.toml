@@ -1,13 +1,16 @@
 [package]
 name = "openexr-rs-openjph"
 description = "An exact Rust port of OpenJPH 0.32.0, as OpenEXR 3.5.3 bundles it"
-version.workspace = true
+version = "0.1.0+openjph.0.32.0"
 edition.workspace = true
 rust-version.workspace = true
 license = "BSD-2-Clause"
 authors.workspace = true
 repository.workspace = true
-publish.workspace = true
+keywords = ["htj2k", "jpeg2000", "jpeg", "openexr"]
+categories = ["multimedia::images", "compression"]
+readme = "README.md"
+exclude = ["tests/", "examples/"]
 
 [lib]
 name = "openexr_openjph"
