@@ -253,3 +253,28 @@ Windows ivb run first failed before the oracle ran: SDE could not attach to the 
 process (its log: `WIN_FOLLOW_CHILD: Failed to inject`), with a concurrent big-frame check using
 most of the memory; alone, and on rerun, it passes.
 
+### Buffers reused unzeroed (2026-11-09, Windows)
+
+The decode and encode pipelines' buffers, and DWA's planar buffers, are taken from the
+per-thread pool with their contents unspecified, as upstream's `alloc_fn` leaves them (only
+DWA's AC, DC and RLE buffers stay zeroed, as upstream memsets them); heavy-tier builds fill them
+with a pattern (`buffer_pool::reused`), and `gate --full` passes on Windows and Rocky Linux 9
+(308 tests each). `scripts/bench.py 7 3`, the port's time over Core's:
+
+| Compression | Decode | Encode |
+|---|---|---|
+| NONE | 1.02 | 0.38 |
+| RLE | 0.38 | 0.74 |
+| ZIPS | 0.91 | 0.99 |
+| ZIP | 0.80 | 0.99 |
+| PIZ | 0.89 | 0.85 |
+| PXR24 | 0.82 | 1.03 |
+| B44 | 0.42 | 0.69 |
+| B44A | 0.41 | 0.66 |
+| DWAA | 0.78 | 0.84 |
+| DWAB | 0.79 | 0.86 |
+| HTJ2K256 | 1.03 | 0.88 |
+| HTJ2K32 | 0.96 | 0.94 |
+| LJ2K | 1.00 | 0.91 |
+| ZSTD | 0.64 | 1.03 |
+

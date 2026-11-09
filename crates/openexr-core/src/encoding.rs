@@ -146,7 +146,7 @@ pub(crate) fn internal_encode_alloc_buffer(
         ));
     }
     if buf.as_ref().is_none_or(|b| b.len() < newsz) {
-        recycle(buf.replace(pooled_zeros(newsz)));
+        recycle(buf.replace(pooled_buffer(newsz)));
     }
     Ok(())
 }
@@ -169,7 +169,7 @@ pub(crate) fn internal_encode_alloc_aliased(
         ));
     }
     if !matches!(buf, Aliased::Own(b) if b.len() >= newsz) {
-        recycle_aliased(std::mem::replace(buf, Aliased::Own(pooled_zeros(newsz))));
+        recycle_aliased(std::mem::replace(buf, Aliased::Own(pooled_buffer(newsz))));
     }
     Ok(())
 }
@@ -193,10 +193,13 @@ pub(crate) fn internal_encode_alloc_output(
     Ok(())
 }
 
-/// `n` zeros from the thread's pool (`buffer_pool`); as `vec![0; n]`, an allocation that
-/// fails aborts.
-fn pooled_zeros(n: usize) -> Vec<u8> {
-    crate::buffer_pool::zeroed(n).unwrap_or_else(|_| vec![0; n])
+/// `n` bytes from the thread's pool (`buffer_pool::reused`): contents unspecified, as
+/// upstream's `internal_*_alloc_buffer` leaves its `alloc_fn`'s memory (coding.c), which each
+/// stage writes before it reads; heavy-tier builds fill them with a pattern, so that a read
+/// before a write would change an output the checks compare. As `vec![0; n]`, an allocation
+/// that fails aborts.
+fn pooled_buffer(n: usize) -> Vec<u8> {
+    crate::buffer_pool::reused(n).unwrap_or_else(|_| vec![0; n])
 }
 
 /// A buffer given back to the thread's pool.

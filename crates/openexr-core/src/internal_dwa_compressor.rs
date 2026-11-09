@@ -232,7 +232,14 @@ impl DwaCompressor {
 
         for (i, &size) in planar_unc_buffer_size.iter().enumerate() {
             if size > 0 {
-                self.planar_unc_buffer[i] = Some(alloc(size)?);
+                // (unspecified contents: upstream does not clear these, unlike the AC, DC
+                // and RLE buffers, which it memsets and which `alloc` zeroes)
+                let size =
+                    usize::try_from(size).map_err(|_| Error::bare(ErrorCode::OutOfMemory))?;
+                self.planar_unc_buffer[i] = Some(
+                    crate::buffer_pool::reused(size)
+                        .map_err(|_| Error::bare(ErrorCode::OutOfMemory))?,
+                );
             }
         }
 

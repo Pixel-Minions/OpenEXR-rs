@@ -62,11 +62,13 @@ compression (`scripts/bench.py`, `docs/baseline.md`, "Speed"):
 
 | | NONE | RLE | ZIPS | ZIP | PIZ | PXR24 | B44 | B44A | DWAA | DWAB | HTJ2K256 | HTJ2K32 | LJ2K | ZSTD |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| Decode | 1.02 | 0.40 | 0.94 | 0.82 | 0.91 | 0.86 | 0.46 | 0.44 | 0.79 | 0.81 | 1.06 | 0.90 | 1.03 | 0.82 |
-| Encode | 0.41 | 0.67 | 1.00 | 0.97 | 0.85 | 1.01 | 0.70 | 0.67 | 0.87 | 0.89 | 0.88 | 0.97 | 0.94 | 1.05 |
+| Decode | 1.02 | 0.38 | 0.91 | 0.80 | 0.89 | 0.82 | 0.42 | 0.41 | 0.78 | 0.79 | 1.03 | 0.96 | 1.00 | 0.64 |
+| Encode | 0.38 | 0.74 | 0.99 | 0.99 | 0.85 | 1.03 | 0.69 | 0.66 | 0.84 | 0.86 | 0.88 | 0.94 | 0.91 | 1.03 |
 
 On Linux, against GCC's build, ZSTD stays slower (encoding about 1.2 to 1.35 times, decoding
-1.4 to 1.6 in CPU time): `docs/deferred.md`.
+about 1.4 to 1.6 in CPU time, measured before the buffers below): `docs/deferred.md`. The
+pipelines' buffers are reused without clearing where upstream leaves its `malloc` uninitialized
+(heavy-tier builds poison them, so a read before a write would change a checked output).
 
 ## Building and testing
 
