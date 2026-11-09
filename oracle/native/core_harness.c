@@ -40,8 +40,9 @@
  *       indices within it (cmd_zstd_big), at each level; digests on stdout.
  *
  *   core_harness levels <file> <out-dir>
- *       Every level of every flat part, decoded into planar buffers of each pixel type, as
- *       the C++ library's readers drive Core (cmd_levels); the planes and a manifest.
+ *       Every level of every part, decoded into buffers of each pixel type, as the C++
+ *       library's readers drive Core (cmd_levels); the planes (a deep part's counts and
+ *       samples) and a manifest.
  */
 
 #include <openexr.h>
@@ -1221,6 +1222,7 @@ levels_write (
     int                            c,
     const exr_attr_chlist_entry_t* e,
     const uint8_t*                 plane,
+    size_t                         bytes,
     int64_t                        h,
     int64_t                        w)
 {
@@ -1230,7 +1232,7 @@ levels_write (
     fh = fopen (path, "wb");
     if (fh)
     {
-        fwrite (plane, 1, (size_t) (h * w * type_size (t)), fh);
+        fwrite (plane, 1, bytes, fh);
         fclose (fh);
     }
     fprintf (manifest, "%d\t%d\t%d\t%s\t%d\t", p, lx, ly, type_name (t), c);
@@ -1348,16 +1350,193 @@ levels_decode (
     return EXR_ERR_SUCCESS;
 }
 
+/* The chunks of a level of part p: each one's chunk info and first pixel in the level (a
+ * scanline part's one level, a tiled part's level (lx, ly)). */
+typedef struct
+{
+    exr_chunk_info_t ci;
+    int64_t          x0, y0;
+} deep_chunk_t;
+
+static exr_result_t
+deep_chunks (
+    exr_const_context_t f,
+    int                 p,
+    int                 tiled,
+    int                 lx,
+    int                 ly,
+    exr_attr_box2i_t    dw,
+    deep_chunk_t**      out,
+    int64_t*            n)
+{
+    exr_result_t rv;
+    *n   = 0;
+    *out = NULL;
+    if (!tiled)
+    {
+        int32_t lpc;
+        int64_t cap;
+        rv = exr_get_scanlines_per_chunk (f, p, &lpc);
+        if (rv) return rv;
+        cap  = ((int64_t) dw.max.y - dw.min.y) / lpc + 1;
+        *out = (deep_chunk_t*) calloc ((size_t) cap, sizeof (deep_chunk_t));
+        if (!*out) return EXR_ERR_OUT_OF_MEMORY;
+        for (int64_t y = dw.min.y; y <= dw.max.y; y += lpc)
+        {
+            deep_chunk_t* d = *out + (*n)++;
+            rv = exr_read_scanline_chunk_info (f, p, (int) y, &d->ci);
+            if (rv) return rv;
+            d->x0 = 0;
+            d->y0 = (int64_t) d->ci.start_y - dw.min.y;
+        }
+        return EXR_ERR_SUCCESS;
+    }
+    {
+        int32_t cx, cy, tw, th;
+        rv = exr_get_tile_counts (f, p, lx, ly, &cx, &cy);
+        if (rv) return rv;
+        rv = exr_get_tile_sizes (f, p, lx, ly, &tw, &th);
+        if (rv) return rv;
+        *out = (deep_chunk_t*) calloc ((size_t) cx * (size_t) cy + 1, sizeof (deep_chunk_t));
+        if (!*out) return EXR_ERR_OUT_OF_MEMORY;
+        for (int ty = 0; ty < cy; ++ty)
+            for (int tx = 0; tx < cx; ++tx)
+            {
+                deep_chunk_t* d = *out + (*n)++;
+                rv = exr_read_tile_chunk_info (f, p, tx, ty, lx, ly, &d->ci);
+                if (rv) return rv;
+                d->x0 = (int64_t) tx * tw;
+                d->y0 = (int64_t) ty * th;
+            }
+    }
+    return EXR_ERR_SUCCESS;
+}
+
+/* A deep level of part p read as type t, as the C++ library's deep readers drive Core: every
+ * chunk's sample counts first (EXR_DECODE_SAMPLE_DATA_ONLY) into `counts` (lw by lh), then
+ * every chunk's samples through tables of pointers, one a pixel, into `samples[c]`, each
+ * pixel's samples after the previous pixel's (EXR_DECODE_NON_IMAGE_DATA_AS_POINTERS, the
+ * counts individual). */
+static exr_result_t
+levels_decode_deep (
+    exr_const_context_t f,
+    int                 p,
+    int                 tiled,
+    int                 lx,
+    int                 ly,
+    exr_pixel_type_t    t,
+    int                 nchan,
+    exr_attr_box2i_t    dw,
+    int64_t             lw,
+    int64_t             lh,
+    uint32_t*           counts,
+    uint8_t**           samples,
+    uint64_t*           total)
+{
+    deep_chunk_t* chunks;
+    int64_t       n;
+    uint64_t*     starts;
+    exr_result_t  rv = deep_chunks (f, p, tiled, lx, ly, dw, &chunks, &n);
+    if (rv)
+    {
+        free (chunks);
+        return rv;
+    }
+    for (int64_t k = 0; k < n && !rv; ++k)
+    {
+        deep_chunk_t*         d   = chunks + k;
+        exr_decode_pipeline_t dec = EXR_DECODE_PIPELINE_INITIALIZER;
+        rv = exr_decoding_initialize (f, p, &d->ci, &dec);
+        if (rv) break;
+        dec.decode_flags |= EXR_DECODE_NON_IMAGE_DATA_AS_POINTERS |
+                            EXR_DECODE_SAMPLE_COUNTS_AS_INDIVIDUAL |
+                            EXR_DECODE_SAMPLE_DATA_ONLY;
+        rv = exr_decoding_choose_default_routines (f, p, &dec);
+        if (rv == EXR_ERR_SUCCESS) rv = exr_decoding_run (f, p, &dec);
+        if (rv == EXR_ERR_SUCCESS)
+            for (int32_t y = 0; y < d->ci.height; ++y)
+                for (int32_t x = 0; x < d->ci.width; ++x)
+                    counts[(d->y0 + y) * lw + d->x0 + x] =
+                        (uint32_t) dec.sample_count_table[(int64_t) y * d->ci.width + x];
+        exr_decoding_destroy (f, &dec);
+    }
+    if (rv)
+    {
+        free (chunks);
+        return rv;
+    }
+    starts = (uint64_t*) malloc ((size_t) (lw * lh + 1) * sizeof (uint64_t));
+    if (!starts)
+    {
+        free (chunks);
+        return EXR_ERR_OUT_OF_MEMORY;
+    }
+    *total = 0;
+    for (int64_t i = 0; i < lw * lh; ++i)
+    {
+        starts[i] = *total;
+        *total += counts[i];
+    }
+    for (int c = 0; c < nchan; ++c)
+    {
+        samples[c] = (uint8_t*) calloc ((size_t) (*total * type_size (t)) + 1, 1);
+        if (!samples[c]) rv = EXR_ERR_OUT_OF_MEMORY;
+    }
+    for (int64_t k = 0; k < n && !rv; ++k)
+    {
+        deep_chunk_t*         d   = chunks + k;
+        exr_decode_pipeline_t dec = EXR_DECODE_PIPELINE_INITIALIZER;
+        void**                tables[256];
+        int64_t               cw = d->ci.width, ch = d->ci.height;
+        int16_t               nc;
+        rv = exr_decoding_initialize (f, p, &d->ci, &dec);
+        if (rv) break;
+        nc = dec.channel_count;
+        dec.decode_flags |= EXR_DECODE_NON_IMAGE_DATA_AS_POINTERS |
+                            EXR_DECODE_SAMPLE_COUNTS_AS_INDIVIDUAL;
+        for (int16_t c = 0; c < dec.channel_count; ++c)
+        {
+            exr_coding_channel_info_t* cc = dec.channels + c;
+            tables[c] = NULL;
+            if (cc->height == 0)
+            {
+                cc->decode_to_ptr     = NULL;
+                cc->user_pixel_stride = 0;
+                cc->user_line_stride  = 0;
+                continue;
+            }
+            tables[c] = (void**) malloc ((size_t) (cw * ch + 1) * sizeof (void*));
+            if (!tables[c]) return EXR_ERR_OUT_OF_MEMORY;
+            for (int64_t y = 0; y < ch; ++y)
+                for (int64_t x = 0; x < cw; ++x)
+                    tables[c][y * cw + x] =
+                        samples[c] + starts[(d->y0 + y) * lw + d->x0 + x] * type_size (t);
+            cc->decode_to_ptr          = (uint8_t*) tables[c];
+            cc->user_bytes_per_element = (int16_t) type_size (t);
+            cc->user_data_type         = (uint16_t) t;
+            cc->user_pixel_stride      = (int32_t) sizeof (void*);
+            cc->user_line_stride       = (int32_t) (sizeof (void*) * cw);
+        }
+        rv = levels_run (f, p, &dec);
+        for (int16_t c = 0; c < nc; ++c)
+            free (tables[c]);
+    }
+    free (starts);
+    free (chunks);
+    return rv;
+}
+
 /* core_harness levels <file> <out-dir>: what Core gives the C++ library's readers where the
  * wheel cannot look: every level of a tiled part, and every pixel type the channels can be
- * read as. For each flat part p, each output type t (half, float, uint) and each level (lx,
+ * read as. For each part p, each output type t (half, float, uint) and each level (lx,
  * ly) of a tiled part (a scanline part has the one, 0 0), the level is decoded chunk by
  * chunk with Core's default routines into one planar buffer per channel of type t (its
  * samples row by row), as `InputPart::readPixels` and `readTiles` drive Core, and written to
  * <out-dir>/<p>.<lx>.<ly>.<t>.<c>.bin; <out-dir>/manifest.tsv gets one line a channel,
  *   p  lx  ly  t  c  name (hex)  height  width  file
- * or, where a chunk of the level fails, `p lx ly t error <code name>`. Deep parts are left
- * out. */
+ * or, where a chunk of the level fails, `p lx ly t error <code name>`. A deep part's level
+ * (levels_decode_deep) also writes its sample counts, <p>.<lx>.<ly>.<t>.counts (uint32, row by
+ * row), and each channel's file holds its samples, each pixel's after the previous pixel's. */
 static int
 cmd_levels (int argc, char** argv)
 {
@@ -1391,11 +1570,14 @@ cmd_levels (int argc, char** argv)
         uint32_t                 txs, tys;
         exr_tile_level_mode_t    mode = EXR_TILE_ONE_LEVEL;
         exr_tile_round_mode_t    round;
-        int                      tiled;
+        int                      tiled, deep;
 
         CHECK (exr_get_storage (f, p, &st));
-        if (st != EXR_STORAGE_SCANLINE && st != EXR_STORAGE_TILED) continue;
-        tiled = st == EXR_STORAGE_TILED;
+        if (st != EXR_STORAGE_SCANLINE && st != EXR_STORAGE_TILED &&
+            st != EXR_STORAGE_DEEP_SCANLINE && st != EXR_STORAGE_DEEP_TILED)
+            continue;
+        tiled = st == EXR_STORAGE_TILED || st == EXR_STORAGE_DEEP_TILED;
+        deep  = st == EXR_STORAGE_DEEP_SCANLINE || st == EXR_STORAGE_DEEP_TILED;
         CHECK (exr_get_data_window (f, p, &dw));
         CHECK (exr_get_channels (f, p, &chans));
         if (chans->num_channels > 256)
@@ -1421,6 +1603,65 @@ cmd_levels (int argc, char** argv)
                     if (tiled)
                     {
                         CHECK (exr_get_level_sizes (f, p, lx, ly, &lw, &lh));
+                    }
+                    if (deep)
+                    {
+                        int64_t   w = tiled ? lw : (int64_t) dw.max.x - dw.min.x + 1;
+                        int64_t   h = tiled ? lh : (int64_t) dw.max.y - dw.min.y + 1;
+                        uint32_t* counts = (uint32_t*) calloc ((size_t) (w * h) + 1, 4);
+                        uint64_t  total  = 0;
+                        if (!counts) return fail ("out of memory", EXR_ERR_OUT_OF_MEMORY);
+                        for (int c = 0; c < chans->num_channels; ++c)
+                            planes[c] = NULL;
+                        rv = levels_decode_deep (
+                            f, p, tiled, lx, ly, t, chans->num_channels, dw, w, h, counts,
+                            planes, &total);
+                        if (rv)
+                            fprintf (
+                                manifest,
+                                "%d\t%d\t%d\t%s\terror\t%s\n",
+                                p,
+                                lx,
+                                ly,
+                                type_name (t),
+                                exr_get_error_code_as_string (rv));
+                        else
+                        {
+                            FILE* fh;
+                            snprintf (
+                                path,
+                                sizeof (path),
+                                "%s/%d.%d.%d.%s.counts",
+                                argv[1],
+                                p,
+                                lx,
+                                ly,
+                                type_name (t));
+                            fh = fopen (path, "wb");
+                            if (fh)
+                            {
+                                fwrite (counts, 4, (size_t) (w * h), fh);
+                                fclose (fh);
+                            }
+                            for (int c = 0; c < chans->num_channels; ++c)
+                                levels_write (
+                                    manifest,
+                                    argv[1],
+                                    p,
+                                    lx,
+                                    ly,
+                                    t,
+                                    c,
+                                    chans->entries + c,
+                                    planes[c],
+                                    (size_t) (total * (uint64_t) type_size (t)),
+                                    h,
+                                    w);
+                        }
+                        for (int c = 0; c < chans->num_channels; ++c)
+                            free (planes[c]);
+                        free (counts);
+                        continue;
                     }
                     for (int c = 0; c < chans->num_channels; ++c)
                     {
@@ -1455,6 +1696,7 @@ cmd_levels (int argc, char** argv)
                                 c,
                                 chans->entries + c,
                                 planes[c],
+                                (size_t) (heights[c] * widths[c] * type_size (t)),
                                 heights[c],
                                 widths[c]);
                     for (int c = 0; c < chans->num_channels; ++c)
