@@ -9,8 +9,8 @@
 //! block (the next block may reuse it); entries above its largest symbol are never read
 //! without a dictionary, which Core doesn't use. Upstream's shared workspaces are typed
 //! here: each scratch area upstream reads is written first in the same call, so fresh
-//! scratch reads the same values. `HUF_readCTable` (dictionaries) is n/a;
-//! `HUF_getNbBitsFromCTable` follows with the optimal parser.
+//! scratch reads the same values. `HUF_readCTable` and `HUF_getNbBitsFromCTable`, which the
+//! optimal parser calls only for a dictionary's Huffman table, are n/a (no dictionaries).
 
 pub(crate) use crate::bmi2::huf_compress1x_using_ctable;
 use crate::error_private::{ErrorCode, ZResult};

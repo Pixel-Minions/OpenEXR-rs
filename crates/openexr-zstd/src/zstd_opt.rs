@@ -3,10 +3,10 @@
 
 //! Port of `zstd_opt.c` (external/zstd/lib/compress/zstd_opt.c:1-1580 @ zstd v1.5.7): the
 //! optimal parsers (btopt, btultra, btultra2) over the binary tree, without a dictionary
-//! (`ZSTD_compressCCtx` uses no other). Long distance matching, which a window of 2^27 bytes
-//! or more turns on and OpenEXR's chunks never reach, and the dictionary-seeded statistics,
-//! which only a dictionary makes valid at a frame's first block, are n/a; `ZSTD_C_PREDICT`,
-//! not defined in upstream's build, is too.
+//! (`ZSTD_compressCCtx` uses no other), with the long distance matcher's sequences as
+//! candidates where it is on (`zstd_ldm.rs`). The dictionary-seeded statistics, which only a
+//! dictionary makes valid at a frame's first block, are n/a; `ZSTD_C_PREDICT`, not defined
+//! in upstream's build, is too.
 
 use crate::hist::hist_count_simple;
 use crate::mem::highbit32;

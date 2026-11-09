@@ -19,8 +19,9 @@ note = "build system"
 [[file]]
 path = "external/OpenJPH/LICENSE"
 kind = "license"
-status = "todo"
-note = "carried into THIRD-PARTY-NOTICES.md with the port"
+status = "done"
+target = "THIRD-PARTY-NOTICES.md"
+note = "reproduced in THIRD-PARTY-NOTICES.md"
 
 [[file]]
 path = "external/OpenJPH/README.md"
@@ -85,9 +86,9 @@ note = "ported"
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/codestream.rs"
-note = "both sides ported, checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode); the file is passed to read_headers/create and write_headers/flush; set_profile follows (Core sets no profile)"
+note = "both sides ported, checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode); the file is passed to read_headers/create and write_headers/flush; n/a: set_profile, not reached from Core (Core sets no profile) (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_avx.cpp"
@@ -99,9 +100,9 @@ note = "avx_mem_clear clears as the generic kernel"
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_avx2.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/codeblock_fun.rs, crates/openexr-openjph/src/codestream_avx2.rs"
-note = "as ojph_codestream_sse2.cpp; the 32- and 64-bit conversions compiled for AVX2 and chosen at X86_CPU_EXT_LEVEL_AVX2 (the same samples lane by lane; find_max_val's lanes are the port's one OR); heavy-tier check pending gate --full"
+note = "as ojph_codestream_sse2.cpp; the 32- and 64-bit conversions compiled for AVX2 and chosen at X86_CPU_EXT_LEVEL_AVX2 (the same samples lane by lane; find_max_val's lanes are the port's one OR); checked by gate --full and under SDE"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_gen.cpp"
@@ -113,14 +114,14 @@ note = "ported"
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_local.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/codestream.rs"
-note = "both sides ported, checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode); set_profile and the IMF and broadcast checks follow (Core sets no profile)"
+note = "both sides ported, checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode); n/a: set_profile and the IMF and broadcast checks, not reached from Core (Core sets no profile) (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_codestream_local.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/codestream.rs"
 note = "both sides ported, checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode)"
 
@@ -153,14 +154,14 @@ note = "not an x86-64 or ARM path"
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_params.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/params.rs"
-note = "SIZ, CAP, COD/COC, QCD/QCC (with the gain and weight tables), NLT, SOT, TLM, DFS and ATK, read and written, the SIZ's reconstruction sizes and the subbands' K_max and steps with DFS segments; comment_exchange and the writing wrappers follow with the encoder (I-24, U-15, U-16)"
+note = "SIZ, CAP, COD/COC, QCD/QCC (with the gain and weight tables), NLT, SOT, TLM, DFS and ATK, read and written, comment_exchange, the SIZ's reconstruction sizes and the subbands' K_max and steps with DFS segments; Core's HTJ2K chunks byte-identical with the wheel's (I-24, U-15, U-16)"
 
 [[file]]
 path = "external/OpenJPH/src/core/codestream/ojph_params_local.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/params.rs"
 note = "the segments' structures and inline functions ported; checked with the codestream"
 
@@ -251,7 +252,9 @@ note = "the tables' declarations"
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/block_decoder32.rs"
+note = "the block decoders' declarations, ported with them"
 
 [[file]]
 path = "external/OpenJPH/src/core/coding/ojph_block_decoder32.cpp"
@@ -344,14 +347,15 @@ note = "its rows, generated from the header"
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_arch.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/arch.rs"
-note = "the bit counts (count_leading_zeros (0) as each compiler answers it), rounding (cvttss2si's out-of-range answer) and alignment ported; get_cpu_ext_level with the SIMD kernels"
+note = "the bit counts (count_leading_zeros (0) as each compiler answers it), rounding (cvttss2si's out-of-range answer), alignment, and get_cpu_ext_level, which chooses the SIMD kernels"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_arg.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "the command-line parsing of OpenJPH's tools, not compiled into what Core uses"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_base.h"
@@ -363,7 +367,9 @@ note = "ported"
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_codestream.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/codestream.rs"
+note = "the public codestream API, as Codestream's methods"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_defs.h"
@@ -396,14 +402,16 @@ note = "OJPH_ERROR, OJPH_WARN and OJPH_INFO: the message printed with upstream's
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_params.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/codestream.rs"
-note = "the public wrappers Core calls, as Codestream's methods; the others are not reached from Core"
+note = "the public wrappers Core calls, as Codestream's methods; n/a: the others, not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/OpenJPH/src/core/openjph/ojph_version.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-openjph/src/codestream.rs"
+note = "the version, as the encoder writes it in its COM segment (VERSION_STR)"
 
 [[file]]
 path = "external/OpenJPH/src/core/others/ojph_arch.cpp"
@@ -469,9 +477,9 @@ note = "the ICT computes as the generic one (the same operations per lane)"
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_avx2.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/colour.rs, crates/openexr-openjph/src/colour_avx2.rs"
-note = "as ojph_colour_sse2.cpp (AVX2's clamps let NaN through); the LUT nonlinearity conversions (types 2 and 4) in AVX2 with gathers, the other conversions and the RCT compiled for AVX2 (the same samples lane by lane), all chosen at X86_CPU_EXT_LEVEL_AVX2; checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode); heavy-tier check pending gate --full"
+note = "as ojph_colour_sse2.cpp (AVX2's clamps let NaN through); the LUT nonlinearity conversions (types 2 and 4) in AVX2 with gathers, the other conversions and the RCT compiled for AVX2 (the same samples lane by lane), all chosen at X86_CPU_EXT_LEVEL_AVX2; checked through Core's HTJ2K decoder and encoder against the wheel (heavy_decode) and under SDE"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_colour_local.h"
@@ -530,9 +538,9 @@ note = "the irreversible lifting computes as the generic one (the same operation
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx2.cpp"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-openjph/src/transform.rs, crates/openexr-openjph/src/transform_avx2.rs"
-note = "the reversible lifting, 32- and 64-bit, one loop per case as upstream's AVX2 loops, compiled for AVX2 and chosen at X86_CPU_EXT_LEVEL_AVX2 as upstream chooses it (the same integers lane by lane, the 64-bit srai emulation exact for Eatk < 64); heavy-tier check pending gate --full; its shifts by an ATK-Eatk past a sample's width as each wheel's build computes them (RevKernel::Avx2, I-33)"
+note = "the reversible lifting, 32- and 64-bit, one loop per case as upstream's AVX2 loops, compiled for AVX2 and chosen at X86_CPU_EXT_LEVEL_AVX2 as upstream chooses it (the same integers lane by lane, the 64-bit srai emulation exact for Eatk < 64); its shifts by an ATK-Eatk past a sample's width as each wheel's build computes them (RevKernel::Avx2, I-33); checked by gate --full and under SDE"
 
 [[file]]
 path = "external/OpenJPH/src/core/transform/ojph_transform_avx512.cpp"
@@ -607,7 +615,8 @@ note = "documentation or vendoring metadata"
 [[file]]
 path = "external/deflate/.gitignore"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "build file"
 
 [[file]]
 path = "external/deflate/COPYING"
@@ -631,56 +640,58 @@ note = "documentation or vendoring metadata"
 [[file]]
 path = "external/deflate/common_defs.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-deflate/src/lib.rs"
+note = "the helpers the ported code uses (loads, bit scans) in their files; n/a: the compiler switches, which have no counterpart (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/deflate/lib/adler32.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/adler32.rs"
-note = "adler32_generic, and libdeflate_adler32's dispatch to the x86 vector versions (adler32_x86.rs) on x86-64"
+note = "adler32_generic, and libdeflate_adler32's dispatch to the x86 vector versions (adler32_x86.rs, adler32_vnni.rs) on x86-64"
 
 [[file]]
 path = "external/deflate/lib/arm/adler32_impl.h"
 kind = "vendored"
-status = "todo"
-note = "non-x86 CPU paths: only when ARM becomes a reference platform (D11)"
+status = "n/a"
+note = "non-x86 CPU paths: platforms out of scope (D11)"
 
 [[file]]
 path = "external/deflate/lib/arm/cpu_features.c"
 kind = "vendored"
-status = "todo"
-note = "non-x86 CPU paths: only when ARM becomes a reference platform (D11)"
+status = "n/a"
+note = "non-x86 CPU paths: platforms out of scope (D11)"
 
 [[file]]
 path = "external/deflate/lib/arm/cpu_features.h"
 kind = "vendored"
-status = "todo"
-note = "non-x86 CPU paths: only when ARM becomes a reference platform (D11)"
+status = "n/a"
+note = "non-x86 CPU paths: platforms out of scope (D11)"
 
 [[file]]
 path = "external/deflate/lib/arm/crc32_impl.h"
 kind = "vendored"
-status = "todo"
-note = "non-x86 CPU paths: only when ARM becomes a reference platform (D11)"
+status = "n/a"
+note = "non-x86 CPU paths: platforms out of scope (D11)"
 
 [[file]]
 path = "external/deflate/lib/arm/crc32_pmull_helpers.h"
 kind = "vendored"
-status = "todo"
-note = "non-x86 CPU paths: only when ARM becomes a reference platform (D11)"
+status = "n/a"
+note = "non-x86 CPU paths: platforms out of scope (D11)"
 
 [[file]]
 path = "external/deflate/lib/arm/crc32_pmull_wide.h"
 kind = "vendored"
-status = "todo"
-note = "non-x86 CPU paths: only when ARM becomes a reference platform (D11)"
+status = "n/a"
+note = "non-x86 CPU paths: platforms out of scope (D11)"
 
 [[file]]
 path = "external/deflate/lib/arm/matchfinder_impl.h"
 kind = "vendored"
-status = "todo"
-note = "non-x86 CPU paths: only when ARM becomes a reference platform (D11)"
+status = "n/a"
+note = "non-x86 CPU paths: platforms out of scope (D11)"
 
 [[file]]
 path = "external/deflate/lib/bt_matchfinder.h"
@@ -692,7 +703,9 @@ note = "ported whole, for the near-optimal compressor (levels 10-12), whose stre
 [[file]]
 path = "external/deflate/lib/cpu_features_common.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-deflate/src/adler32_x86.rs"
+note = "the CPU features, as std's detection"
 
 [[file]]
 path = "external/deflate/lib/crc32.c"
@@ -715,9 +728,9 @@ note = "not compiled into OpenEXRCore (compression.c:43-53)"
 [[file]]
 path = "external/deflate/lib/decompress_template.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/deflate_decompress.rs"
-note = "the decode loop, 64-bit x86 build"
+note = "the decode loop, 64-bit x86 build, compiled twice: portable and BMI2 (decompress_bmi2.rs)"
 
 [[file]]
 path = "external/deflate/lib/deflate_compress.c"
@@ -729,7 +742,9 @@ note = "ported whole: the Huffman codes, block flushing and splitting, and every
 [[file]]
 path = "external/deflate/lib/deflate_compress.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-deflate/src/deflate_compress.rs"
+note = "the compressor's declarations, ported with it"
 
 [[file]]
 path = "external/deflate/lib/deflate_constants.h"
@@ -780,7 +795,9 @@ note = "ported whole (buckets of 2); every level's streams equal Core's (the O1 
 [[file]]
 path = "external/deflate/lib/lib_common.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-deflate/src/lib.rs"
+note = "the helpers the ported code uses, in their files; n/a: the allocator and memory wrappers (PLAN.md O8) (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/deflate/lib/matchfinder_common.h"
@@ -792,13 +809,14 @@ note = "ported whole"
 [[file]]
 path = "external/deflate/lib/riscv/matchfinder_impl.h"
 kind = "vendored"
-status = "todo"
-note = "non-x86 CPU paths: only when ARM becomes a reference platform (D11)"
+status = "n/a"
+note = "non-x86 CPU paths: platforms out of scope (D11)"
 
 [[file]]
 path = "external/deflate/lib/utils.c"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "libdeflate's allocator hooks and memory wrappers (PLAN.md O8)"
 
 [[file]]
 path = "external/deflate/lib/x86/adler32_impl.h"
@@ -817,24 +835,28 @@ note = "both forms: USE_VNNI 0 for VL 16 (SSE2) and 32 (AVX2), USE_VNNI 1 for VL
 [[file]]
 path = "external/deflate/lib/x86/cpu_features.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/adler32_vnni.rs"
-note = "the features the ported variants are chosen by (std's detection) and allow_512bit_vectors; the rest of the table (PCLMULQDQ, VPCLMULQDQ: CRC-32, which Core never uses) n/a"
+note = "the features the ported variants are chosen by (std's detection) and allow_512bit_vectors; n/a: the rest of the table (PCLMULQDQ, VPCLMULQDQ: CRC-32), not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/deflate/lib/x86/cpu_features.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-deflate/src/adler32_x86.rs"
+note = "the features the ported variants are chosen by, as std's detection; n/a: the CRC-32 ones, not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/deflate/lib/x86/crc32_impl.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "CRC-32 (gzip), not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/deflate/lib/x86/crc32_pclmul_template.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "CRC-32 (gzip), not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/deflate/lib/x86/decompress_impl.h"
@@ -846,9 +868,9 @@ note = "the template compiled for BMI2 and arch_select_decompress_func's choice 
 [[file]]
 path = "external/deflate/lib/x86/matchfinder_impl.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/matchfinder_common.rs"
-note = "the SSE2 and AVX2 matchfinder_init and matchfinder_rebase store the same values as the portable loops ported"
+note = "matchfinder_init and matchfinder_rebase as the portable loops, which store the values the SSE2 and AVX2 forms store (and which the compiler vectorizes)"
 
 [[file]]
 path = "external/deflate/lib/zlib_compress.c"
@@ -873,9 +895,9 @@ note = "ported whole"
 [[file]]
 path = "external/deflate/libdeflate.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-deflate/src/lib.rs"
-note = "the decompression API; the compression API with ZIP's compressor"
+note = "the decompression and compression API Core calls; n/a: gzip, the custom allocators and CRC-32, not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/patchup_deflate_lib.sed"
@@ -886,8 +908,9 @@ note = "documentation or vendoring metadata"
 [[file]]
 path = "external/zstd/LICENSE"
 kind = "license"
-status = "todo"
-note = "carried into THIRD-PARTY-NOTICES.md with the port"
+status = "done"
+target = "THIRD-PARTY-NOTICES.md"
+note = "reproduced in THIRD-PARTY-NOTICES.md (the BSD license, of its two)"
 
 [[file]]
 path = "external/zstd/README.md"
@@ -898,14 +921,15 @@ note = "documentation or vendoring metadata"
 [[file]]
 path = "external/zstd/lib/common/allocations.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "custom allocators (PLAN.md O8)"
 
 [[file]]
 path = "external/zstd/lib/common/bits.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/mem.rs"
-note = "the bit scans the port uses"
+note = "the bit scans the port uses; n/a: the others, unused (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/bitstream.h"
@@ -917,22 +941,27 @@ note = "both halves ported; the decoding half checked through Core's ZSTD decode
 [[file]]
 path = "external/zstd/lib/common/compiler.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "compiler and platform switches, with no counterpart (the prefetches measured no faster: docs/deferred.md) (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/cpu.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/bmi2.rs"
+note = "ZSTD_cpuid's BMI1 and BMI2 bits, as std's detection; n/a: the other features, unused (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/debug.c"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "debug logging, off in upstream's build"
 
 [[file]]
 path = "external/zstd/lib/common/debug.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "debug logging, off in upstream's build"
 
 [[file]]
 path = "external/zstd/lib/common/entropy_common.c"
@@ -944,21 +973,22 @@ note = "ported whole; checked through Core's ZSTD decoder: the wheel's ZSTD imag
 [[file]]
 path = "external/zstd/lib/common/error_private.c"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "the error-name strings, not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/error_private.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/error_private.rs"
 note = "the error codes, as Result errors"
 
 [[file]]
 path = "external/zstd/lib/common/fse.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/fse_decompress.rs"
-note = "its decoding half ported; checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier); the encoding half comes with the compressor"
+note = "both halves ported, the decoder's and the compressor's; checked through Core's ZSTD decoder and encoder against the wheel and Core (heavy tier)"
 
 [[file]]
 path = "external/zstd/lib/common/fse_decompress.c"
@@ -970,75 +1000,87 @@ note = "ported whole; checked through Core's ZSTD decoder: the wheel's ZSTD imag
 [[file]]
 path = "external/zstd/lib/common/huf.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/huf_decompress.rs, crates/openexr-zstd/src/huf_compress.rs"
+note = "the declarations, ported with the Huffman coders"
 
 [[file]]
 path = "external/zstd/lib/common/mem.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/mem.rs"
-note = "the little-endian reads the port uses"
+note = "the little-endian reads the port uses; n/a: the rest, unused (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/pool.c"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "the thread pool of multithreaded compression, which Core does not enable (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/pool.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "the thread pool of multithreaded compression, which Core does not enable (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/portability_macros.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/bmi2.rs"
-note = "DYNAMIC_BMI2 (GCC builds for x86-64, not MSVC): the entropy coders' BMI2 builds chosen where the CPU has BMI1 and BMI2 (bmi2.rs); ZSTD_DISABLE_ASM as the wheels' builds set it (huf_decompress.rs); the rest are compiler and platform switches with no counterpart"
+note = "DYNAMIC_BMI2 (GCC builds for x86-64, not MSVC): the entropy coders' BMI2 builds chosen where the CPU has BMI1 and BMI2 (bmi2.rs); ZSTD_DISABLE_ASM as the wheels' builds set it (huf_decompress.rs); n/a: the other compiler and platform switches, which have no counterpart (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/threading.c"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "threads of multithreaded compression, which Core does not enable (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/threading.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "threads of multithreaded compression, which Core does not enable (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/xxhash.c"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/xxhash.rs"
+note = "its implementation is xxhash.h's, ported"
 
 [[file]]
 path = "external/zstd/lib/common/xxhash.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/xxhash.rs"
-note = "XXH64, one pass (the frame checksum)"
+note = "XXH64, one pass (the frame checksum); n/a: its other variants, unused (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/zstd_common.c"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/error_private.rs"
+note = "ZSTD_isError as Result errors; n/a: the version and error-name functions, not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/common/zstd_deps.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "the C library shims, with no counterpart"
 
 [[file]]
 path = "external/zstd/lib/common/zstd_internal.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_decompress_internal.rs"
-note = "the decoder's constants and tables; the encoder's come with the compressor"
+note = "the decoder's and the encoder's constants and tables"
 
 [[file]]
 path = "external/zstd/lib/common/zstd_trace.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "tracing, off in upstream's build"
 
 [[file]]
 path = "external/zstd/lib/compress/clevels.h"
@@ -1070,23 +1112,23 @@ note = "declarations only; HIST_WKSP_SIZE is n/a (the port's histograms take no 
 [[file]]
 path = "external/zstd/lib/compress/huf_compress.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/huf_compress.rs"
-note = "ported, but HUF_readCTable (dictionaries, n/a) and HUF_getNbBitsFromCTable (with the optimal parser); typed workspaces; checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
+note = "ported; typed workspaces; checked against the wheel's bytes through Core's ZSTD encoder and against Core at every level (heavy tier); n/a: HUF_readCTable and HUF_getNbBitsFromCTable, which only a dictionary reaches (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_compress.rs"
 note = "ZSTD_compressCCtx and ZSTD_compressBound at every level (fast to btultra2, with the post-block splitter); a context's indices continue from frame to frame, its tables keeping the last frames' entries below the cleared window (ZSTDirp_continue, reset when too close to the maximum or new; upstream's workspace reallocation, which also resets them, has no counterpart: where indices start changes no match); the index overflow correction (ZSTD_overflowCorrectIfNeeded, ZSTD_reduceIndex); the long distance matcher where ZSTD_resolveEnableLdm turns it on (zstd_ldm.rs); Core-only rewrites at every level equal Core's own (tests/heavy_harness.rs), and frames past ZSTD_CURRENT_MAX, alone and continuing, level 22's over 64 MiB with long distance matches (tests/heavy_zstd_big.rs); streaming, dictionaries, explicit LDM settings, sequence producers and multithreading n/a"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_internal.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_compress_internal.rs"
-note = "the types and helpers the ported compressor needs (sequences, hashes, the window without extDict and its overflow correction, the match state of the match finders); checked against the wheel's bytes through Core's ZSTD encoder (heavy tier: the wheel's ZSTD files, chunks up to 1 MiB, encode as it wrote them)"
+note = "the types and helpers the ported compressor needs (sequences, hashes, the window without extDict and its overflow correction, the match state of the match finders); checked against the wheel and Core (heavy tier); n/a: the extDict and dictionary parts (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_literals.c"
@@ -1098,7 +1140,9 @@ note = "ported; checked against the wheel's bytes through Core's ZSTD encoder (h
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_literals.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_compress_literals.rs"
+note = "declarations, ported with zstd_compress_literals.c"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_sequences.c"
@@ -1110,22 +1154,27 @@ note = "ported (with FSE_bitCost, fse.h); checked against the wheel's bytes thro
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_sequences.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_compress_sequences.rs"
+note = "declarations, ported with zstd_compress_sequences.c"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_superblock.c"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "superblocks (targetCBlockSize), which Core never sets (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_compress_superblock.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "superblocks (targetCBlockSize), which Core never sets (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_cwksp.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "the workspace allocator: the port's tables are their own buffers (no counterpart) (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_double_fast.c"
@@ -1137,7 +1186,9 @@ note = "the dfast block compressor without a dictionary; the dictionary modes n/
 [[file]]
 path = "external/zstd/lib/compress/zstd_double_fast.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_double_fast.rs"
+note = "declarations, ported with zstd_double_fast.c"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_fast.c"
@@ -1149,7 +1200,9 @@ note = "the fast block compressor without a dictionary (cmov and branch variants
 [[file]]
 path = "external/zstd/lib/compress/zstd_fast.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_fast.rs"
+note = "declarations, ported with zstd_fast.c"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_lazy.c"
@@ -1161,19 +1214,21 @@ note = "the greedy, lazy and lazy2 parsers over the hash chain and the row match
 [[file]]
 path = "external/zstd/lib/compress/zstd_lazy.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_lazy.rs"
+note = "declarations, ported with zstd_lazy.c"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_ldm.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_ldm.rs"
 note = "what ZSTD_compressCCtx reaches: the parameters, the gear hash (ZSTD_ldm_gear_reset, which never stores its hash back, kept so), each block's sequences with the matcher's own overflow correction, and the raw sequence store the optimal parser takes them from; level 22 on zstd inputs over 64 MiB equals Core's (tests/heavy_zstd_big.rs); n/a: the extDict branches (the matcher's window never has one), ZSTD_ldm_fillHashTable (dictionaries), and ZSTD_ldm_blockCompress's path below btopt (only an explicitly enabled matcher reaches it)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_ldm.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_ldm.rs"
 note = "the declarations zstd_ldm.c's ported part needs"
 
@@ -1194,7 +1249,9 @@ note = "the optimal parsers (btopt, btultra, btultra2 with its first-block pass)
 [[file]]
 path = "external/zstd/lib/compress/zstd_opt.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_opt.rs"
+note = "declarations, ported with zstd_opt.c"
 
 [[file]]
 path = "external/zstd/lib/compress/zstd_preSplit.c"
@@ -1206,17 +1263,21 @@ note = "ported; checked against the wheel's bytes through Core's ZSTD encoder (h
 [[file]]
 path = "external/zstd/lib/compress/zstd_preSplit.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_pre_split.rs"
+note = "declarations, ported with zstd_preSplit.c"
 
 [[file]]
 path = "external/zstd/lib/compress/zstdmt_compress.c"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "multithreaded compression, which Core does not enable (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/compress/zstdmt_compress.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "multithreaded compression, which Core does not enable (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/decompress/huf_decompress.c"
@@ -1235,48 +1296,54 @@ note = "the C fast loops' translation (Linux x86-64 on a BMI2 CPU): ported as th
 [[file]]
 path = "external/zstd/lib/decompress/zstd_ddict.c"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "dictionaries, not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/decompress/zstd_ddict.h"
 kind = "vendored"
-status = "todo"
+status = "n/a"
+note = "dictionaries, not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/decompress/zstd_decompress.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_decompress.rs"
 note = "one-shot decompression without dictionaries ported (Core's use); streaming and dictionaries n/a; checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier)"
 
 [[file]]
 path = "external/zstd/lib/decompress/zstd_decompress_block.c"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_decompress_block.rs"
-note = "the portable decoder ported (literals kept in their own buffer; the prefetching sequence decoder, same output, is O3); checked through Core's ZSTD decoder: the wheel's ZSTD images decode as the wheel decodes them (heavy tier)"
+note = "the decoder ported (literals kept in their own buffer); checked through Core's ZSTD decoder against the wheel (heavy tier); the prefetching long-offset decoder (ZSTD_decompressSequencesLong), which gives the same bytes, is not ported: speed only (docs/deferred.md) (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/decompress/zstd_decompress_block.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/zstd_decompress_block.rs"
+note = "declarations, ported with zstd_decompress_block.c"
 
 [[file]]
 path = "external/zstd/lib/decompress/zstd_decompress_internal.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/zstd_decompress_internal.rs"
 note = "the tables and the context state one-shot decompression uses"
 
 [[file]]
 path = "external/zstd/lib/zstd.h"
 kind = "vendored"
-status = "todo"
+status = "done"
+target = "crates/openexr-zstd/src/lib.rs"
+note = "the API Core calls (ZSTD_compressCCtx, ZSTD_decompressDCtx, the bounds and levels); n/a: the rest, not reached from Core (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "external/zstd/lib/zstd_errors.h"
 kind = "vendored"
-status = "partial"
+status = "done"
 target = "crates/openexr-zstd/src/error_private.rs"
 note = "the error codes, as Result errors"
 
@@ -2029,8 +2096,8 @@ note = "the test runner and its TEST list: cargo test runs each #[test]; xtask g
 [[file]]
 path = "src/test/OpenEXRCoreTest/performance.cpp"
 kind = "bench"
-status = "todo"
-note = "CorePerfTest; profiling comes later (owner, 2026-11-06)"
+status = "n/a"
+note = "CorePerfTest, a timing program rather than a check; the speed comparison with Core is scripts/bench.py (owner, 2026-11-08, M3)"
 
 [[file]]
 path = "src/test/OpenEXRCoreTest/read.cpp"
@@ -2069,35 +2136,41 @@ note = "the declarations of its tests"
 [[file]]
 path = "src/test/OpenEXRTest/invalid.exr"
 kind = "test-data"
-status = "todo"
-note = "opened by OpenEXRCoreTest (read.cpp)"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/read.rs"
+note = "read by the ported tests (read.cpp's), and by the heavy tier"
 
 [[file]]
 path = "src/test/OpenEXRTest/tiled.exr"
 kind = "test-data"
-status = "todo"
-note = "opened by OpenEXRCoreTest (read.cpp)"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/read.rs"
+note = "read by the ported tests (read.cpp's), and by the heavy tier"
 
 [[file]]
 path = "src/test/OpenEXRTest/v1.7.test.1.exr"
 kind = "test-data"
-status = "todo"
-note = "opened by OpenEXRCoreTest (read.cpp)"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/read.rs"
+note = "read by the ported tests (read.cpp's), and by the heavy tier"
 
 [[file]]
 path = "src/test/OpenEXRTest/v1.7.test.interleaved.exr"
 kind = "test-data"
-status = "todo"
-note = "opened by OpenEXRCoreTest (read.cpp)"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/read.rs"
+note = "read by the ported tests (read.cpp's), and by the heavy tier"
 
 [[file]]
 path = "src/test/OpenEXRTest/v1.7.test.planar.exr"
 kind = "test-data"
-status = "todo"
-note = "opened by OpenEXRCoreTest (read.cpp)"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/read.rs"
+note = "read by the ported tests (read.cpp's), and by the heavy tier"
 
 [[file]]
 path = "src/test/OpenEXRTest/v1.7.test.tiled.exr"
 kind = "test-data"
-status = "todo"
-note = "opened by OpenEXRCoreTest (read.cpp)"
+status = "done"
+target = "crates/openexr-core/src/upstream_tests/read.rs"
+note = "read by the ported tests (read.cpp's), and by the heavy tier"

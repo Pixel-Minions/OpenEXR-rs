@@ -418,13 +418,13 @@ move with upstream's `external/` (`current_deflate_version`, `current_zstd_versi
 
 ## 14. Decisions for the owner
 
-Each has a recommendation. Status on 2026-11-07:
+Each has a recommendation. Status on 2026-11-08:
 
 | Item | Status |
 |---|---|
 | O1 Oracle | **Decided** (owner, 2026-11-07): B, the wheel plus a source-built Core harness, accepted only where it reproduces the wheel |
 | O2 Vendored libraries | **Decided** (owner, 2026-11-07): A, port libdeflate, zstd and OpenJPH exactly, each as its own crate, in the stage that needs it |
-| O3 SIMD | **Decided** (owner, 2026-11-07): A, every SIMD path upstream takes reproduced exactly in safe code and chosen as upstream chooses it; real SIMD kernels come later, after profiling |
+| O3 SIMD | **Decided** (owner, 2026-11-07): A, every SIMD path upstream takes reproduced exactly in safe code and chosen as upstream chooses it; real SIMD kernels later, after profiling. **Then** (owner, 2026-11-08): profile and port the SIMD paths as real kernels, in the `unsafe` allowlist's files, each chosen as upstream chooses it (D-21 for the two taken on both platforms); done |
 | O4 Layout and naming | Recommendation in use since the owner started the port (2026-11-07); open to change until anything is published |
 | O5 Rust version | Recommendation in use since the owner started the port (2026-11-07); open to change |
 | O6 DWA patents | **Decided** (owner, 2026-11-07): credit DreamWorks |
