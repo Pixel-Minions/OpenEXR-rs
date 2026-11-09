@@ -12,7 +12,7 @@ const PRIME64_4: u64 = 0x85EB_CA77_C2B2_AE63;
 const PRIME64_5: u64 = 0x27D4_EB2F_1656_67C5;
 
 fn read64(p: &[u8]) -> u64 {
-    u64::from_le_bytes([p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]])
+    u64::from_le_bytes(p[..8].try_into().unwrap())
 }
 
 /// Port of `XXH64_round` (external/zstd/lib/common/xxhash.h:3376-3399 @ zstd v1.5.7).
@@ -51,7 +51,7 @@ fn finalize(mut hash: u64, mut p: &[u8]) -> u64 {
             .wrapping_add(PRIME64_4);
     }
     if p.len() >= 4 {
-        hash ^= u64::from(u32::from_le_bytes([p[0], p[1], p[2], p[3]])).wrapping_mul(PRIME64_1);
+        hash ^= u64::from(u32::from_le_bytes(p[..4].try_into().unwrap())).wrapping_mul(PRIME64_1);
         p = &p[4..];
         hash = hash
             .rotate_left(23)

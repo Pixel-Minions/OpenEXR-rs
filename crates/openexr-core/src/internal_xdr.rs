@@ -143,14 +143,14 @@ pub(crate) fn unaligned_store32(dst: &mut [u8], v: u32) {
 /// first 2 bytes of `src`, in file order.
 #[inline]
 pub(crate) fn unaligned_load16(src: &[u8]) -> u16 {
-    u16::from_le_bytes([src[0], src[1]])
+    u16::from_le_bytes(src[..2].try_into().unwrap())
 }
 
 /// Port of `unaligned_load32` (src/lib/OpenEXRCore/internal_xdr.h:281-287 @ v3.5.3): reads the
 /// first 4 bytes of `src`, in file order.
 #[inline]
 pub(crate) fn unaligned_load32(src: &[u8]) -> u32 {
-    u32::from_le_bytes([src[0], src[1], src[2], src[3]])
+    u32::from_le_bytes(src[..4].try_into().unwrap())
 }
 
 /// Port of `unaligned_store32_array` (src/lib/OpenEXRCore/internal_xdr.h:294-304 @ v3.5.3):

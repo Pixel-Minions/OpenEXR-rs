@@ -519,6 +519,7 @@ impl<'t> FseState<'t> {
 
 /// Port of `ZSTD_decodeSequence` (external/zstd/lib/decompress/zstd_decompress_block.c:1228-1346
 /// @ zstd v1.5.7), as 64-bit hosts build it.
+#[inline(always)] // FORCE_INLINE_TEMPLATE upstream
 fn decode_sequence(
     d: &mut BitDStream<'_>,
     ll: &mut FseState<'_>,
@@ -600,10 +601,41 @@ fn decode_sequence(
     seq
 }
 
+/// `src` copied to `dst[d..d + src.len()]`, the bytes `copy_from_slice` writes, in fixed-size
+/// steps the compiler keeps inline (upstream's literals copy is `ZSTD_copy16` and
+/// `ZSTD_wildcopy`, lines 1013-1018, which may write past the end into the buffer's slack;
+/// here each step writes only bytes of the copy, the last ones overlapping the previous).
+#[inline(always)]
+fn copy_exact(dst: &mut [u8], d: usize, src: &[u8]) {
+    let n = src.len();
+    let out = &mut dst[d..d + n];
+    if n >= 16 {
+        let mut w = 0;
+        while w + 16 <= n {
+            out[w..w + 16].copy_from_slice(&src[w..w + 16]);
+            w += 16;
+        }
+        if w < n {
+            out[n - 16..].copy_from_slice(&src[n - 16..]);
+        }
+    } else if n >= 8 {
+        out[..8].copy_from_slice(&src[..8]);
+        out[n - 8..].copy_from_slice(&src[n - 8..]);
+    } else if n >= 4 {
+        out[..4].copy_from_slice(&src[..4]);
+        out[n - 4..].copy_from_slice(&src[n - 4..]);
+    } else {
+        for (o, s) in out.iter_mut().zip(src) {
+            *o = *s;
+        }
+    }
+}
+
 /// Port of `ZSTD_execSequence` (external/zstd/lib/decompress/zstd_decompress_block.c:999-1096
 /// @ zstd v1.5.7), with `ZSTD_execSequenceEnd` (lines 905-948):
 /// the sequence's literals from `*lit_ptr`, then its match, at `op` of `dst[..oend]`; returns
 /// the bytes written. Offsets reach back at most to the frame's start (no dictionary).
+#[inline(always)] // FORCE_INLINE_TEMPLATE upstream
 fn exec_sequence(
     dst: &mut [u8],
     prefix_start: usize,
@@ -632,7 +664,7 @@ fn exec_sequence(
 
     // copy Literals
     let o_lit_end = op + sequence.lit_length;
-    dst[op..o_lit_end].copy_from_slice(&lit[*lit_ptr..*lit_ptr + sequence.lit_length]);
+    copy_exact(dst, op, &lit[*lit_ptr..*lit_ptr + sequence.lit_length]);
     *lit_ptr += sequence.lit_length;
 
     // copy Match
@@ -648,6 +680,43 @@ fn exec_sequence(
     // can come from `m`; a match not longer than its offset is one copy.
     let m = o_lit_end - sequence.offset;
     let len = sequence.match_length;
+    if sequence.offset >= 16 && len >= 16 {
+        // every 16 bytes read lie at least 16 behind the ones written, so they are final
+        // already: the forward copy's bytes, 16 at a time (as upstream's ZSTD_wildcopy for
+        // offsets of 16 or more), the last 16 ending exactly at the match's end
+        let mut w = 0;
+        while w + 16 <= len {
+            let b: [u8; 16] = dst[m + w..m + w + 16].try_into().unwrap();
+            dst[o_lit_end + w..o_lit_end + w + 16].copy_from_slice(&b);
+            w += 16;
+        }
+        if w < len {
+            let b: [u8; 16] = dst[m + len - 16..m + len].try_into().unwrap();
+            dst[o_lit_end + len - 16..o_lit_end + len].copy_from_slice(&b);
+        }
+        return Ok(sequence_length);
+    }
+    if sequence.offset >= 8 && len >= 8 {
+        // as above, 8 bytes at a time (upstream's ZSTD_overlapCopy8 and wild copy for offsets
+        // of 8 or more): each 8 bytes read lie at least 8 behind the ones written
+        let mut w = 0;
+        while w + 8 <= len {
+            let b: [u8; 8] = dst[m + w..m + w + 8].try_into().unwrap();
+            dst[o_lit_end + w..o_lit_end + w + 8].copy_from_slice(&b);
+            w += 8;
+        }
+        if w < len {
+            let b: [u8; 8] = dst[m + len - 8..m + len].try_into().unwrap();
+            dst[o_lit_end + len - 8..o_lit_end + len].copy_from_slice(&b);
+        }
+        return Ok(sequence_length);
+    }
+    if sequence.offset >= len && len > 0 {
+        // the match does not overlap its source: a plain copy
+        let (before, after) = dst.split_at_mut(o_lit_end);
+        copy_exact(after, 0, &before[m..m + len]);
+        return Ok(sequence_length);
+    }
     // (an offset of 0 copies each byte onto itself, as the byte loop did: nothing changes)
     let mut w = if sequence.offset == 0 { len } else { 0 };
     while w < len {

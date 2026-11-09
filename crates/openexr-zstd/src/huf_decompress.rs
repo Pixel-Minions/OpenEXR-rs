@@ -1087,7 +1087,16 @@ fn init_remaining_dstream<'a>(
 /// Port of `HUF_decompress4X1_usingDTable_internal_fast_c_loop`
 /// (external/zstd/lib/decompress/huf_decompress.c:720-831 @ zstd v1.5.7): five symbols per
 /// stream per iteration, while no bound can be reached.
+///
+/// The table seen as its first 2^11 entries (the loop's table log,
+/// `HUF_DECODER_FAST_TABLELOG`, which `fast_args_init` requires), so that no lookup needs a
+/// bound check; and each iteration's 5 bytes of each stream written through a window of 5,
+/// the streams' segments being disjoint and in order. The same symbols, bits and stores.
 fn fast_c_loop_4x1(dst: &mut [u8], src: &[u8], dt: &[DEltX1], args: &mut FastArgs) {
+    let Some(dt) = dt.get(..1 << HUF_DECODER_FAST_TABLELOG) else {
+        return; // (never: the finishing loops then decode every symbol, to the same bytes)
+    };
+    let dt: &[DEltX1; 1 << HUF_DECODER_FAST_TABLELOG] = dt.try_into().unwrap();
     let (mut bits, mut ip, mut op) = (args.bits, args.ip, args.op);
     let oend = args.oend;
     loop {
@@ -1110,11 +1119,22 @@ fn fast_c_loop_4x1(dst: &mut [u8], src: &[u8], dt: &[DEltX1], args: &mut FastArg
 
         loop {
             // Decode 5 symbols in each of the 4 streams
-            for symbol in 0..5 {
-                for s in 0..4 {
-                    let e = dt[(bits[s] >> 53) as usize];
-                    bits[s] <<= u32::from(e.nb_bits) & 0x3F;
-                    dst[op[s] + symbol] = e.byte;
+            {
+                let (a, rest) = dst.split_at_mut(op[1]);
+                let (b, rest) = rest.split_at_mut(op[2] - op[1]);
+                let (c, d) = rest.split_at_mut(op[3] - op[2]);
+                let w: [&mut [u8; 5]; 4] = [
+                    (&mut a[op[0]..op[0] + 5]).try_into().unwrap(),
+                    (&mut b[..5]).try_into().unwrap(),
+                    (&mut c[..5]).try_into().unwrap(),
+                    (&mut d[..5]).try_into().unwrap(),
+                ];
+                for symbol in 0..5 {
+                    for s in 0..4 {
+                        let e = dt[(bits[s] >> 53) as usize];
+                        bits[s] <<= u32::from(e.nb_bits) & 0x3F;
+                        w[s][symbol] = e.byte;
+                    }
                 }
             }
             // Reload each of the 4 the bitstreams

@@ -161,7 +161,7 @@ impl<'a> BitDStream<'a> {
 
     /// Port of `BIT_reloadDStream_internal` (external/zstd/lib/common/bitstream.h:384-392
     /// @ zstd v1.5.7).
-    #[inline]
+    #[inline(always)] // FORCE_INLINE_ATTR upstream
     fn reload_internal(&mut self) -> BitDStreamStatus {
         self.ptr -= (self.bits_consumed >> 3) as usize;
         self.bits_consumed &= 7;
@@ -172,7 +172,7 @@ impl<'a> BitDStream<'a> {
     /// Port of `BIT_reloadDStreamFast` (external/zstd/lib/common/bitstream.h:400-405
     /// @ zstd v1.5.7): overflow when `ptr` is below the limit (or the stream has overflowed),
     /// to be followed by [`Self::reload`].
-    #[inline]
+    #[inline(always)] // FORCE_INLINE_ATTR upstream
     pub(crate) fn reload_fast(&mut self) -> BitDStreamStatus {
         if self.zeroed || self.ptr < CONTAINER_BYTES {
             return BitDStreamStatus::Overflow;
@@ -182,7 +182,7 @@ impl<'a> BitDStream<'a> {
 
     /// Port of `BIT_reloadDStream` (external/zstd/lib/common/bitstream.h:412-444 @ zstd v1.5.7):
     /// refills the register without reading before the stream's start.
-    #[inline]
+    #[inline(always)] // FORCE_INLINE_ATTR upstream
     pub(crate) fn reload(&mut self) -> BitDStreamStatus {
         // note : once in overflow mode, a bitstream remains in this mode until it's reset
         if self.bits_consumed > 64 {

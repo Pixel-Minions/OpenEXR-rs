@@ -8,7 +8,7 @@
 /// `MEM_readLE16`.
 #[inline]
 pub(crate) fn read_le16(p: &[u8]) -> u16 {
-    u16::from_le_bytes([p[0], p[1]])
+    u16::from_le_bytes(p[..2].try_into().unwrap())
 }
 
 /// `MEM_readLE24`.
@@ -20,13 +20,13 @@ pub(crate) fn read_le24(p: &[u8]) -> u32 {
 /// `MEM_readLE32`.
 #[inline]
 pub(crate) fn read_le32(p: &[u8]) -> u32 {
-    u32::from_le_bytes([p[0], p[1], p[2], p[3]])
+    u32::from_le_bytes(p[..4].try_into().unwrap())
 }
 
 /// `MEM_readLE64` (and `MEM_readLEST` on 64-bit hosts).
 #[inline]
 pub(crate) fn read_le64(p: &[u8]) -> u64 {
-    u64::from_le_bytes([p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]])
+    u64::from_le_bytes(p[..8].try_into().unwrap())
 }
 
 /// Port of `ZSTD_highbit32` (external/zstd/lib/common/bits.h:174-178 @ zstd v1.5.7): the index
