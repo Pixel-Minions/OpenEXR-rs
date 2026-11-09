@@ -3,6 +3,10 @@
 """Dumps every channel of every part of an image, as the official openexr==3.5.3 wheel reads it.
 
   uv run --project oracle python -I oracle/dump_pixels.py <image> <out-dir>
+  uv run --project oracle python -I oracle/dump_pixels.py --many <list.txt> <out-dir>
+
+The second form reads one image path per line of <list.txt> and dumps the n-th (from 0) to
+<out-dir>/<n>, in one process.
 
 The image is read with `separate_channels=True`. For channel number i of part p (the part's
 number in the file; a part whose pixels the wheel cannot read is left out), <out-dir>/<p>.<i>.bin holds the channel's pixels in native byte order,
@@ -35,10 +39,7 @@ import OpenEXR
 DEEP_TYPES = {"PixelType.UINT": "uint32", "PixelType.HALF": "float16", "PixelType.FLOAT": "float32"}
 
 
-def main():
-    if len(sys.argv) != 3:
-        sys.exit(__doc__)
-    image, out = sys.argv[1], sys.argv[2]
+def dump(image, out):
     os.makedirs(out, exist_ok=True)
     lines = []
     try:
@@ -96,6 +97,17 @@ def main():
         lines = ["error\t" + " ".join(str(e).split())]
     with open(os.path.join(out, "manifest.tsv"), "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines) + "\n")
+
+
+def main():
+    if len(sys.argv) == 4 and sys.argv[1] == "--many":
+        images = [l for l in open(sys.argv[2], encoding="utf-8").read().split("\n") if l]
+        for n, image in enumerate(images):
+            dump(image, os.path.join(sys.argv[3], str(n)))
+        return
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    dump(sys.argv[1], sys.argv[2])
 
 
 if __name__ == "__main__":
